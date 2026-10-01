@@ -37,7 +37,7 @@ type LogRow = {
   input_type: string;
   input_data: string;
   model: string;
-  agent_snapshot: Record<string, { name: string; attributes: { name: string; type: string }[] }>;
+  agent_snapshot: Record<string, { name: string; attributes: SnapshotAttr[] }>;
   attribute_snapshot?: Record<string, unknown>;
   outputs: Record<string, unknown>;
   feedback: Record<string, Record<string, { rating: string; remarks: string }>>;
@@ -52,6 +52,38 @@ type PrettyAttr = {
   confidence_type?: unknown;
   evidence?: unknown;
 };
+
+/**
+ * Frozen attribute definitions ship in two shapes: old
+ * {name,type,description,json_schema} and new {name,type,description,enum_values}.
+ * Everything but name is optional so neither shape can crash the renderer.
+ */
+type SnapshotAttr = {
+  name: string;
+  type?: unknown;
+  description?: unknown;
+  json_schema?: unknown;
+  enum_values?: unknown;
+};
+
+/** Enum chips whenever enum_values is present (new shape); [] otherwise. Never throws. */
+function enumChipsOf(a: unknown): string[] {
+  if (!a || typeof a !== "object") return [];
+  const v = (a as { enum_values?: unknown }).enum_values;
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim() !== "");
+}
+
+/** Snapshot attribute definitions for one agent; [] when missing or malformed. Never throws. */
+function snapshotAttrs(log: LogRow, agentId: string): SnapshotAttr[] {
+  const attrs = (log.agent_snapshot?.[agentId] as { attributes?: unknown } | undefined)
+    ?.attributes;
+  if (!Array.isArray(attrs)) return [];
+  return attrs.filter(
+    (a): a is SnapshotAttr =>
+      !!a && typeof a === "object" && typeof (a as { name?: unknown }).name === "string",
+  );
+}
 
 type DrawerTab = "pretty" | "raw" | "analytics";
 
@@ -302,9 +334,29 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
             );
           }
           const entries = prettyEntries(out);
+          const snapAttrs = snapshotAttrs(log, agentId);
           return (
             <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
               <CardTitle>{agentName}</CardTitle>
+              {snapAttrs.length > 0 && (
+                <div className="mt-2">
+                  <p className={sectionLabel}>Attributes (snapshot)</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {snapAttrs.map((sa, i) => (
+                      <span
+                        key={`${sa.name}-${i}`}
+                        title={typeof sa.description === "string" ? sa.description : undefined}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                      >
+                        {sa.name} · {String(sa.type ?? "?")}
+                        {enumChipsOf(sa).map((c) => (
+                          <Badge key={c} tone="neutral">{c}</Badge>
+                        ))}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mt-2 grid gap-2">
                 {entries.map(([attr, r]) => (
                   <div key={attr} className="rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">

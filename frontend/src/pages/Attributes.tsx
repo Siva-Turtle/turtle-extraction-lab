@@ -11,18 +11,33 @@ import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/M
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
+export type AttributeType = "string" | "number" | "boolean" | "enum";
+
 export type LabAttribute = {
   id: string;
-  agent_id: string;
+  agent_ids: string[];
   name: string;
-  type: string;
+  type: AttributeType;
   description: string;
-  json_schema: Record<string, unknown>;
-  required: boolean;
+  enum_values: string[];
 };
 
-const TYPES = ["string", "number", "integer", "boolean", "date", "datetime", "enum", "list"];
-const EMPTY = { agent_id: "", name: "", type: "string", description: "", json_schema: "{}", required: false };
+const TYPES: AttributeType[] = ["string", "number", "boolean", "enum"];
+const EMPTY: {
+  agent_ids: string[];
+  name: string;
+  type: AttributeType;
+  description: string;
+  enum_values: string[];
+} = { agent_ids: [], name: "", type: "string", description: "", enum_values: [] };
+
+/** One value per line or comma-separated — split on newlines+commas, trim, drop empties. */
+function parseEnumValues(raw: string): string[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
 
 export default function Attributes() {
   const qc = useQueryClient();
@@ -41,13 +56,13 @@ export default function Attributes() {
 
   const save = useMutation({
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
-      let schema: Record<string, unknown> = {};
-      try {
-        schema = v.json_schema.trim() ? JSON.parse(v.json_schema) : {};
-      } catch {
-        throw new Error("json_schema is not valid JSON");
-      }
-      const body = { ...v, json_schema: schema };
+      const body = {
+        agent_ids: v.agent_ids,
+        name: v.name,
+        type: v.type,
+        description: v.description,
+        enum_values: v.enum_values,
+      };
       return v.id
         ? (await api.patch(`/attributes/${v.id}`, body)).data
         : (await api.post("/attributes", body)).data;
@@ -71,17 +86,52 @@ export default function Attributes() {
 
   function startNew() {
     if (agents.length === 0) {
-      toast.error("Create an agent first — every attribute maps to one agent");
+      toast.error("Create an agent first — every attribute maps to one or more agents");
       return;
     }
-    setEditing({ ...EMPTY, agent_id: agentFilter || agents[0].id });
+    const seed =
+      agentFilter && agents.some((a) => a.id === agentFilter) ? agentFilter : agents[0].id;
+    setEditing({ ...EMPTY, agent_ids: [seed] });
+  }
+
+  function toggleAgent(id: string) {
+    if (!editing) return;
+    const has = editing.agent_ids.includes(id);
+    setEditing({
+      ...editing,
+      agent_ids: has ? editing.agent_ids.filter((x) => x !== id) : [...editing.agent_ids, id],
+    });
+  }
+
+  function agentNames(r: LabAttribute): string {
+    const names = (r.agent_ids ?? []).map(
+      (id) => agents.find((a) => a.id === id)?.name ?? id.slice(0, 8),
+    );
+    return names.length > 0 ? names.join(", ") : "—";
+  }
+
+  function trySave() {
+    if (!editing) return;
+    if (editing.agent_ids.length === 0) {
+      toast.error("Pick at least one agent");
+      return;
+    }
+    if (!editing.name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    if (editing.type === "enum" && editing.enum_values.length === 0) {
+      toast.error("Enum needs at least one value");
+      return;
+    }
+    save.mutate(editing);
   }
 
   return (
     <div className="grid gap-4">
       <PageHeader
         title="Attributes"
-        description="Type, description, structured-output schema — each mapped to one agent."
+        description="Type, description, allowed values — each mapped to one or more agents."
         actions={
           <>
             <select
@@ -108,17 +158,19 @@ export default function Attributes() {
         </Card>
       ) : data.length === 0 ? (
         <Card>
-          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">No attributes here yet.</p>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+            No attributes here yet — map the first one to one or more agents.
+          </p>
         </Card>
       ) : (
         <Card padded={false} className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
                 <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Agent</th>
+                <th className="px-4 py-3">Agents</th>
                 <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Required</th>
+                <th className="px-4 py-3">Values</th>
                 <th className="px-4 py-3">Description</th>
                 <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
               </tr>
@@ -128,11 +180,19 @@ export default function Attributes() {
                 <tr key={r.id} className="border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5">
                   <td className="px-4 py-3 font-heading font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">{r.name}</td>
                   <td className="px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]">
-                    {agents.find((a) => a.id === r.agent_id)?.name ?? r.agent_id.slice(0, 8)}
+                    {agentNames(r)}
                   </td>
                   <td className="px-4 py-3"><Badge tone="neutral">{r.type}</Badge></td>
                   <td className="px-4 py-3">
-                    {r.required ? <Badge tone="warning">required</Badge> : <span className="font-heading text-xs text-[#8a8f98]">optional</span>}
+                    {r.type === "enum" && (r.enum_values ?? []).length > 0 ? (
+                      <span className="flex flex-wrap gap-1">
+                        {(r.enum_values ?? []).map((v) => (
+                          <Badge key={v} tone="neutral">{v}</Badge>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="font-heading text-xs text-[#8a8f98]">—</span>
+                    )}
                   </td>
                   <td className="max-w-64 truncate px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]" title={r.description}>
                     {r.description || "—"}
@@ -142,7 +202,13 @@ export default function Attributes() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setEditing({ ...r, json_schema: JSON.stringify(r.json_schema ?? {}, null, 2) })}
+                        onClick={() =>
+                          setEditing({
+                            ...r,
+                            agent_ids: [...(r.agent_ids ?? [])],
+                            enum_values: [...(r.enum_values ?? [])],
+                          })
+                        }
                         aria-label={`Edit ${r.name}`}
                       >
                         <Pencil className="h-4 w-4" aria-hidden="true" />
@@ -167,19 +233,36 @@ export default function Attributes() {
 
       {editing && (
         <Modal title={editing.id ? "Edit attribute" : "New attribute"} onClose={() => setEditing(null)}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className={fieldLabel}>
-              Agent
-              <select
-                value={editing.agent_id}
-                onChange={(e) => setEditing({ ...editing, agent_id: e.target.value })}
-                className={cn(fieldInput, "h-11")}
-              >
+          <div className={fieldLabel}>
+            Agents <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+            {agents.length === 0 ? (
+              <p className="mt-1 font-sans text-sm font-normal normal-case tracking-normal text-[#b91c1c]">
+                No agents yet — create one on the Agents tab.
+              </p>
+            ) : (
+              <div className="mt-1.5 flex flex-wrap gap-2">
                 {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
+                  <label
+                    key={a.id}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
+                      editing.agent_ids.includes(a.id)
+                        ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                        : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editing.agent_ids.includes(a.id)}
+                      onChange={() => toggleAgent(a.id)}
+                    />
+                    {a.name}
+                  </label>
                 ))}
-              </select>
-            </label>
+              </div>
+            )}
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className={fieldLabel}>
               Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
               <input
@@ -192,7 +275,14 @@ export default function Attributes() {
               Type
               <select
                 value={editing.type}
-                onChange={(e) => setEditing({ ...editing, type: e.target.value })}
+                onChange={(e) => {
+                  const next = e.target.value as AttributeType;
+                  setEditing({
+                    ...editing,
+                    type: next,
+                    enum_values: next === "enum" ? editing.enum_values : [],
+                  });
+                }}
                 className={cn(fieldInput, "h-11")}
               >
                 {TYPES.map((t) => (
@@ -200,18 +290,9 @@ export default function Attributes() {
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
-              <input
-                type="checkbox"
-                checked={editing.required}
-                onChange={(e) => setEditing({ ...editing, required: e.target.checked })}
-                className="h-5 w-5 accent-[#0d5c4a]"
-              />
-              Required attribute
-            </label>
           </div>
           <label className={cn(fieldLabel, "mt-3 block")}>
-            Description (goes into the agent prompt)
+            Description
             <textarea
               value={editing.description}
               onChange={(e) => setEditing({ ...editing, description: e.target.value })}
@@ -219,24 +300,24 @@ export default function Attributes() {
               className={fieldTextarea}
             />
           </label>
-          <label className={cn(fieldLabel, "mt-3 block")}>
-            Structured-output schema (JSON)
-            <textarea
-              value={editing.json_schema}
-              onChange={(e) => setEditing({ ...editing, json_schema: e.target.value })}
-              rows={3}
-              spellCheck={false}
-              className={cn(fieldTextarea, "font-mono text-xs")}
-            />
-          </label>
+          {editing.type === "enum" && (
+            <label className={cn(fieldLabel, "mt-3 block")}>
+              Allowed values <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+              <textarea
+                value={editing.enum_values.join("\n")}
+                onChange={(e) => setEditing({ ...editing, enum_values: parseEnumValues(e.target.value) })}
+                rows={3}
+                spellCheck={false}
+                placeholder={"One value per line, or comma-separated"}
+                className={cn(fieldTextarea, "font-mono text-xs")}
+              />
+            </label>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setEditing(null)}>
               Cancel
             </Button>
-            <Button
-              loading={save.isPending}
-              onClick={() => editing.name.trim() && editing.agent_id ? save.mutate(editing) : toast.error("Agent + name are required")}
-            >
+            <Button loading={save.isPending} onClick={trySave}>
               Save
             </Button>
           </div>

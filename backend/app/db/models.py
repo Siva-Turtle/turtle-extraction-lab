@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Column, ForeignKey, JSON, Boolean, DateTime, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -22,21 +22,30 @@ class Agent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     system_instruction: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # DORMANT: `prompt` is dead (runs use scrubbed transcription + attributes).
+    # Column kept so legacy rows still load; never referenced by the API.
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     input_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+# Many-to-many: one attribute can belong to multiple agents.
+agent_attributes = Table(
+    "agent_attributes",
+    Base.metadata,
+    Column("agent_id", String(36), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("attribute_id", String(36), ForeignKey("attributes.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class Attribute(Base):
     __tablename__ = "attributes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("agents.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False, default="string")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    json_schema: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    required: Mapped[bool] = mapped_column(default=False)
+    enum_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

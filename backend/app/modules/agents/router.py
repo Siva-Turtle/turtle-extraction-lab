@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Agent, Attribute
+from app.db.models import Agent, Attribute, agent_attributes
 from app.db.session import get_db
 from app.modules.agents.schemas import AgentCreate, AgentOut, AgentUpdate
 
@@ -10,7 +11,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 def _out(r: Agent) -> AgentOut:
     return AgentOut(id=r.id, name=r.name, system_instruction=r.system_instruction,
-                    prompt=r.prompt, input_types=r.input_types or [],
+                    input_types=r.input_types or [],
                     is_enabled=r.is_enabled if r.is_enabled is not None else True)
 
 
@@ -23,7 +24,7 @@ def list_agents(db: Session = Depends(get_db)):
 @router.post("", response_model=AgentOut)
 def create_agent(payload: AgentCreate, db: Session = Depends(get_db)):
     row = Agent(name=payload.name, system_instruction=payload.system_instruction,
-                prompt=payload.prompt, input_types=payload.input_types,
+                input_types=payload.input_types,
                 is_enabled=payload.is_enabled)
     db.add(row)
     db.commit()
@@ -44,7 +45,7 @@ def update_agent(agent_id: str, payload: AgentUpdate, db: Session = Depends(get_
     row = db.query(Agent).filter(Agent.id == agent_id).first()
     if not row:
         raise HTTPException(404, "agent not found")
-    for field in ("name", "system_instruction", "prompt", "input_types", "is_enabled"):
+    for field in ("name", "system_instruction", "input_types", "is_enabled"):
         value = getattr(payload, field)
         if value is not None:
             setattr(row, field, value)
@@ -58,8 +59,11 @@ def delete_agent(agent_id: str, db: Session = Depends(get_db)):
     row = db.query(Agent).filter(Agent.id == agent_id).first()
     if not row:
         raise HTTPException(404, "agent not found")
-    # Lab convenience: an agent's attributes go with it.
-    db.query(Attribute).filter(Attribute.agent_id == agent_id).delete()
+    # Drop this agent's association links, then delete attributes left with
+    # ZERO links (orphans). Shared attributes (still linked elsewhere) survive.
+    db.execute(agent_attributes.delete().where(agent_attributes.c.agent_id == agent_id))
+    still_linked = select(agent_attributes.c.attribute_id)
+    db.query(Attribute).filter(~Attribute.id.in_(still_linked)).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
     return {"ok": True}

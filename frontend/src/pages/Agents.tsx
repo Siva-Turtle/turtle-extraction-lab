@@ -14,13 +14,12 @@ export type Agent = {
   id: string;
   name: string;
   system_instruction: string;
-  prompt: string;
   input_types: string[];
   is_enabled: boolean;
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-const EMPTY = { name: "", system_instruction: "", prompt: "", input_types: [] as string[], is_enabled: true };
+const EMPTY = { name: "", system_instruction: "", input_types: [] as string[], is_enabled: true };
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -47,7 +46,7 @@ export default function Agents() {
     mutationFn: async (id: string) => (await api.delete(`/agents/${id}`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents", "attributes"] });
-      toast.success("Agent deleted (its attributes went with it)");
+      toast.success("Agent deleted (shared attributes stay with their other agents)");
     },
     onError: () => toast.error("Delete failed"),
   });
@@ -91,7 +90,7 @@ export default function Agents() {
     <div className="grid gap-4">
       <PageHeader
         title="Agents"
-        description="Define system instruction + prompt per agent. Deleting an agent deletes its attributes."
+        description="Define the system instruction per agent. Runs use scrubbed transcription. Attributes can be shared across agents."
         actions={
           <Button size="sm" onClick={() => setEditing({ ...EMPTY })}>
             <Plus className="h-4 w-4" aria-hidden="true" /> New agent
@@ -158,7 +157,7 @@ export default function Agents() {
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={() => window.confirm(`Delete agent "${a.name}" and its attributes?`) && remove.mutate(a.id)}
+                    onClick={() => window.confirm(`Delete agent "${a.name}"? Shared attributes stay with their other agents.`) && remove.mutate(a.id)}
                     aria-label={`Delete ${a.name}`}
                   >
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -167,13 +166,10 @@ export default function Agents() {
               </div>
               <details className="mt-3">
                 <summary className="cursor-pointer font-heading text-xs font-semibold text-[#4a5058] dark:text-[#C3C2B7]">
-                  System instruction + prompt
+                  System instruction
                 </summary>
                 <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f2f3] p-3 font-sans text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]">
                   {a.system_instruction || "—"}
-                </pre>
-                <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f2f3] p-3 font-sans text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]">
-                  {a.prompt || "—"}
                 </pre>
               </details>
             </Card>
@@ -197,15 +193,6 @@ export default function Agents() {
               value={editing.system_instruction}
               onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
               rows={3}
-              className={fieldTextarea}
-            />
-          </label>
-          <label className={cn(fieldLabel, "mt-3 block")}>
-            Prompt
-            <textarea
-              value={editing.prompt}
-              onChange={(e) => setEditing({ ...editing, prompt: e.target.value })}
-              rows={4}
               className={fieldTextarea}
             />
           </label>

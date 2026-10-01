@@ -301,13 +301,13 @@ def test_runs_with_meeting_id_uses_scrubbed_text(client, monkeypatch):
     _install_mongo(monkeypatch)
     seen = {}
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         seen["user"] = user
         return ({"ok": {"value": "1", "confidence": 1.0, "confidence_type": "quoted", "evidence": "e"}},
                 {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
 
     monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
-    aid = client.post("/api/v1/agents", json={"name": "ScrubAgent", "prompt": "p"}).json()["id"]
+    aid = client.post("/api/v1/agents", json={"name": "ScrubAgent"}).json()["id"]
 
     # meeting_id wins: junk client text + non-transcription type are ignored.
     run = client.post(

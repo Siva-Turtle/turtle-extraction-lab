@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.openrouter import complete_json, get_model_pricing
-from app.db.models import Agent, Attribute, Feedback, Run, RunLog
+from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut
@@ -12,11 +12,24 @@ from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, Run
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
 
-def _agent_prompt(agent: Agent, attrs: list[Attribute], input_type: str, input_data: str) -> str:
-    attr_lines = "\n".join(f"- {a.name} ({a.type}): {a.description}" for a in attrs) or "- (no attributes defined)"
-    return f"""{agent.prompt}
+def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
+    return (
+        db.query(Attribute)
+        .join(agent_attributes, agent_attributes.c.attribute_id == Attribute.id)
+        .filter(agent_attributes.c.agent_id == agent_id)
+        .all()
+    )
 
-Input type: {input_type}
+
+def _attr_line(a: Attribute) -> str:
+    if a.type == "enum" and (a.enum_values or []):
+        return f"- {a.name} (enum: {' | '.join(a.enum_values)}): {a.description}"
+    return f"- {a.name} ({a.type}): {a.description}"
+
+
+def _agent_prompt(agent: Agent, attrs: list[Attribute], input_type: str, input_data: str) -> str:
+    attr_lines = "\n".join(_attr_line(a) for a in attrs) or "- (no attributes defined)"
+    return f"""Input type: {input_type}
 Attributes to extract:
 {attr_lines}
 
@@ -25,6 +38,30 @@ Return a JSON object keyed by attribute name. Each value must be an object with
 
 Input data:
 {input_data}"""
+
+
+def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
+    """OpenAPI-compatible object schema for this run's attributes.
+
+    All properties optional (required: []), no $refs. Returns None when there
+    are no attributes (caller falls back to legacy json_object mode).
+    """
+    if not attrs:
+        return None
+    properties: dict = {}
+    for a in attrs:
+        if a.type == "number":
+            prop: dict = {"type": "number", "description": a.description or ""}
+        elif a.type == "boolean":
+            prop = {"type": "boolean", "description": a.description or ""}
+        elif a.type == "enum":
+            prop = {"type": "string", "description": a.description or "",
+                    "enum": list(a.enum_values or [])}
+        else:
+            prop = {"type": "string", "description": a.description or ""}
+        properties[a.name] = prop
+    return {"type": "object", "properties": properties,
+            "required": [], "additionalProperties": False}
 
 
 @router.post("")
@@ -52,10 +89,11 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     total_in = 0
     total_out = 0
     for agent in agents:
-        attrs = db.query(Attribute).filter(Attribute.agent_id == agent.id).all()
+        attrs = _attrs_for_agent(db, agent.id)
         snapshots[agent.id] = {
-            "name": agent.name, "system_instruction": agent.system_instruction, "prompt": agent.prompt,
-            "attributes": [{"name": a.name, "type": a.type, "description": a.description, "json_schema": a.json_schema or {}} for a in attrs],
+            "name": agent.name, "system_instruction": agent.system_instruction,
+            "attributes": [{"name": a.name, "type": a.type, "description": a.description,
+                            "enum_values": a.enum_values or []} for a in attrs],
         }
         agent_start = perf_counter()
         prompt_tokens = 0
@@ -64,7 +102,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         try:
             parsed, usage = await complete_json(
                 model=payload.model, system=agent.system_instruction or "Extract structured data.",
-                user=_agent_prompt(agent, attrs, input_type, input_data))
+                user=_agent_prompt(agent, attrs, input_type, input_data),
+                json_schema=build_extraction_schema(attrs))
             outputs[agent.id] = parsed
             try:
                 prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)

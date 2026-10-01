@@ -86,6 +86,22 @@ def test_complete_json_usage_partial_is_zeros(monkeypatch):
     assert usage == {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 0}
 
 
+def test_complete_json_response_format_modes(monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    seen: dict = {}
+    payload = _chat_payload(json.dumps({"a": 1}))
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload, seen=seen))
+    asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
+    assert seen["post_json"]["response_format"] == {"type": "json_object"}
+    schema = {"type": "object", "properties": {"mood": {
+        "type": "string", "description": "Mood", "enum": ["good", "bad"]}},
+        "required": [], "additionalProperties": False}
+    asyncio.run(openrouter.complete_json(model="m", system="s", user="u", json_schema=schema))
+    assert seen["post_json"]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "extraction", "strict": False, "schema": schema}}
+
+
 def test_pricing_unknown_without_key(monkeypatch):
     openrouter.clear_pricing_cache()
     monkeypatch.setattr(settings, "openrouter_api_key", "")
@@ -120,15 +136,15 @@ def test_pricing_failure_returns_none(monkeypatch):
 
 
 def _make_agent(client):
-    aid = client.post("/api/v1/agents", json={"name": "U", "prompt": "p"}).json()["id"]
-    client.post("/api/v1/attributes", json={"agent_id": aid, "name": "email"})
+    aid = client.post("/api/v1/agents", json={"name": "U"}).json()["id"]
+    client.post("/api/v1/attributes", json={"agent_ids": [aid], "name": "email"})
     return aid
 
 
 def test_run_usage_pricing_unknown_cost_none(client, monkeypatch):
     aid = _make_agent(client, )
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         return ({"email": {"value": "x", "confidence": 1.0,
                            "confidence_type": "quoted", "evidence": "e"}},
                 {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
@@ -165,7 +181,7 @@ def test_run_usage_pricing_unknown_cost_none(client, monkeypatch):
 def test_run_usage_pricing_known_exact_math(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
@@ -194,7 +210,7 @@ def test_run_error_agent_zeros(client, monkeypatch):
     # Deterministic: first agent succeeds, second fails.
     calls = {"n": 0}
 
-    async def _ordered(*, model, system, user):
+    async def _ordered(*, model, system, user, json_schema=None):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("provider down")
@@ -227,7 +243,7 @@ def test_run_error_agent_zeros(client, monkeypatch):
 def test_run_legacy_payload_without_filters_defaults(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     async def _fake_pricing(model):
@@ -255,7 +271,7 @@ def test_run_usage_split_totals_multi_agent(client, monkeypatch):
     aid2 = _make_agent(client)
     calls = {"n": 0}
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         # DB return order is not guaranteed — vary tokens by call order and
         # map assertions via the recorded prompt_tokens below.
         calls["n"] += 1
@@ -290,7 +306,7 @@ def test_run_usage_split_totals_multi_agent(client, monkeypatch):
 def test_run_usage_partial_pricing_input_known_output_unknown(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
@@ -311,7 +327,7 @@ def test_run_usage_partial_pricing_input_known_output_unknown(client, monkeypatc
 def test_run_usage_partial_pricing_output_known_input_unknown(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user):
+    async def _fake_complete(*, model, system, user, json_schema=None):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
@@ -334,7 +350,7 @@ def test_run_error_agent_known_pricing_zero_costs(client, monkeypatch):
     aid_bad = _make_agent(client)
     calls = {"n": 0}
 
-    async def _ordered(*, model, system, user):
+    async def _ordered(*, model, system, user, json_schema=None):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("provider down")

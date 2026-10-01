@@ -24,15 +24,29 @@ def is_configured() -> bool:
     return bool(settings.openrouter_api_key)
 
 
-async def complete_json(*, model: str, system: str, user: str) -> tuple[dict, dict]:
+async def complete_json(
+    *, model: str, system: str, user: str, json_schema: dict | None = None,
+) -> tuple[dict, dict]:
     """Call OpenRouter and return (parsed_json, usage).
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
     "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
     zeros and never raise.
+
+    ``json_schema`` is the inner OpenAPI-compatible object schema
+    (``{"type": "object", "properties": {...}, ...}``). When given, the call
+    uses a ``json_schema`` response_format envelope; when None, it falls back
+    to the legacy ``{"type": "json_object"}`` mode.
     """
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
+    if json_schema is None:
+        response_format: dict = {"type": "json_object"}
+    else:
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": "extraction", "strict": False, "schema": json_schema},
+        }
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
@@ -42,7 +56,7 @@ async def complete_json(*, model: str, system: str, user: str) -> tuple[dict, di
             },
             json={
                 "model": model,
-                "response_format": {"type": "json_object"},
+                "response_format": response_format,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
