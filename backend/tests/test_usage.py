@@ -144,7 +144,7 @@ def _make_agent(client):
 def test_run_usage_pricing_unknown_cost_none(client, monkeypatch):
     aid = _make_agent(client, )
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         return ({"email": {"value": "x", "confidence": 1.0,
                            "confidence_type": "quoted", "evidence": "e"}},
                 {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
@@ -152,7 +152,7 @@ def test_run_usage_pricing_unknown_cost_none(client, monkeypatch):
     async def _fake_pricing(model):
         return (None, None)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -181,14 +181,14 @@ def test_run_usage_pricing_unknown_cost_none(client, monkeypatch):
 def test_run_usage_pricing_known_exact_math(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
         assert model == "test-model"
         return (0.000001, 0.000002)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     usage = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -210,7 +210,7 @@ def test_run_error_agent_zeros(client, monkeypatch):
     # Deterministic: first agent succeeds, second fails.
     calls = {"n": 0}
 
-    async def _ordered(*, model, system, user, json_schema=None):
+    async def _ordered(payload):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("provider down")
@@ -219,7 +219,7 @@ def test_run_error_agent_zeros(client, monkeypatch):
     async def _fake_pricing(model):
         return (None, None)
 
-    monkeypatch.setattr(runs_router, "complete_json", _ordered)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _ordered)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -243,13 +243,13 @@ def test_run_error_agent_zeros(client, monkeypatch):
 def test_run_legacy_payload_without_filters_defaults(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     async def _fake_pricing(model):
         return (None, None)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -271,7 +271,7 @@ def test_run_usage_split_totals_multi_agent(client, monkeypatch):
     aid2 = _make_agent(client)
     calls = {"n": 0}
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         # DB return order is not guaranteed — vary tokens by call order and
         # map assertions via the recorded prompt_tokens below.
         calls["n"] += 1
@@ -282,7 +282,7 @@ def test_run_usage_split_totals_multi_agent(client, monkeypatch):
     async def _fake_pricing(model):
         return (0.000001, 0.000002)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -306,13 +306,13 @@ def test_run_usage_split_totals_multi_agent(client, monkeypatch):
 def test_run_usage_partial_pricing_input_known_output_unknown(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
         return (0.000001, None)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     usage = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -327,13 +327,13 @@ def test_run_usage_partial_pricing_input_known_output_unknown(client, monkeypatc
 def test_run_usage_partial_pricing_output_known_input_unknown(client, monkeypatch):
     aid = _make_agent(client)
 
-    async def _fake_complete(*, model, system, user, json_schema=None):
+    async def _fake_complete(payload):
         return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
 
     async def _fake_pricing(model):
         return (None, 0.000002)
 
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     usage = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
@@ -350,7 +350,7 @@ def test_run_error_agent_known_pricing_zero_costs(client, monkeypatch):
     aid_bad = _make_agent(client)
     calls = {"n": 0}
 
-    async def _ordered(*, model, system, user, json_schema=None):
+    async def _ordered(payload):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("provider down")
@@ -359,7 +359,7 @@ def test_run_error_agent_known_pricing_zero_costs(client, monkeypatch):
     async def _fake_pricing(model):
         return (0.000001, 0.000002)
 
-    monkeypatch.setattr(runs_router, "complete_json", _ordered)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _ordered)
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",

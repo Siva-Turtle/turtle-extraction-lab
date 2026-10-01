@@ -4,15 +4,15 @@ import app.modules.runs.router as runs_router
 from app.modules.runs.router import build_extraction_schema
 
 
-async def _fake_complete(*, model, system, user, json_schema=None):
-    assert model == "test-model"
+async def _fake_complete(payload):
+    assert payload["model"] == "test-model"
     return ({"email": {"value": "a@b.in", "confidence": 0.9,
                       "confidence_type": "quoted", "evidence": "mail me at a@b.in"}},
             {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
 
 
 def _setup(client, monkeypatch):
-    monkeypatch.setattr(runs_router, "complete_json", _fake_complete)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
     aid = client.post("/api/v1/agents", json={"name": "A"}).json()["id"]
     client.post("/api/v1/attributes", json={"agent_ids": [aid], "name": "email"})
     return aid
@@ -62,12 +62,11 @@ def test_run_without_key_records_error(client):
 def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
     seen = {}
 
-    async def _capture(*, model, system, user, json_schema=None):
-        seen.setdefault("calls", []).append(
-            {"system": system, "user": user, "json_schema": json_schema})
+    async def _capture(payload):
+        seen.setdefault("calls", []).append(payload)
         return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
-    monkeypatch.setattr(runs_router, "complete_json", _capture)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
     aid1 = client.post("/api/v1/agents", json={"name": "A1", "system_instruction": "sys1"}).json()["id"]
     aid2 = client.post("/api/v1/agents", json={"name": "A2", "system_instruction": "sys2"}).json()["id"]
     client.post("/api/v1/attributes", json={
@@ -80,10 +79,11 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
     assert set(body["outputs"]) == {aid1, aid2}
     assert len(seen["calls"]) == 2
     for call in seen["calls"]:
+        user_text = call["messages"][1]["content"]
         # enum options ride along in the user prompt...
-        assert "- mood (enum: good | bad): Caller mood" in call["user"]
+        assert "- mood (enum: good | bad): Caller mood" in user_text
         # ...and in the structured schema envelope.
-        props = call["json_schema"]["properties"]
+        props = call["response_format"]["json_schema"]["schema"]["properties"]
         assert props["mood"] == {"type": "string", "description": "Caller mood",
                                  "enum": ["good", "bad"]}
 

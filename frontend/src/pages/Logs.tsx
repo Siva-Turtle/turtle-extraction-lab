@@ -40,6 +40,7 @@ type LogRow = {
   agent_snapshot: Record<string, { name: string; attributes: SnapshotAttr[] }>;
   attribute_snapshot?: Record<string, unknown>;
   outputs: Record<string, unknown>;
+  requests?: Record<string, unknown>;
   feedback: Record<string, Record<string, { rating: string; remarks: string }>>;
   usage?: RunUsage;
   filters?: LogFilters;
@@ -295,17 +296,43 @@ function LogDrawer({
         </div>
 
         {tab === "pretty" && <PrettyPanel log={log} fbCount={fbCount} />}
-        {tab === "raw" && (
-          <div role="tabpanel">
-            <h3 className={sectionLabel}>Full log row (JSON)</h3>
-            <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(log, null, 2)}</pre>
-          </div>
-        )}
+        {tab === "raw" && <RawPanel log={log} />}
         {tab === "analytics" && (
           <AnalyticsPanel log={log} usage={usage} chips={chips} fbCount={fbCount} />
         )}
       </div>
     </Drawer>
+  );
+}
+
+function RawPanel({ log }: { log: LogRow }) {
+  const req = log.requests;
+  const hasReq =
+    !!req && typeof req === "object" && Object.keys(req as Record<string, unknown>).length > 0;
+  const out = log.outputs;
+  const hasOut =
+    !!out && typeof out === "object" && Object.keys(out as Record<string, unknown>).length > 0;
+  return (
+    <div className="grid gap-4" role="tabpanel">
+      <div>
+        <h3 className={sectionLabel}>1 · Sent to LLM (request)</h3>
+        {hasReq ? (
+          <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(req, null, 2)}</pre>
+        ) : (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">
+            Request payload not recorded for runs logged before this change.
+          </p>
+        )}
+      </div>
+      <div>
+        <h3 className={sectionLabel}>2 · Received from LLM (response)</h3>
+        {hasOut ? (
+          <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(out, null, 2)}</pre>
+        ) : (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No response recorded.</p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -24,10 +24,68 @@ def is_configured() -> bool:
     return bool(settings.openrouter_api_key)
 
 
+def build_chat_payload(
+    *, model: str, system: str, user: str, json_schema: dict | None = None,
+) -> dict:
+    """Build the EXACT JSON body POSTed to OpenRouter chat-completions.
+
+    Pure function (no I/O, no secrets): ``{"model", "response_format",
+    "messages": [{"role": "system", ...}, {"role": "user", ...}]}``.
+    ``json_schema`` is the inner OpenAPI-compatible object schema; when
+    given, the envelope is a ``json_schema`` response_format, else the
+    legacy ``{"type": "json_object"}`` mode.
+    """
+    if json_schema is None:
+        response_format: dict = {"type": "json_object"}
+    else:
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": "extraction", "strict": False, "schema": json_schema},
+        }
+    return {
+        "model": model,
+        "response_format": response_format,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+
+
+async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
+    """POST a prebuilt payload and return (parsed_json, usage).
+
+    usage is always {"prompt_tokens": int, "completion_tokens": int,
+    "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
+    zeros and never raise.
+    """
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    import json as _json
+
+    content = data["choices"][0]["message"]["content"]
+    parsed = _json.loads(content) if isinstance(content, str) else content
+    return parsed, _extract_usage(data.get("usage"))
+
+
 async def complete_json(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
 ) -> tuple[dict, dict]:
     """Call OpenRouter and return (parsed_json, usage).
+
+    Thin wrapper over build_chat_payload + complete_json_payload so
+    existing call sites/tests keep working.
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
     "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
@@ -38,38 +96,9 @@ async def complete_json(
     uses a ``json_schema`` response_format envelope; when None, it falls back
     to the legacy ``{"type": "json_object"}`` mode.
     """
-    if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
-    if json_schema is None:
-        response_format: dict = {"type": "json_object"}
-    else:
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {"name": "extraction", "strict": False, "schema": json_schema},
-        }
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openrouter_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "response_format": response_format,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    import json as _json
-
-    content = data["choices"][0]["message"]["content"]
-    parsed = _json.loads(content) if isinstance(content, str) else content
-    return parsed, _extract_usage(data.get("usage"))
+    return await complete_json_payload(
+        build_chat_payload(model=model, system=system, user=user, json_schema=json_schema)
+    )
 
 
 def _extract_usage(usage: object) -> dict:

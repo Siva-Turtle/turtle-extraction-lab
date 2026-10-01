@@ -86,4 +86,5 @@ class RunLog(Base):
     feedback: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    requests: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

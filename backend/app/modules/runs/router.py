@@ -1,9 +1,10 @@
 from time import perf_counter
+import copy
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.openrouter import complete_json, get_model_pricing
+from app.core.openrouter import build_chat_payload, complete_json, complete_json_payload, get_model_pricing
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
 from app.modules.meetings.router import get_scrubbed_transcript
@@ -86,6 +87,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     outputs: dict = {}
     snapshots: dict = {}
     per_agent: dict = {}
+    requests: dict = {}
     total_in = 0
     total_out = 0
     for agent in agents:
@@ -99,11 +101,14 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
+        system = agent.system_instruction or "Extract structured data."
+        user_prompt = _agent_prompt(agent, attrs, input_type, input_data)
+        schema = build_extraction_schema(attrs)
+        payload_body = build_chat_payload(
+            model=payload.model, system=system, user=user_prompt, json_schema=schema)
+        requests[agent.id] = copy.deepcopy(payload_body)
         try:
-            parsed, usage = await complete_json(
-                model=payload.model, system=agent.system_instruction or "Extract structured data.",
-                user=_agent_prompt(agent, attrs, input_type, input_data),
-                json_schema=build_extraction_schema(attrs))
+            parsed, usage = await complete_json_payload(payload_body)
             outputs[agent.id] = parsed
             try:
                 prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
@@ -182,9 +187,9 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     # Denormalized log row — snapshots only, no FK to agents/attributes.
     db.add(RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
-                  usage=usage, filters=filters))
+                  usage=usage, filters=filters, requests=requests))
     db.commit()
-    return {"id": run.id, "outputs": outputs, "usage": usage}
+    return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests}
 
 
 @router.get("", response_model=list[RunOut])

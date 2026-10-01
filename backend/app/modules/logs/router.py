@@ -13,6 +13,7 @@ def _out(r: RunLog) -> dict:
             "agent_snapshot": r.agent_snapshot or {}, "attribute_snapshot": r.attribute_snapshot or {},
             "outputs": r.outputs or {}, "feedback": r.feedback or {},
             "usage": getattr(r, "usage", None) or {}, "filters": getattr(r, "filters", None) or {},
+            "requests": getattr(r, "requests", None) or {},
             "created_at": r.created_at}
 
 
