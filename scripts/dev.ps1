@@ -94,6 +94,68 @@ function Assert-PortFree {
     }
 }
 
+function Stop-PortOwner {
+    # Kill-and-restart for this lab only: when the passed-in port tests open,
+    # kill each holder that looks like this lab, refuse anything else.
+    # Only the passed-in $Port is ever probed or acted on here.
+    param(
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not (Test-TcpPortOpen -ComputerName '127.0.0.1' -Port $Port -TimeoutMs 500)) { return }
+    $ownerPids = @()
+    try {
+        $conns = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        if ($conns.Count -eq 0) {
+            $conns = @(Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue)
+        }
+        foreach ($c in $conns) {
+            if ($null -ne $c.OwningProcess) { $ownerPids += $c.OwningProcess }
+        }
+        $ownerPids = @($ownerPids | Sort-Object -Unique)
+    } catch {
+        $owner = Get-PortOwnerDescription -Port $Port
+        Write-Error "Port $Port is already in use by $owner. Stop that process first; not starting a duplicate."
+    }
+    if ($ownerPids.Count -eq 0) {
+        $owner = Get-PortOwnerDescription -Port $Port
+        Write-Error "Port $Port is already in use by $owner. Stop that process first; not starting a duplicate."
+    }
+    $unrelatedFound = $false
+    foreach ($holderId in $ownerPids) {
+        if ($holderId -eq 0 -or $holderId -eq 4) { $unrelatedFound = $true; continue }
+        $cmd = $null
+        try {
+            $wp = Get-CimInstance Win32_Process -Filter "ProcessId = $holderId" -ErrorAction SilentlyContinue
+            if ($null -ne $wp) { $cmd = $wp.CommandLine }
+            else { continue }
+        } catch {
+            continue
+        }
+        $isLab = $false
+        if ($cmd -and ($cmd -like '*turtle-extraction-lab*')) { $isLab = $true }
+        elseif ($Label -eq 'backend' -and $cmd -and ($cmd -like '*uvicorn*') -and ($cmd -like "*$Port*")) { $isLab = $true }
+        elseif ($Label -eq 'frontend' -and $cmd -and (($cmd -like '*vite*') -or ($cmd -like '*node*'))) { $isLab = $true }
+        if (-not $isLab) { $unrelatedFound = $true; continue }
+        Stop-ProcessTree -ProcessId $holderId
+        Write-Host "Stopped stale lab $Label holder PID $holderId on port $Port."
+    }
+    if ($unrelatedFound) {
+        $owner = Get-PortOwnerDescription -Port $Port
+        if (Test-TcpPortOpen -ComputerName '127.0.0.1' -Port $Port -TimeoutMs 500) {
+            Write-Error "Port $Port is already in use by $owner. Stop that process first; not starting a duplicate."
+        }
+        return
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (-not (Test-TcpPortOpen -ComputerName '127.0.0.1' -Port $Port -TimeoutMs 500)) { return }
+        Start-Sleep -Milliseconds 500
+    }
+    $owner = Get-PortOwnerDescription -Port $Port
+    Write-Error "Port $Port is already in use by $owner. Stop that process first; not starting a duplicate."
+}
+
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][int]$ProcessId)
     try {
@@ -151,10 +213,11 @@ if (-not (Test-Path -LiteralPath $DotEnvPath -PathType Leaf)) {
     Write-Error "backend/.env not found. Run ./scripts/db-init.ps1 once first (it creates the turtle_agent_lab database, writes backend/.env, migrates and seeds), then start the lab again."
 }
 
-# Idempotency: clear stale lab orphans first, then refuse duplicates.
+# Idempotency: clear stale lab orphans first, then kill-and-restart any live
+# previous lab holder on the same port (refusing only unrelated processes).
 Stop-StaleBackend
-Assert-PortFree -Port $ApiPort
-Assert-PortFree -Port $WebPort
+Stop-PortOwner -Port $ApiPort -Label 'backend'
+Stop-PortOwner -Port $WebPort -Label 'frontend'
 
 # Fail fast when Postgres is down so uvicorn errors are not a mystery.
 if (-not (Test-TcpPortOpen -ComputerName '127.0.0.1' -Port 5432 -TimeoutMs 1000)) {
