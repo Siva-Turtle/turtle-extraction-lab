@@ -15,6 +15,7 @@ class AgentUpdate(BaseModel):
     system_instruction: str | None = None
     input_types: list[str] | None = None
     is_enabled: bool | None = None
+    attribute_ids: list[str] | None = None
 
 
 class AgentOut(BaseModel):

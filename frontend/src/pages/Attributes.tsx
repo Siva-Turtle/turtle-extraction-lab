@@ -24,12 +24,11 @@ export type LabAttribute = {
 
 const TYPES: AttributeType[] = ["string", "number", "boolean", "enum"];
 const EMPTY: {
-  agent_ids: string[];
   name: string;
   type: AttributeType;
   description: string;
   enum_values: string[];
-} = { agent_ids: [], name: "", type: "string", description: "", enum_values: [] };
+} = { name: "", type: "string", description: "", enum_values: [] };
 
 /** One value per line or comma-separated — split on newlines+commas, trim, drop empties. */
 function parseEnumValues(raw: string): string[] {
@@ -52,12 +51,11 @@ export default function Attributes() {
       (await api.get("/attributes", { params: agentFilter ? { agent_id: agentFilter } : {} }))
         .data as LabAttribute[],
   });
-  const [editing, setEditing] = useState<(typeof EMPTY & { id?: string }) | null>(null);
+  const [editing, setEditing] = useState<(typeof EMPTY & { id?: string; agent_ids?: string[] }) | null>(null);
 
   const save = useMutation({
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
       const body = {
-        agent_ids: v.agent_ids,
         name: v.name,
         type: v.type,
         description: v.description,
@@ -85,22 +83,7 @@ export default function Attributes() {
   });
 
   function startNew() {
-    if (agents.length === 0) {
-      toast.error("Create an agent first — every attribute maps to one or more agents");
-      return;
-    }
-    const seed =
-      agentFilter && agents.some((a) => a.id === agentFilter) ? agentFilter : agents[0].id;
-    setEditing({ ...EMPTY, agent_ids: [seed] });
-  }
-
-  function toggleAgent(id: string) {
-    if (!editing) return;
-    const has = editing.agent_ids.includes(id);
-    setEditing({
-      ...editing,
-      agent_ids: has ? editing.agent_ids.filter((x) => x !== id) : [...editing.agent_ids, id],
-    });
+    setEditing({ ...EMPTY, enum_values: [] });
   }
 
   function agentNames(r: LabAttribute): string {
@@ -112,10 +95,6 @@ export default function Attributes() {
 
   function trySave() {
     if (!editing) return;
-    if (editing.agent_ids.length === 0) {
-      toast.error("Pick at least one agent");
-      return;
-    }
     if (!editing.name.trim()) {
       toast.error("Name is required");
       return;
@@ -131,7 +110,7 @@ export default function Attributes() {
     <div className="grid gap-4">
       <PageHeader
         title="Attributes"
-        description="Type, description, allowed values — each mapped to one or more agents. Every agent returns the same shape per attribute: value · confidence · confidence_type · evidence (missing attributes are omitted, never null)."
+        description="Type, description, allowed values — mapped to agents on the agent card. Every agent returns the same shape per attribute: value · confidence · confidence_type · evidence (missing attributes are omitted, never null)."
         actions={
           <>
             <select
@@ -159,7 +138,7 @@ export default function Attributes() {
       ) : data.length === 0 ? (
         <Card>
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-            No attributes here yet — map the first one to one or more agents.
+            No attributes here yet — create the first one, then map it on the agent card.
           </p>
         </Card>
       ) : (
@@ -234,33 +213,23 @@ export default function Attributes() {
       {editing && (
         <Modal title={editing.id ? "Edit attribute" : "New attribute"} onClose={() => setEditing(null)}>
           <div className={fieldLabel}>
-            Agents <span aria-hidden="true" className="text-[#ef4444]"> *</span>
-            {agents.length === 0 ? (
-              <p className="mt-1 font-sans text-sm font-normal normal-case tracking-normal text-[#b91c1c]">
-                No agents yet — create one on the Agents tab.
+            Linked agents
+            {(editing.agent_ids ?? []).length === 0 ? (
+              <p className="mt-1.5 font-sans text-sm font-normal normal-case tracking-normal text-[#8a8f98]">
+                Not mapped yet — map it on the agent card.
               </p>
             ) : (
               <div className="mt-1.5 flex flex-wrap gap-2">
-                {agents.map((a) => (
-                  <label
-                    key={a.id}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
-                      editing.agent_ids.includes(a.id)
-                        ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                        : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={editing.agent_ids.includes(a.id)}
-                      onChange={() => toggleAgent(a.id)}
-                    />
-                    {a.name}
-                  </label>
+                {(editing.agent_ids ?? []).map((id) => (
+                  <Badge key={id} tone="neutral">
+                    {agents.find((a) => a.id === id)?.name ?? id.slice(0, 8)}
+                  </Badge>
                 ))}
               </div>
             )}
+            <p className="mt-1.5 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
+              Mapped on the agent card — edit there.
+            </p>
           </div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className={fieldLabel}>

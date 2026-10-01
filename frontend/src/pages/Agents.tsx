@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -9,6 +9,7 @@ import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
+import type { LabAttribute } from "./Attributes";
 
 export type Agent = {
   id: string;
@@ -20,7 +21,316 @@ export type Agent = {
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
 export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
-const EMPTY = { name: "", system_instruction: DEFAULT_SYSTEM_INSTRUCTION, input_types: [] as string[], is_enabled: true };
+
+type Editing = {
+  id?: string;
+  name: string;
+  system_instruction: string;
+  input_types: string[];
+  is_enabled: boolean;
+};
+
+type SaveInput = Editing & { attribute_ids: string[] };
+
+const EMPTY: Editing = {
+  name: "",
+  system_instruction: DEFAULT_SYSTEM_INSTRUCTION,
+  input_types: [],
+  is_enabled: true,
+};
+
+/** Mirrors backend result contract (runs router) so the local preview matches server truth. */
+const RESULT_CONTRACT =
+  'Return a JSON object keyed by attribute name. Each value is an object with "value" ' +
+  '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), ' +
+  '"evidence" (exact quote from the input). If an attribute is not found in the input, ' +
+  'omit it from the response — never return null. ' +
+  'quoted = value stated word-for-word (evidence is the exact quote); ' +
+  'inferred = value concluded from the input but not stated verbatim ' +
+  '(evidence is the supporting passage); normalized = value standardized from a stated form ' +
+  'such as phone digits, date formats, or casing (evidence is the original stated form).';
+
+const LOCAL_USER_TEMPLATE = "{{scrubbed_transcription}} (run-time input arrives as the user message)";
+
+type PreviewAttr = {
+  name: string;
+  type: string;
+  description: string;
+  enum_values: string[];
+};
+
+type PromptPreview = {
+  agent_id: string;
+  system: string;
+  user_template: string;
+  response_format: unknown;
+  attributes: PreviewAttr[];
+};
+
+/** Mirrors backend `_attr_line`: `- name (type): description [a | b]`. */
+function attrLine(a: PreviewAttr): string {
+  const base = `- ${a.name} (${a.type}): ${a.description}`;
+  if (a.type === "enum" && a.enum_values.length > 0) {
+    return `${base} [${a.enum_values.join(" | ")}]`;
+  }
+  return base;
+}
+
+/** Mirrors backend `_agent_system_content`. */
+function buildLocalSystem(baseInstruction: string, attrs: PreviewAttr[]): string {
+  const base = baseInstruction || "Extract structured data.";
+  const lines = attrs.map(attrLine).join("\n") || "- (no attributes defined)";
+  return `${base}\n\nAttributes to extract:\n${lines}\n\n${RESULT_CONTRACT}`;
+}
+
+/** Mirrors backend `build_extraction_schema` + `build_chat_payload` envelope. */
+function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown> {
+  if (attrs.length === 0) {
+    return { type: "json_object" };
+  }
+  const properties: Record<string, unknown> = {};
+  for (const a of attrs) {
+    const valueSchema: Record<string, unknown> = { description: `Extracted value for ${a.name}` };
+    if (a.type === "enum" && a.enum_values.length > 0) {
+      valueSchema.enum = [...a.enum_values];
+    }
+    properties[a.name] = {
+      type: "object",
+      description: a.description || a.name,
+      properties: {
+        value: valueSchema,
+        confidence: { type: "number" },
+        confidence_type: {
+          type: "string",
+          enum: ["quoted", "inferred", "normalized"],
+          description: "How the value was obtained: quoted, inferred, or normalized.",
+        },
+        evidence: { type: "string" },
+      },
+      required: ["confidence"],
+      additionalProperties: false,
+    };
+  }
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "extraction",
+      strict: false,
+      schema: { type: "object", properties, required: [], additionalProperties: false },
+    },
+  };
+}
+
+function toPreviewAttr(a: LabAttribute): PreviewAttr {
+  return { name: a.name, type: a.type, description: a.description, enum_values: a.enum_values ?? [] };
+}
+
+function PreviewBlock({ label, text }: { label: string; text: string }): React.JSX.Element {
+  return (
+    <div className="rounded-xl border border-[#e5e7eb] bg-[#f7f8f8] p-3 dark:border-white/10 dark:bg-white/5">
+      <p className="font-heading text-[11px] font-bold uppercase tracking-wide text-[#8a8f98]">{label}</p>
+      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-[#1d1d1d] dark:text-[#F0EFEC]">
+        {text || "—"}
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * Live view of the exact LLM input for this agent. Display only — preview
+ * content is never sent to any model.
+ */
+function PreviewPanel({
+  agentId,
+  systemInstruction,
+  selected,
+}: {
+  agentId?: string;
+  systemInstruction: string;
+  selected: LabAttribute[];
+}): React.JSX.Element {
+  const [server, setServer] = useState<PromptPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toastedFor = useRef<string | null>(null);
+  const seq = useRef(0);
+  const selKey = selected.map((a) => a.id).join(",");
+
+  useEffect(() => {
+    if (!agentId) {
+      setServer(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const my = (seq.current += 1);
+    const t = window.setTimeout(() => {
+      setLoading(true);
+      api
+        .get(`/agents/${agentId}/prompt-preview`)
+        .then((res) => {
+          if (seq.current !== my) return;
+          setServer(res.data as PromptPreview);
+          setError(null);
+          setLoading(false);
+        })
+        .catch((e: unknown) => {
+          if (seq.current !== my) return;
+          const msg = e instanceof Error ? e.message : "Preview unavailable";
+          setError(msg);
+          setLoading(false);
+          const key = `${agentId}:${msg}`;
+          if (toastedFor.current !== key) {
+            toastedFor.current = key;
+            toast.error("Prompt preview unavailable — showing local build");
+          }
+        });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [agentId, selKey, systemInstruction]);
+
+  const attrs: PreviewAttr[] = selected.map(toPreviewAttr);
+  const base = systemInstruction || "Extract structured data.";
+  const inSync =
+    server !== null &&
+    server.attributes.map((a) => a.name).join("\0") === attrs.map((a) => a.name).join("\0") &&
+    server.system.startsWith(base);
+  const shown: PromptPreview =
+    server !== null && inSync
+      ? server
+      : {
+          agent_id: agentId ?? "unsaved",
+          system: buildLocalSystem(systemInstruction, attrs),
+          user_template: LOCAL_USER_TEMPLATE,
+          response_format: buildLocalResponseFormat(attrs),
+          attributes: attrs,
+        };
+  const isLocal = server === null || !inSync;
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className={fieldLabel}>LLM input preview</h3>
+        {loading ? (
+          <span className="font-sans text-xs text-[#8a8f98]">Loading server preview…</span>
+        ) : isLocal ? (
+          <span className="font-sans text-xs text-[#8a8f98]">local preview — server truth after save</span>
+        ) : (
+          <span className="font-sans text-xs text-[#0d5c4a] dark:text-[#5ee8cf]">server truth</span>
+        )}
+      </div>
+      {error !== null && (
+        <p className="font-sans text-xs text-[#b91c1c]">Server preview unavailable — showing the local build.</p>
+      )}
+      <PreviewBlock label="system" text={shown.system} />
+      <PreviewBlock label="user_template" text={shown.user_template} />
+      <PreviewBlock label="response_format" text={JSON.stringify(shown.response_format, null, 2)} />
+      <p className="font-sans text-[11px] text-[#8a8f98]">Display only — preview content is never sent to any model.</p>
+    </div>
+  );
+}
+
+function AttributeMultiSelect({
+  all,
+  selectedIds,
+  onChange,
+}: {
+  all: LabAttribute[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const selected = all.filter((a) => selectedIds.includes(a.id));
+  const q = filter.trim().toLowerCase();
+  const visible = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
+
+  function toggle(id: string) {
+    onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
+  }
+
+  return (
+    <div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((a) => (
+            <span
+              key={a.id}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+            >
+              {a.name}
+              <button
+                type="button"
+                onClick={() => toggle(a.id)}
+                aria-label={`Remove ${a.name}`}
+                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative mt-1.5">
+        <Button variant="secondary" size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="listbox">
+          {open ? "Close" : selected.length > 0 ? `Attributes (${selected.length})` : "Select attributes…"}
+        </Button>
+        {open && (
+          <>
+            <button
+              type="button"
+              aria-hidden="true"
+              tabIndex={-1}
+              onClick={() => setOpen(false)}
+              className="fixed inset-0 z-10 cursor-default bg-transparent"
+            />
+            <div
+              role="listbox"
+              aria-label="Attributes"
+              className="absolute z-20 mt-1 max-h-64 w-full min-w-56 overflow-auto rounded-xl border border-[#e5e7eb] bg-white p-2 shadow-lg dark:border-white/10 dark:bg-[#1a1a1a]"
+            >
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter…"
+                aria-label="Filter attributes"
+                className={fieldInput}
+              />
+              <div className="mt-2 grid gap-1.5">
+                {visible.length === 0 ? (
+                  <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">
+                    {all.length === 0 ? "No attributes yet — define them on the Attributes tab." : "No matches."}
+                  </p>
+                ) : (
+                  visible.map((a) => (
+                    <label
+                      key={a.id}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-sm normal-case tracking-normal",
+                        selectedIds.includes(a.id)
+                          ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                          : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                      )}
+                    >
+                      <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={() => toggle(a.id)} />
+                      <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                      <Badge tone="neutral">{a.type}</Badge>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      {all.length === 0 && (
+        <p className="mt-1 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
+          No attributes yet — define them on the Attributes tab.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -28,16 +338,63 @@ export default function Agents() {
     queryKey: ["agents"],
     queryFn: async () => (await api.get("/agents")).data as Agent[],
   });
-  const [editing, setEditing] = useState<(typeof EMPTY & { id?: string }) | null>(null);
+  const { data: allAttrs = [] } = useQuery({
+    queryKey: ["attributes", ""],
+    queryFn: async () => (await api.get("/attributes")).data as LabAttribute[],
+  });
+  const [editing, setEditing] = useState<Editing | null>(null);
+  /** Attribute selection override; null = derive from the fetched attributes list. */
+  const [selIds, setSelIds] = useState<string[] | null>(null);
+
+  function closeEditor() {
+    setEditing(null);
+    setSelIds(null);
+  }
+
+  function openNew() {
+    setEditing({ ...EMPTY, input_types: [] });
+    setSelIds([]);
+  }
+
+  function openEdit(a: Agent) {
+    setEditing({ id: a.id, name: a.name, system_instruction: a.system_instruction, input_types: [...a.input_types], is_enabled: a.is_enabled });
+    setSelIds(null);
+  }
+
+  const eid = editing?.id;
+  const effectiveIds: string[] =
+    selIds ?? (eid ? allAttrs.filter((a) => (a.agent_ids ?? []).includes(eid)).map((a) => a.id) : []);
+  const selectedAttrs = allAttrs.filter((a) => effectiveIds.includes(a.id));
 
   const save = useMutation({
-    mutationFn: async (v: typeof EMPTY & { id?: string }) =>
-      v.id
-        ? (await api.patch(`/agents/${v.id}`, v)).data
-        : (await api.post("/agents", v)).data,
+    mutationFn: async (v: SaveInput) => {
+      if (v.id) {
+        const body = {
+          name: v.name,
+          system_instruction: v.system_instruction,
+          input_types: v.input_types,
+          is_enabled: v.is_enabled,
+          attribute_ids: v.attribute_ids,
+        };
+        return (await api.patch(`/agents/${v.id}`, body)).data;
+      }
+      const created = (
+        await api.post("/agents", {
+          name: v.name,
+          system_instruction: v.system_instruction,
+          input_types: v.input_types,
+          is_enabled: v.is_enabled,
+        })
+      ).data as Agent;
+      if (v.attribute_ids.length > 0) {
+        await api.patch(`/agents/${created.id}`, { attribute_ids: v.attribute_ids });
+      }
+      return created;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
-      setEditing(null);
+      qc.invalidateQueries({ queryKey: ["attributes"] });
+      closeEditor();
       toast.success("Agent saved");
     },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Save failed"),
@@ -46,7 +403,8 @@ export default function Agents() {
   const remove = useMutation({
     mutationFn: async (id: string) => (await api.delete(`/agents/${id}`)).data,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["agents", "attributes"] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["attributes"] });
       toast.success("Agent deleted (shared attributes stay with their other agents)");
     },
     onError: () => toast.error("Delete failed"),
@@ -91,9 +449,9 @@ export default function Agents() {
     <div className="grid gap-4">
       <PageHeader
         title="Agents"
-        description="Define the system instruction per agent. Runs use scrubbed transcription. Attributes can be shared across agents."
+        description="Define the system instruction per agent. Runs use scrubbed transcription. Map attributes to each agent on its card — the preview shows the exact LLM input."
         actions={
-          <Button size="sm" onClick={() => setEditing({ ...EMPTY })}>
+          <Button size="sm" onClick={openNew}>
             <Plus className="h-4 w-4" aria-hidden="true" /> New agent
           </Button>
         }
@@ -152,7 +510,7 @@ export default function Agents() {
                       {a.is_enabled !== false ? "On" : "Off"}
                     </span>
                   </span>
-                  <Button variant="secondary" size="sm" onClick={() => setEditing({ ...a })} aria-label={`Edit ${a.name}`}>
+                  <Button variant="secondary" size="sm" onClick={() => openEdit(a)} aria-label={`Edit ${a.name}`}>
                     <Pencil className="h-4 w-4" aria-hidden="true" />
                   </Button>
                   <Button
@@ -179,53 +537,124 @@ export default function Agents() {
       )}
 
       {editing && (
-        <Modal title={editing.id ? "Edit agent" : "New agent"} onClose={() => setEditing(null)}>
-          <label className={fieldLabel}>
-            Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
-            <input
-              value={editing.name}
-              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              className={fieldInput}
-            />
-          </label>
-          <label className={cn(fieldLabel, "mt-3 block")}>
-            System instruction
-            <textarea
-              value={editing.system_instruction}
-              onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
-              rows={3}
-              className={fieldTextarea}
-            />
-            <p className="mt-1 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
-              New agents start from the shared default contract above — edit freely.
-            </p>
-          </label>
-          <div className={cn(fieldLabel, "mt-3")}>
-            Input types
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              {INPUT_TYPES.map((t) => (
-                <label
-                  key={t}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
-                    editing.input_types.includes(t)
-                      ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                      : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
-                  )}
-                >
-                  <input type="checkbox" checked={editing.input_types.includes(t)} onChange={() => toggleType(t)} />
-                  {t}
-                </label>
-              ))}
+        <Modal title={editing.id ? "Edit agent" : "New agent"} onClose={closeEditor} wide>
+          <div className="grid gap-5 md:grid-cols-5">
+            <div className="md:col-span-3">
+              <label className={fieldLabel}>
+                Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+                <input
+                  value={editing.name}
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  className={fieldInput}
+                />
+              </label>
+              <label className={cn(fieldLabel, "mt-3 block")}>
+                System instruction
+                <textarea
+                  value={editing.system_instruction}
+                  onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
+                  rows={3}
+                  className={fieldTextarea}
+                />
+                <p className="mt-1 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
+                  New agents start from the shared default contract above — edit freely.
+                </p>
+              </label>
+              <div className={cn(fieldLabel, "mt-3")}>
+                Input types
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  {INPUT_TYPES.map((t) => (
+                    <label
+                      key={t}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
+                        editing.input_types.includes(t)
+                          ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                          : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                      )}
+                    >
+                      <input type="checkbox" checked={editing.input_types.includes(t)} onChange={() => toggleType(t)} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className={cn(fieldLabel, "mt-3")}>
+                Attributes
+                <div className="mt-1.5">
+                  <AttributeMultiSelect all={allAttrs} selectedIds={effectiveIds} onChange={setSelIds} />
+                </div>
+              </div>
+              {selectedAttrs.length > 0 && (
+                <div className="mt-3 grid gap-2">
+                  {selectedAttrs.map((a) => (
+                    <div key={a.id} className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-heading text-sm font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">
+                          {a.name}
+                        </span>
+                        <Badge tone="neutral">{a.type}</Badge>
+                      </div>
+                      {a.description && (
+                        <p className="mt-1 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">{a.description}</p>
+                      )}
+                      {a.type === "enum" && (a.enum_values ?? []).length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {(a.enum_values ?? []).map((v) => (
+                            <Badge key={v} tone="neutral">{v}</Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className={fieldLabel}>Status</span>
+                <span className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={editing.is_enabled}
+                    aria-label={editing.is_enabled ? "Disable agent" : "Enable agent"}
+                    onClick={() => setEditing({ ...editing, is_enabled: !editing.is_enabled })}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors",
+                      "focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-2 dark:focus-visible:outline-[#2fdebf]",
+                      editing.is_enabled
+                        ? "border-transparent bg-[#2fdebf]"
+                        : "border-[#e5e7eb] bg-[#e5e7eb] dark:border-white/10 dark:bg-white/10",
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "inline-block h-5 w-5 rounded-full bg-white shadow transition-transform",
+                        editing.is_enabled ? "translate-x-[22px]" : "translate-x-[2px]",
+                      )}
+                    />
+                  </button>
+                  <span className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                    {editing.is_enabled ? "On" : "Off"}
+                  </span>
+                </span>
+              </div>
+            </div>
+            <div className="md:col-span-2">
+              <PreviewPanel agentId={editing.id} systemInstruction={editing.system_instruction} selected={selectedAttrs} />
             </div>
           </div>
           <div className="mt-5 flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setEditing(null)}>
+            <Button variant="secondary" onClick={closeEditor}>
               Cancel
             </Button>
             <Button
               loading={save.isPending}
-              onClick={() => editing.name.trim() ? save.mutate(editing) : toast.error("Name is required")}
+              onClick={() =>
+                editing.name.trim()
+                  ? save.mutate({ ...editing, attribute_ids: effectiveIds })
+                  : toast.error("Name is required")
+              }
             >
               Save
             </Button>
