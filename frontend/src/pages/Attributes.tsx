@@ -339,7 +339,7 @@ export default function Attributes() {
     queryKey: ["attributes"],
     queryFn: async () => (await api.get("/attributes")).data as LabAttribute[],
   });
-  const [editing, setEditing] = useState<(typeof EMPTY & { id?: string; agent_ids?: string[] }) | null>(null);
+  const [editing, setEditing] = useState<(typeof EMPTY & { id?: string }) | null>(null);
 
   const save = useMutation({
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
@@ -424,7 +424,6 @@ export default function Attributes() {
   function openEdit(r: LabAttribute) {
     setEditing({
       ...r,
-      agent_ids: [...(r.agent_ids ?? [])],
       enum_values: [...(r.enum_values ?? [])],
       object_properties: (r.object_properties ?? []).map((p) => ({ ...p })),
     });
@@ -521,18 +520,6 @@ export default function Attributes() {
 
       {editing && (
         <Modal title={editing.id ? "Edit attribute" : "New attribute"} onClose={() => setEditing(null)}>
-          {(editing.agent_ids ?? []).length > 0 && (
-            <div className={fieldLabel}>
-              Linked agents
-              <div className="mt-1.5 flex flex-wrap gap-2">
-                {(editing.agent_ids ?? []).map((id) => (
-                  <Badge key={id} tone="neutral">
-                    {agents.find((a) => a.id === id)?.name ?? id.slice(0, 8)}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          )}
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className={fieldLabel}>
               Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>

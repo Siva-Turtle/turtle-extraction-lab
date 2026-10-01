@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Copy, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -198,31 +198,15 @@ function InputTypesField({
   }
 
   const label =
-    selected.length === 0 ? "Select input types…" : `Input types (${selected.length}): ${selected.join(", ")}`;
+    selected.length === 0
+      ? "Select input types…"
+      : selected.length === 1
+        ? selected[0]
+        : `${selected[0]} + ${selected.length - 1} other${selected.length - 1 === 1 ? "" : "s"}`;
 
   return (
     <div>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {selected.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-            >
-              {t}
-              <button
-                type="button"
-                onClick={() => toggle(t)}
-                aria-label={`Remove ${t}`}
-                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="relative mt-1.5">
+      <div className="relative">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
@@ -291,7 +275,9 @@ function AttributeMultiSelect({
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  const selected = all.filter((a) => selectedIds.includes(a.id));
+  const orderedNames = selectedIds
+    .map((id) => all.find((a) => a.id === id)?.name)
+    .filter((n): n is string => typeof n === "string" && n !== "");
   const q = filter.trim().toLowerCase();
   const visible = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
 
@@ -300,33 +286,15 @@ function AttributeMultiSelect({
   }
 
   const label =
-    selected.length === 0
+    orderedNames.length === 0
       ? "Select attributes…"
-      : `Attributes (${selected.length}): ${selected.map((a) => a.name).join(", ")}`;
+      : orderedNames.length === 1
+        ? orderedNames[0]
+        : `${orderedNames[0]} + ${orderedNames.length - 1} other${orderedNames.length - 1 === 1 ? "" : "s"}`;
 
   return (
     <div>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {selected.map((a) => (
-            <span
-              key={a.id}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-            >
-              {a.name}
-              <button
-                type="button"
-                onClick={() => toggle(a.id)}
-                aria-label={`Remove ${a.name}`}
-                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="relative mt-1.5">
+      <div className="relative">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
@@ -338,7 +306,7 @@ function AttributeMultiSelect({
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-left",
-              selected.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+              orderedNames.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
             )}
           >
             {label}
@@ -640,37 +608,6 @@ export default function Agents() {
                 <AttributeMultiSelect all={allAttrs} selectedIds={effectiveIds} onChange={setSelIds} />
               </div>
             </div>
-            {selectedAttrs.length > 0 && (
-              <div className="grid gap-2">
-                {selectedAttrs.map((a) => (
-                  <div key={a.id} className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-heading text-sm font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">
-                        {a.name}
-                      </span>
-                      <Badge tone="neutral">{a.type}</Badge>
-                    </div>
-                    {a.description && (
-                      <p className="mt-1 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">{a.description}</p>
-                    )}
-                    {a.type === "enum" && (a.enum_values ?? []).length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {(a.enum_values ?? []).map((v) => (
-                          <Badge key={v} tone="neutral">{v}</Badge>
-                        ))}
-                      </div>
-                    )}
-                    {a.type === "object" && (a.object_properties ?? []).length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {(a.object_properties ?? []).map((p) => (
-                          <Badge key={p.name} tone="neutral">{p.name} ({p.type})</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
             <label className={cn(fieldLabel, "block")}>
               System instruction
               <textarea

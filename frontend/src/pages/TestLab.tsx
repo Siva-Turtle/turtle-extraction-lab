@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -242,7 +242,9 @@ function AgentsMultiSelect({
 }): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState("");
-  const chosen = agents.filter((a) => selected.includes(a.id));
+  const orderedNames = selected
+    .map((id) => agents.find((a) => a.id === id)?.name)
+    .filter((n): n is string => typeof n === "string" && n !== "");
   const q = filter.trim().toLowerCase();
   const visible = q ? agents.filter((a) => a.name.toLowerCase().includes(q)) : agents;
 
@@ -251,33 +253,15 @@ function AgentsMultiSelect({
   }
 
   const label =
-    chosen.length === 0
+    orderedNames.length === 0
       ? "Select agents…"
-      : `Agents (${chosen.length}): ${chosen.map((a) => a.name).join(", ")}`;
+      : orderedNames.length === 1
+        ? orderedNames[0]
+        : `${orderedNames[0]} + ${orderedNames.length - 1} other${orderedNames.length - 1 === 1 ? "" : "s"}`;
 
   return (
     <div>
-      {chosen.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {chosen.map((a) => (
-            <span
-              key={a.id}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-            >
-              {a.name}
-              <button
-                type="button"
-                onClick={() => toggle(a.id)}
-                aria-label={`Remove ${a.name}`}
-                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
-              >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="relative mt-1.5">
+      <div className="relative">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
@@ -293,7 +277,7 @@ function AgentsMultiSelect({
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-left",
-              chosen.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+              orderedNames.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
             )}
           >
             {label}
