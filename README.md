@@ -42,15 +42,22 @@ this lab uses **8002/5175** so all three run side by side.
 
 ## First-time setup (one command)
 
-From the repo root:
+Double-click **`db-init.cmd`** — or from PowerShell 7:
 
 ```powershell
 ./scripts/db-init.ps1
 ```
 
-It prompts securely for the postgres password, then creates database `turtle_agent_lab`,
-writes `backend/.env`, runs `alembic upgrade head`, and seeds one demo agent
-("Contact Facts" + 3 attributes). Afterwards set `OPENROUTER_API_KEY` in `backend/.env`.
+(Windows opens a double-clicked `.ps1` in Notepad by design, so use the
+`.cmd` wrapper — it hands `scripts\db-init.ps1` over to `pwsh`, same as
+`start-lab.cmd` does for `scripts\dev.ps1`.)
+
+It prompts securely for the postgres password (same `postgres` user on
+`localhost:5432` as turtle-crm, so enter the SAME password), verifies it via
+`psql`, then creates database `turtle_agent_lab`, writes `backend/.env`
+(without ever echoing the password), runs `alembic upgrade head`, and seeds
+one demo agent ("Contact Facts" + 3 attributes). Afterwards set
+`OPENROUTER_API_KEY` in `backend/.env`.
 
 ## Running
 
