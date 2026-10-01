@@ -10,14 +10,16 @@
   echoed), then runs `uv run alembic upgrade head` and the seed
   (`uv run python -m app.seed`) from backend/. Prints each step and stops
   on the first failure. After this, double-click start-lab.cmd (or run
-  ./scripts/dev.ps1) to start the app.
+  ./scripts/dev.ps1) to start the app. Use the same postgres password as
+  turtle-crm (same user 'postgres' on localhost:5432, different database
+  name); it is prompted securely via SecureString and never echoed.
 
 .EXAMPLE
   ./scripts/db-init.ps1
   (prompts securely for the postgres password)
 
 .EXAMPLE
-  ./scripts/db-init.ps1 -PostgresPassword (Read-Host -AsSecureString -Prompt 'postgres password') -Host localhost -Port 5432
+  ./scripts/db-init.ps1 -PostgresPassword (Read-Host -AsSecureString -Prompt 'postgres password') -DbHost localhost -Port 5432
 #>
 [CmdletBinding()]
 param(
@@ -25,7 +27,7 @@ param(
     [SecureString]$PostgresPassword,
 
     [Parameter(Mandatory = $false)]
-    [string]$Host = 'localhost',
+    [string]$DbHost = 'localhost',
 
     [Parameter(Mandatory = $false)]
     [int]$Port = 5432
@@ -80,7 +82,7 @@ try { $uvPath = (Get-Command uv -ErrorAction Stop).Source } catch {
 }
 
 if (-not $PostgresPassword) {
-    $PostgresPassword = Read-Host -AsSecureString -Prompt "PostgreSQL password for user '$DbUser' on ${Host}:${Port}"
+    $PostgresPassword = Read-Host -AsSecureString -Prompt "PostgreSQL password for user '$DbUser' on ${DbHost}:${Port}"
 }
 if (-not $PostgresPassword -or $PostgresPassword.Length -eq 0) {
     Write-Error 'No password was entered; aborting without writing any files.'
@@ -98,23 +100,23 @@ try {
     $env:PGPASSWORD = $plainPassword
 
     # --- Step 1: create the database if missing ------------------------------
-    Write-Host "==> Step 1/4: ensuring database '$DbName' exists on ${Host}:${Port}"
-    $exists = & $psql -h $Host -p $Port -U $DbUser -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DbName';" 2>&1
+    Write-Host "==> Step 1/4: ensuring database '$DbName' exists on ${DbHost}:${Port}"
+    $exists = & $psql -h $DbHost -p $Port -U $DbUser -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DbName';" 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "psql could not connect as user '$DbUser' on ${Host}:${Port}. Check the service is running and the password is correct. psql said: $exists"
+        Write-Error "psql could not connect as user '$DbUser' on ${DbHost}:${Port}. Check the service is running and the password is correct. psql said: $exists"
     }
     if (($exists | Out-String).Trim() -eq '1') {
         Write-Host "    database '$DbName' already exists; leaving it alone."
     } else {
         Invoke-Step -Label "Step 1/4: creating database '$DbName'" -Action {
-            & $psql -h $Host -p $Port -U $DbUser -d postgres -c "CREATE DATABASE `"$DbName`";"
+            & $psql -h $DbHost -p $Port -U $DbUser -d postgres -c "CREATE DATABASE `"$DbName`";"
         }
     }
 
     # --- Step 2: write backend/.env (password never echoed) -------------------
     Write-Host '==> Step 2/4: writing backend/.env from .env.example'
     $encoded = [System.Uri]::EscapeDataString($plainPassword)
-    $databaseUrl = "DATABASE_URL=postgresql+psycopg://${DbUser}:${encoded}@${Host}:${Port}/${DbName}"
+    $databaseUrl = "DATABASE_URL=postgresql+psycopg://${DbUser}:${encoded}@${DbHost}:${Port}/${DbName}"
     $lines = Get-Content -LiteralPath $EnvExample
     $replaced = $false
     $out = foreach ($line in $lines) {
