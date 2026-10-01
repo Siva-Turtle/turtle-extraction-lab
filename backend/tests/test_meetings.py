@@ -251,7 +251,7 @@ def test_meetings_unknown_client_empty(client, monkeypatch):
     }
 
 
-def test_meetings_cap_200(client, monkeypatch):
+def test_meetings_cap_500(client, monkeypatch):
     tasks = [
         {
             "_id": ObjectId(),
@@ -261,11 +261,11 @@ def test_meetings_cap_200(client, monkeypatch):
             "createdAt": datetime(2026, 9, 30, 4, 0, tzinfo=timezone.utc),
             "participants": [],
         }
-        for _ in range(205)
+        for _ in range(505)
     ]
     _install(monkeypatch, CLIENTS, tasks)
     body = client.get("/api/v1/meetings", params={"client_id": "C001"}).json()
-    assert len(body["meetings"]) == 200
+    assert len(body["meetings"]) == 500
 
 
 def test_meetings_422_bad_date(client, monkeypatch):

@@ -283,6 +283,21 @@ if ($DbProbeCode -eq 2) {
 } elseif ($DbProbeCode -ne 0) {
     Write-Warning 'Could not verify PostgreSQL credentials (probe did not complete); continuing anyway. If API calls return 503, re-run ./scripts/db-init.ps1 with the correct postgres password.'
 }
+# Auto-migrate on every start so committed migrations apply to existing DBs
+# (db-init.ps1 migrates only on first setup). Uses backend/.env already loaded above.
+Write-Host '==> Running database migrations (alembic upgrade head)'
+Push-Location -LiteralPath $BackendDir
+try {
+    $MigrateOut = & $uvPath run alembic upgrade head 2>&1
+    $MigrateCode = $LASTEXITCODE
+    $MigrateOut | ForEach-Object { Write-Host "$_" }
+    if ($MigrateCode -ne 0) {
+        Write-Error "Database migration failed (exit $MigrateCode) — output above. Fix backend/.env credentials or the migration, then retry."
+    }
+    Write-Host 'Database migrated to head.'
+} finally {
+    Pop-Location
+}
 # On Windows `npm` usually resolves to npm.ps1, which Process.Start cannot
 # launch ("not a valid application for this OS platform"); npm.cmd is the one
 # that actually runs. Prefer it, and fall back to whatever npm resolves to.

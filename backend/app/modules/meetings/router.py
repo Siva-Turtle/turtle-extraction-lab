@@ -33,7 +33,7 @@ _CACHE: dict[str, tuple[float, Any]] = {}
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 TITLES_RECENT_LIMIT = 500
-MEETINGS_RETURN_CAP = 200
+MEETINGS_RETURN_CAP = 500
 
 TASK_LIST_PROJECTION = {
     "title": 1,

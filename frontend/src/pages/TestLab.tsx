@@ -333,9 +333,11 @@ export default function TestLab() {
 
   const titlesQuery = useQuery({
     queryKey: ["meeting-titles", clientId],
-    queryFn: async () =>
-      (await api.get("/meetings/titles", { params: { client_id: clientId } })).data as { titles: string[] },
-    enabled: clientId !== "",
+    queryFn: async () => {
+      const params: Record<string, string> = {};
+      if (clientId) params.client_id = clientId;
+      return (await api.get("/meetings/titles", { params })).data as { titles: string[] };
+    },
     staleTime: 60 * 1000,
     retry: false,
   });
@@ -343,12 +345,12 @@ export default function TestLab() {
   const meetingsQuery = useQuery({
     queryKey: ["meetings", clientId, meetingTitle, meetingDate],
     queryFn: async () => {
-      const params: Record<string, string> = { client_id: clientId };
+      const params: Record<string, string> = {};
+      if (clientId) params.client_id = clientId;
       if (meetingTitle) params.title = meetingTitle;
       if (meetingDate) params.date = meetingDate;
       return (await api.get("/meetings", { params })).data as { meetings: MeetingSummary[] };
     },
-    enabled: clientId !== "",
     staleTime: 30 * 1000,
     retry: false,
   });
@@ -453,10 +455,10 @@ export default function TestLab() {
   });
 
   const clientDisabled = clientsQuery.isLoading || clientsDetail !== null;
-  const titleDisabled = clientId === "" || titlesQuery.isLoading || clientsDetail !== null || titlesDetail !== null;
-  const dateDisabled = clientId === "" || clientsDetail !== null;
-  const meetingDisabled =
-    clientId === "" || meetingsQuery.isLoading || clientsDetail !== null || meetingsDetail !== null;
+  const titleDisabled = titlesQuery.isLoading || titlesDetail !== null;
+  const dateDisabled = false;
+  const meetingDisabled = meetingsQuery.isLoading || meetingsDetail !== null;
+  const isUnfiltered = clientId === "" && meetingTitle === "" && meetingDate === "";
 
   return (
     <div className="grid gap-4">
@@ -500,7 +502,7 @@ export default function TestLab() {
                     ? "Unavailable — check backend"
                     : clientsQuery.isLoading
                       ? "Loading clients…"
-                      : "Select client…"
+                      : "Select client… (optional)"
                 }
                 disabled={clientDisabled}
                 ariaLabel="Client"
@@ -513,13 +515,11 @@ export default function TestLab() {
                 onChange={handleTitleChange}
                 options={titleOptions}
                 placeholder={
-                  clientId === ""
-                    ? "Select a client first"
-                    : titlesDetail !== null
-                      ? "Unavailable — check backend"
-                      : titlesQuery.isLoading
-                        ? "Loading titles…"
-                        : "Select meeting title…"
+                  titlesDetail !== null
+                    ? "Unavailable — check backend"
+                    : titlesQuery.isLoading
+                      ? "Loading titles…"
+                      : "Select meeting title… (optional)"
                 }
                 disabled={titleDisabled}
                 ariaLabel="Meeting title"
@@ -563,17 +563,20 @@ export default function TestLab() {
               onChange={handleMeetingChange}
               options={meetingOptions}
               placeholder={
-                clientId === ""
-                  ? "Select a client first"
-                  : meetingsDetail !== null
-                    ? "Unavailable — check backend"
-                    : meetingsQuery.isLoading
-                      ? "Loading meetings…"
-                      : "Select a meeting…"
+                meetingsDetail !== null
+                  ? "Unavailable — check backend"
+                  : meetingsQuery.isLoading
+                    ? "Loading meetings…"
+                    : "Select a meeting…"
               }
               disabled={meetingDisabled}
               ariaLabel="Meeting"
             />
+            {isUnfiltered && meetingOptions.length > 0 && (
+              <p className="mt-1 font-sans text-xs text-[#8a8f98]">
+                Showing up to 500 most recent across all clients — narrow with the filters above.
+              </p>
+            )}
             <p className="mt-1 font-sans text-xs text-[#8a8f98]">
               Selecting a meeting pulls its transcription — PII-scrubbed automatically; only scrubbed text reaches the model.
             </p>
