@@ -10,7 +10,8 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 def _out(r: Agent) -> AgentOut:
     return AgentOut(id=r.id, name=r.name, system_instruction=r.system_instruction,
-                    prompt=r.prompt, input_types=r.input_types or [])
+                    prompt=r.prompt, input_types=r.input_types or [],
+                    is_enabled=r.is_enabled if r.is_enabled is not None else True)
 
 
 @router.get("", response_model=list[AgentOut])
@@ -22,7 +23,8 @@ def list_agents(db: Session = Depends(get_db)):
 @router.post("", response_model=AgentOut)
 def create_agent(payload: AgentCreate, db: Session = Depends(get_db)):
     row = Agent(name=payload.name, system_instruction=payload.system_instruction,
-                prompt=payload.prompt, input_types=payload.input_types)
+                prompt=payload.prompt, input_types=payload.input_types,
+                is_enabled=payload.is_enabled)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -42,7 +44,7 @@ def update_agent(agent_id: str, payload: AgentUpdate, db: Session = Depends(get_
     row = db.query(Agent).filter(Agent.id == agent_id).first()
     if not row:
         raise HTTPException(404, "agent not found")
-    for field in ("name", "system_instruction", "prompt", "input_types"):
+    for field in ("name", "system_instruction", "prompt", "input_types", "is_enabled"):
         value = getattr(payload, field)
         if value is not None:
             setattr(row, field, value)

@@ -34,6 +34,7 @@ async def db_operational_error_handler(request: Request, exc: OperationalError):
 from app.modules.agents.router import router as agents_router
 from app.modules.attributes.router import router as attributes_router
 from app.modules.logs.router import router as logs_router
+from app.modules.meetings.router import router as meetings_router
 from app.modules.meta.router import router as meta_router
 from app.modules.runs.router import router as runs_router
 
@@ -41,6 +42,7 @@ app.include_router(agents_router)
 app.include_router(attributes_router)
 app.include_router(runs_router)
 app.include_router(logs_router)
+app.include_router(meetings_router)
 app.include_router(meta_router)
 
 

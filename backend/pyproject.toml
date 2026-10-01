@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings",
     "httpx",
     "python-dotenv",
+    "pymongo",
 ]
 
 [dependency-groups]

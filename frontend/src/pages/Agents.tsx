@@ -16,10 +16,11 @@ export type Agent = {
   system_instruction: string;
   prompt: string;
   input_types: string[];
+  is_enabled: boolean;
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-const EMPTY = { name: "", system_instruction: "", prompt: "", input_types: [] as string[] };
+const EMPTY = { name: "", system_instruction: "", prompt: "", input_types: [] as string[], is_enabled: true };
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -49,6 +50,33 @@ export default function Agents() {
       toast.success("Agent deleted (its attributes went with it)");
     },
     onError: () => toast.error("Delete failed"),
+  });
+
+  const toggleEnabled = useMutation({
+    mutationFn: async ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
+      (await api.patch(`/agents/${id}`, { is_enabled })).data as Agent,
+    onMutate: async ({ id, is_enabled }) => {
+      await qc.cancelQueries({ queryKey: ["agents"] });
+      const prev = qc.getQueryData<Agent[]>(["agents"]);
+      qc.setQueryData<Agent[]>(["agents"], (old) =>
+        (old ?? []).map((a) => (a.id === id ? { ...a, is_enabled } : a)),
+      );
+      return { prev };
+    },
+    onError: (e: unknown, _vars, context) => {
+      if (context?.prev) qc.setQueryData(["agents"], context.prev);
+      const detail =
+        typeof (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail === "string"
+          ? ((e as { response: { data: { detail: string } } }).response.data.detail as string)
+          : "Could not update agent status";
+      toast.error(detail);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onSuccess: (_data, vars) => {
+      toast.success(vars.is_enabled ? "Agent enabled" : "Agent disabled");
+    },
   });
 
   function toggleType(t: string) {
@@ -84,7 +112,7 @@ export default function Agents() {
       ) : (
         <div className="grid gap-3">
           {data.map((a) => (
-            <Card key={a.id} padded={false} className="p-4">
+            <Card key={a.id} padded={false} className={cn("p-4", a.is_enabled === false && "opacity-60")}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <CardTitle>{a.name}</CardTitle>
@@ -92,9 +120,38 @@ export default function Agents() {
                     {a.input_types.map((t) => (
                       <Badge key={t} tone="brand">{t}</Badge>
                     ))}
+                    {a.is_enabled === false && <Badge tone="neutral">off</Badge>}
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={a.is_enabled !== false}
+                      aria-label={`${a.is_enabled !== false ? "Disable" : "Enable"} ${a.name}`}
+                      disabled={toggleEnabled.isPending}
+                      onClick={() => toggleEnabled.mutate({ id: a.id, is_enabled: !(a.is_enabled !== false) })}
+                      className={cn(
+                        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors",
+                        "focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-2 dark:focus-visible:outline-[#2fdebf]",
+                        a.is_enabled !== false
+                          ? "border-transparent bg-[#2fdebf]"
+                          : "border-[#e5e7eb] bg-[#e5e7eb] dark:border-white/10 dark:bg-white/10",
+                      )}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "inline-block h-5 w-5 rounded-full bg-white shadow transition-transform",
+                          a.is_enabled !== false ? "translate-x-[22px]" : "translate-x-[2px]",
+                        )}
+                      />
+                    </button>
+                    <span className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {a.is_enabled !== false ? "On" : "Off"}
+                    </span>
+                  </span>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ ...a })} aria-label={`Edit ${a.name}`}>
                     <Pencil className="h-4 w-4" aria-hidden="true" />
                   </Button>
