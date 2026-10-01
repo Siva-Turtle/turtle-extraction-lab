@@ -20,7 +20,13 @@ RESULT_CONTRACT = (
     'quoted = value stated word-for-word (evidence is the exact quote); '
     'inferred = value concluded from the input but not stated verbatim '
     '(evidence is the supporting passage); normalized = value standardized from a stated form '
-    'such as phone digits, date formats, or casing (evidence is the original stated form).'
+    'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n'
+    '| Type | Meaning |\n'
+    '|---|---|\n'
+    '| `quoted` | Value is explicitly stated in the transcript |\n'
+    '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
+    '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
+    '| `not_found` | No sufficient evidence exists |'
 )
 
 
@@ -79,6 +85,48 @@ def _snapshot_props(a: Attribute) -> list[dict]:
             for p in _object_properties(a)]
 
 
+def _array_items_cfg(a: Attribute) -> dict:
+    """Normalized {kind, properties} for type=="array" (defaults to string)."""
+    raw = getattr(a, "array_items", None) or {}
+    if not isinstance(raw, dict):
+        return {"kind": "string", "properties": []}
+    kind = str(raw.get("kind", "string") or "string").strip().lower()
+    if kind not in ("string", "number", "object"):
+        kind = "string"
+    if kind != "object":
+        return {"kind": kind, "properties": []}
+    props: list[dict] = []
+    for p in (raw.get("properties", []) or []):
+        if not isinstance(p, dict):
+            continue
+        props.append({"name": str(p.get("name", "")),
+                      "type": p.get("type", "string"),
+                      "null_allowed": bool(p.get("null_allowed", True))})
+    return {"kind": kind, "properties": props}
+
+
+def _snapshot_array_items(a: Attribute) -> dict:
+    return _array_items_cfg(a)
+
+
+def _array_item_schema(a: Attribute) -> dict:
+    """Map array item-shape config to its JSON-schema items fragment."""
+    cfg = _array_items_cfg(a)
+    kind = cfg.get("kind", "string")
+    if kind == "number":
+        return {"type": "number"}
+    if kind == "object":
+        sub_props: dict = {}
+        sub_required: list[str] = []
+        for p in cfg.get("properties", []):
+            sub_props[str(p.get("name", ""))] = _sub_schema(
+                str(p.get("type", "string")), bool(p.get("null_allowed", True)))
+            sub_required.append(str(p.get("name", "")))
+        return {"type": "object", "properties": sub_props,
+                "required": sub_required, "additionalProperties": False}
+    return {"type": "string"}
+
+
 def _value_schema_for_attribute(a: Attribute) -> dict:
     """Map attribute type to the OpenAI structured-output value field.
 
@@ -86,7 +134,10 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
     - number -> {"type": ["number", "null"], ...}
     - boolean -> {"type": ["boolean", "null"], ...}
     - enum -> {"type": ["string", "null"], "enum": [...allowed..., None], ...}
-    - array -> {"type": ["array", "null"], "items": {"type": "string"}, ...}
+    - array -> {"type": ["array", "null"], "items": <shape>, ...} where
+      string->{"type":"string"}, number->{"type":"number"},
+      object->{"type":"object","properties":{...},"required":[...all...],
+      "additionalProperties":false}
     - object -> {"type": ["object", "null"], "properties": {sub-name: sub-schema},
       "required": [all sub names], "additionalProperties": False, ...}
     """
@@ -97,7 +148,7 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
         value_schema = {"type": ["boolean", "null"], "description": desc}
     elif a.type == "array":
         value_schema = {"type": ["array", "null"],
-                        "items": {"type": "string"}, "description": desc}
+                        "items": _array_item_schema(a), "description": desc}
     elif a.type == "object":
         sub_props: dict = {}
         sub_required: list[str] = []
@@ -177,8 +228,10 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         snapshots[agent.id] = {
             "name": agent.name, "system_instruction": agent.system_instruction,
             "attributes": [{"name": a.name, "type": a.type, "description": a.description,
+                            "group": getattr(a, "group_name", "") or "",
                             "enum_values": a.enum_values or [],
-                            "object_properties": _snapshot_props(a)} for a in attrs],
+                            "object_properties": _snapshot_props(a),
+                            "array_items": _snapshot_array_items(a)} for a in attrs],
         }
         agent_start = perf_counter()
         prompt_tokens = 0

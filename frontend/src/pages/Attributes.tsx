@@ -4,11 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import type { AttributeArrayItems, AttributeArrayKind } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
+import { MultiSelectFilter } from "../components/ui/Combobox";
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
@@ -27,19 +29,25 @@ export type LabAttribute = {
   name: string;
   type: AttributeType;
   description: string;
+  group: string;
   enum_values: string[];
   object_properties: AttributeObjectProperty[];
+  array_items: AttributeArrayItems;
 };
 
 const TYPES: AttributeType[] = ["string", "number", "boolean", "enum", "array", "object"];
 const SUB_TYPES: AttributeObjectProperty["type"][] = ["string", "number", "boolean", "array"];
+const ARRAY_KINDS: AttributeArrayKind[] = ["string", "number", "object"];
+const EMPTY_ARRAY_ITEMS: AttributeArrayItems = { kind: "string", properties: [] };
 const EMPTY: {
   name: string;
   type: AttributeType;
   description: string;
+  group: string;
   enum_values: string[];
   object_properties: AttributeObjectProperty[];
-} = { name: "", type: "string", description: "", enum_values: [], object_properties: [] };
+  array_items: AttributeArrayItems;
+} = { name: "", type: "string", description: "", group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] } };
 
 /** v2 single-select for attribute type — mirrors FilterCombobox styling. */
 function TypeCombobox({
@@ -329,6 +337,48 @@ function ObjectPropertiesEditor({
   );
 }
 
+/** Item-shape config for type=="array": kind + object sub-fields when object. */
+function ArrayItemsEditor({
+  value,
+  onChange,
+}: {
+  value: AttributeArrayItems;
+  onChange: (v: AttributeArrayItems) => void;
+}): React.JSX.Element {
+  const kind = value?.kind ?? "string";
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Array item kind">
+        {ARRAY_KINDS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="radio"
+            aria-checked={kind === k}
+            onClick={() => onChange(k === "object"
+              ? { kind: k, properties: value?.properties ?? [] }
+              : { kind: k, properties: [] })}
+            className={cn(
+              "rounded-full border px-3 py-1.5 font-sans text-xs",
+              kind === k
+                ? "border-transparent bg-[#0d5c4a] text-white dark:bg-[#2fdebf] dark:text-[#1a1a1a]"
+                : "border-[#e5e7eb] text-[#4a5058] hover:border-[#1d1d1d] dark:border-white/10 dark:text-[#C3C2B7]",
+            )}
+          >
+            {k === "object" ? "object[]" : `${k}[]`}
+          </button>
+        ))}
+      </div>
+      {kind === "object" && (
+        <ObjectPropertiesEditor
+          properties={value?.properties ?? []}
+          onChange={(props) => onChange({ kind: "object", properties: props })}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function Attributes() {
   const qc = useQueryClient();
   const { data: agents = [] } = useQuery({
@@ -340,6 +390,22 @@ export default function Attributes() {
     queryFn: async () => (await api.get("/attributes")).data as LabAttribute[],
   });
   const [editing, setEditing] = useState<(typeof EMPTY & { id?: string }) | null>(null);
+  const [groupFilter, setGroupFilter] = useState<string[]>([]);
+
+  const groupOptions = React.useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const r of data) {
+      const g = (r.group ?? "").trim();
+      if (g) seen.set(g, (seen.get(g) ?? 0) + 1);
+    }
+    return [...seen.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([g, n]) => ({ value: g, label: g, sub: `${n} attribute${n === 1 ? "" : "s"}` }));
+  }, [data]);
+
+  const visible = groupFilter.length === 0
+    ? data
+    : data.filter((r) => groupFilter.includes((r.group ?? "").trim()));
 
   const save = useMutation({
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
@@ -349,12 +415,21 @@ export default function Attributes() {
       const cleanedProps = rawProps
         .map((p) => ({ ...p, name: p.name.trim() }))
         .filter((p) => p.name !== "");
+      const rawItems = v.array_items ?? EMPTY_ARRAY_ITEMS;
+      const cleanedItems: AttributeArrayItems =
+        v.type === "array" && rawItems.kind === "object"
+          ? { kind: "object", properties: (rawItems.properties ?? []).map((p) => ({ ...p, name: p.name.trim() })).filter((p) => p.name !== "") }
+          : v.type === "array" && rawItems.kind === "number"
+            ? { kind: "number", properties: [] }
+            : { kind: "string", properties: [] };
       const body = {
         name: v.name.trim(),
         type: v.type,
         description: v.description,
+        group: (v.group ?? "").trim(),
         enum_values: v.type === "enum" ? cleaned : [],
         object_properties: v.type === "object" ? cleanedProps : [],
+        array_items: v.type === "array" ? cleanedItems : { kind: "string", properties: [] },
       };
       return v.id
         ? (await api.patch(`/attributes/${v.id}`, body)).data
@@ -378,7 +453,7 @@ export default function Attributes() {
   });
 
   function startNew() {
-    setEditing({ ...EMPTY, enum_values: [], object_properties: [] });
+    setEditing({ ...EMPTY, group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] } });
   }
 
   function agentNames(r: LabAttribute): string {
@@ -418,14 +493,33 @@ export default function Attributes() {
         return;
       }
     }
+    if (editing.type === "array" && (editing.array_items?.kind ?? "string") === "object") {
+      const cleaned = ((editing.array_items?.properties ?? []) as AttributeObjectProperty[])
+        .map((p) => p.name.trim())
+        .filter((n) => n !== "");
+      if (cleaned.length === 0) {
+        toast.error("Object arrays need at least one property");
+        return;
+      }
+      if (new Set(cleaned).size !== cleaned.length) {
+        toast.error("Each property name must be unique");
+        return;
+      }
+    }
     save.mutate(editing);
   }
 
   function openEdit(r: LabAttribute) {
     setEditing({
       ...r,
+      group: r.group ?? "",
       enum_values: [...(r.enum_values ?? [])],
       object_properties: (r.object_properties ?? []).map((p) => ({ ...p })),
+      array_items: r.array_items?.kind === "object"
+        ? { kind: "object", properties: (r.array_items.properties ?? []).map((p) => ({ ...p })) }
+        : r.array_items?.kind === "number"
+          ? { kind: "number", properties: [] }
+          : { kind: "string", properties: [] },
     });
   }
 
@@ -434,9 +528,22 @@ export default function Attributes() {
       <PageHeader
         title="Attributes"
         actions={
-          <Button size="sm" onClick={startNew}>
-            <Plus className="h-4 w-4" aria-hidden="true" /> New attribute
-          </Button>
+          <div className="flex items-center gap-2">
+            {groupOptions.length > 0 && (
+              <div className="w-56">
+                <MultiSelectFilter
+                  options={groupOptions}
+                  selected={groupFilter}
+                  onChange={setGroupFilter}
+                  placeholder="Filter by group…"
+                  ariaLabel="Filter by group"
+                />
+              </div>
+            )}
+            <Button size="sm" onClick={startNew}>
+              <Plus className="h-4 w-4" aria-hidden="true" /> New attribute
+            </Button>
+          </div>
         }
       />
 
@@ -450,12 +557,19 @@ export default function Attributes() {
             No attributes here yet — create the first one, then map it on the agent card.
           </p>
         </Card>
+      ) : visible.length === 0 ? (
+        <Card>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+            No attributes in the selected groups — clear the group filter to see all.
+          </p>
+        </Card>
       ) : (
         <Card padded={false} className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
                 <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Group</th>
                 <th className="px-4 py-3">Agents</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Values</th>
@@ -464,7 +578,7 @@ export default function Attributes() {
               </tr>
             </thead>
             <tbody>
-              {data.map((r) => (
+              {visible.map((r) => (
                 <tr
                   key={r.id}
                   onClick={() => openEdit(r)}
@@ -472,9 +586,12 @@ export default function Attributes() {
                 >
                   <td className="px-4 py-3 font-heading font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">{r.name}</td>
                   <td className="px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]">
+                    {(r.group ?? "").trim() || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]">
                     {agentNames(r)}
                   </td>
-                  <td className="px-4 py-3"><Badge tone="neutral">{r.type}</Badge></td>
+                  <td className="px-4 py-3"><Badge tone="neutral">{r.type === "array" ? `array[${r.array_items?.kind ?? "string"}]` : r.type}</Badge></td>
                   <td className="px-4 py-3">
                     {r.type === "enum" && (r.enum_values ?? []).length > 0 ? (
                       <span className="flex flex-wrap gap-1">
@@ -485,6 +602,12 @@ export default function Attributes() {
                     ) : r.type === "object" && (r.object_properties ?? []).length > 0 ? (
                       <span className="flex flex-wrap gap-1">
                         {(r.object_properties ?? []).map((p) => (
+                          <Badge key={p.name} tone="neutral">{p.name} ({p.type})</Badge>
+                        ))}
+                      </span>
+                    ) : r.type === "array" && (r.array_items?.kind ?? "string") === "object" && (r.array_items?.properties ?? []).length > 0 ? (
+                      <span className="flex flex-wrap gap-1">
+                        {(r.array_items?.properties ?? []).map((p) => (
                           <Badge key={p.name} tone="neutral">{p.name} ({p.type})</Badge>
                         ))}
                       </span>
@@ -539,11 +662,29 @@ export default function Attributes() {
                     type: next,
                     enum_values: next === "enum" ? editing.enum_values : [],
                     object_properties: next === "object" ? editing.object_properties : [],
+                    array_items: next === "array" ? editing.array_items : { ...EMPTY_ARRAY_ITEMS, properties: [] },
                   })
                 }
               />
             </div>
           </div>
+          <label className={cn(fieldLabel, "mt-3 block")}>
+            Group
+            <input
+              value={editing.group ?? ""}
+              onChange={(e) => setEditing({ ...editing, group: e.target.value })}
+              spellCheck={false}
+              placeholder="e.g. Assets"
+              aria-label="Attribute group"
+              list="attribute-group-options"
+              className={fieldInput}
+            />
+            <datalist id="attribute-group-options">
+              {groupOptions.map((o) => (
+                <option key={o.value} value={o.value} />
+              ))}
+            </datalist>
+          </label>
           <label className={cn(fieldLabel, "mt-3 block")}>
             Description
             <textarea
@@ -571,6 +712,17 @@ export default function Attributes() {
                 <ObjectPropertiesEditor
                   properties={editing.object_properties}
                   onChange={(v) => setEditing({ ...editing, object_properties: v })}
+                />
+              </div>
+            </div>
+          )}
+          {editing.type === "array" && (
+            <div className={cn(fieldLabel, "mt-3 block")}>
+              Item shape
+              <div className="mt-1.5">
+                <ArrayItemsEditor
+                  value={editing.array_items}
+                  onChange={(v) => setEditing({ ...editing, array_items: v })}
                 />
               </div>
             </div>

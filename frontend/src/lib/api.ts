@@ -12,6 +12,13 @@ export type AttributeObjectProperty = {
   null_allowed: boolean;
 };
 
+export type AttributeArrayKind = "string" | "number" | "object";
+
+export type AttributeArrayItems = {
+  kind: AttributeArrayKind;
+  properties: AttributeObjectProperty[];
+};
+
 export type LogsQueryParams = {
   models?: string[];
   agent_ids?: string[];

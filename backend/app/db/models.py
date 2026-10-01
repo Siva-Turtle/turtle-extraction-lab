@@ -49,6 +49,14 @@ class Attribute(Base):
     # Ordered sub-fields for type=="object": [{name, type, null_allowed}].
     # type in [string, number, boolean, array]; kept [] for all other types.
     object_properties: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Free-text grouping label (CSV Group column). Column is `group_name`
+    # because `group` is SQL-reserved; API field is `group`.
+    group_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    # Item-shape config for type=="array":
+    # {kind: string|number|object, properties: [{name, type, null_allowed}]}.
+    # kind string|number keeps properties []; kind object requires non-empty
+    # properties. Kept as default string-kind for all other types (ignored).
+    array_items: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

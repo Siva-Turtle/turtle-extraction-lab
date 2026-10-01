@@ -4,6 +4,15 @@ from app.db.models import Agent, Attribute, agent_attributes
 from app.db.session import SessionLocal
 
 AGENT_NAME = "Contact Facts"
+AGENT_INSTRUCTION = (
+    "Extract structured contact facts. Only use information stated in the input.\n\n"
+    "| Type | Meaning |\n"
+    "|---|---|\n"
+    "| `quoted` | Value is explicitly stated in the transcript |\n"
+    "| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n"
+    "| `inferred` | Value was not directly stated; model derived it from evidence |\n"
+    "| `not_found` | No sufficient evidence exists |"
+)
 ATTRIBUTES = [
     ("full_name", "string", "Person's full name as stated", []),
     ("phone", "string", "Phone number in any format mentioned", []),
@@ -18,7 +27,7 @@ def main() -> None:
         if not agent:
             agent = Agent(
                 name=AGENT_NAME,
-                system_instruction="Extract structured contact facts. Only use information stated in the input.",
+                system_instruction=AGENT_INSTRUCTION,
                 input_types=["transcription", "messages", "mail"],
             )
             db.add(agent)
@@ -31,7 +40,10 @@ def main() -> None:
             attr = existing.get(name)
             if attr is None:
                 attr = Attribute(name=name, type=type_, description=desc,
-                                 enum_values=enum_values)
+                                 enum_values=enum_values,
+                                 group_name="",
+                                 object_properties=[],
+                                 array_items={"kind": "string", "properties": []})
                 db.add(attr)
                 db.flush()
                 existing[name] = attr

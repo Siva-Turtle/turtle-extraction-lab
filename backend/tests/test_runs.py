@@ -122,7 +122,9 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
     snap = logs[0]["agent_snapshot"]
     assert snap[aid1]["attributes"] == snap[aid2]["attributes"] == [
         {"name": "mood", "type": "enum", "description": "Caller mood",
-         "enum_values": ["good", "bad"], "object_properties": []}]
+         "group": "",
+         "enum_values": ["good", "bad"], "object_properties": [],
+         "array_items": {"kind": "string", "properties": []}}]
     assert "prompt" not in snap[aid1]  # dormant column never snapshotted
 
 
@@ -206,7 +208,13 @@ def test_result_contract_text():
         'quoted = value stated word-for-word (evidence is the exact quote); '
         'inferred = value concluded from the input but not stated verbatim '
         '(evidence is the supporting passage); normalized = value standardized from a stated form '
-        'such as phone digits, date formats, or casing (evidence is the original stated form).'
+        'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n'
+        '| Type | Meaning |\n'
+        '|---|---|\n'
+        '| `quoted` | Value is explicitly stated in the transcript |\n'
+        '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
+        '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
+        '| `not_found` | No sufficient evidence exists |'
     )
     assert "…" not in runs_router.RESULT_CONTRACT
     assert "(quoted|inferred|normalized)" in runs_router.RESULT_CONTRACT
@@ -215,6 +223,15 @@ def test_result_contract_text():
     assert "quoted = value stated word-for-word" in runs_router.RESULT_CONTRACT
     assert "inferred = value concluded from the input" in runs_router.RESULT_CONTRACT
     assert "normalized = value standardized from a stated form" in runs_router.RESULT_CONTRACT
+    # Confidence-type table (exact markdown) rides in the contract so ALL
+    # agents get it at prompt build time without touching stored instructions.
+    for row in (
+        "| `quoted` | Value is explicitly stated in the transcript |",
+        "| `normalized` | Value is explicitly stated but transformed into your canonical representation |",
+        "| `inferred` | Value was not directly stated; model derived it from evidence |",
+        "| `not_found` | No sufficient evidence exists |",
+    ):
+        assert row in runs_router.RESULT_CONTRACT
 
 
 def test_system_layout_user_is_verbatim_input(client, monkeypatch):

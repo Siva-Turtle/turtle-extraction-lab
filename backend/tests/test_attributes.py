@@ -138,3 +138,89 @@ def test_attribute_object_validation(client):
                                "null_allowed": True}]}).json()
     assert back["object_properties"] == [
         {"name": "gold", "type": "number", "null_allowed": True}]
+
+
+def test_attribute_group_crud_and_filter(client):
+    aid = _agent_id(client)
+
+    # default empty; whitespace trimmed on write
+    created = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "g1", "group": "  Assets  "}).json()
+    assert created["group"] == "Assets"
+    bare = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "g2"}).json()
+    assert bare["group"] == ""
+
+    atid = created["id"]
+    patched = client.patch(f"/api/v1/attributes/{atid}",
+                           json={"group": " Income "}).json()
+    assert patched["group"] == "Income"
+    assert client.get(f"/api/v1/attributes/{atid}").json()["group"] == "Income"
+
+    # backend ?group= exact-match filter
+    assert [r["name"] for r in client.get(
+        "/api/v1/attributes", params={"group": "Income"}).json()] == ["g1"]
+    assert client.get("/api/v1/attributes", params={"group": "Nope"}).json() == []
+    # agent + group combine (join + group filter)
+    assert [r["name"] for r in client.get(
+        "/api/v1/attributes",
+        params={"agent_id": aid, "group": "Income"}).json()] == ["g1"]
+
+
+def test_attribute_array_item_shapes(client):
+    aid = _agent_id(client)
+
+    # default kind is string (back-compat: items always string before)
+    default = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "arr_default", "type": "array"}).json()
+    assert default["array_items"] == {"kind": "string", "properties": []}
+
+    num = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "arr_num", "type": "array",
+        "array_items": {"kind": "number", "properties": []}}).json()
+    assert num["array_items"] == {"kind": "number", "properties": []}
+
+    obj = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "arr_obj", "type": "array",
+        "array_items": {"kind": "object", "properties": [
+            {"name": "name", "type": "string", "null_allowed": True},
+            {"name": "value", "type": "number", "null_allowed": True},
+        ]}}).json()
+    assert obj["array_items"] == {"kind": "object", "properties": [
+        {"name": "name", "type": "string", "null_allowed": True},
+        {"name": "value", "type": "number", "null_allowed": True},
+    ]}
+
+    # object kind requires properties; bad kind rejected
+    assert client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "bad1", "type": "array",
+        "array_items": {"kind": "object", "properties": []}}).status_code == 422
+    assert client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "bad2", "type": "array",
+        "array_items": {"kind": "date", "properties": []}}).status_code == 422
+
+    # schema builder emits the matching items shape
+    from app.modules.runs.router import build_extraction_schema
+    from app.db.models import Attribute
+    schema = build_extraction_schema([
+        Attribute(name="s", type="array", description="s",
+                  array_items={"kind": "string", "properties": []}),
+        Attribute(name="n", type="array", description="n",
+                  array_items={"kind": "number", "properties": []}),
+        Attribute(name="o", type="array", description="o",
+                  array_items={"kind": "object", "properties": [
+                      {"name": "a", "type": "string", "null_allowed": True},
+                      {"name": "b", "type": "number", "null_allowed": False},
+                  ]}),
+    ])
+    assert schema["properties"]["s"]["properties"]["value"]["items"] == {"type": "string"}
+    assert schema["properties"]["n"]["properties"]["value"]["items"] == {"type": "number"}
+    assert schema["properties"]["o"]["properties"]["value"]["items"] == {
+        "type": "object",
+        "properties": {"a": {"type": ["string", "null"]}, "b": {"type": "number"}},
+        "required": ["a", "b"], "additionalProperties": False}
+
+    # flipping array -> string resets item-shape (ignored for non-array)
+    flipped = client.patch(
+        f"/api/v1/attributes/{obj['id']}", json={"type": "string"}).json()
+    assert flipped["array_items"] == {"kind": "string", "properties": []}

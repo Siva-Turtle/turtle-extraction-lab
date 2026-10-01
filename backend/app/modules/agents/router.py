@@ -8,6 +8,7 @@ from app.modules.agents.schemas import AgentCreate, AgentOut, AgentUpdate
 from app.modules.runs.router import (
     _agent_system_content,
     _attrs_for_agent,
+    _snapshot_array_items,
     _snapshot_props,
     build_extraction_schema,
 )
@@ -100,8 +101,10 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
         "user_template": USER_TEMPLATE,
         "response_format": response_format,
         "attributes": [{"name": a.name, "type": a.type, "description": a.description,
+                        "group": getattr(a, "group_name", "") or "",
                         "enum_values": a.enum_values or [],
-                        "object_properties": _snapshot_props(a)} for a in attrs],
+                        "object_properties": _snapshot_props(a),
+                        "array_items": _snapshot_array_items(a)} for a in attrs],
     }
 
 

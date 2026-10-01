@@ -6,6 +6,7 @@ from app.db.session import get_db
 from app.modules.attributes.schemas import (
     ATTRIBUTE_TYPES,
     OBJECT_SUB_TYPES,
+    ArrayItems,
     AttributeCreate,
     AttributeOut,
     AttributeUpdate,
@@ -13,6 +14,10 @@ from app.modules.attributes.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/attributes", tags=["attributes"])
+
+ARRAY_ITEM_KINDS = ("string", "number", "object")
+
+DEFAULT_ARRAY_ITEMS = {"kind": "string", "properties": []}
 
 
 def _agent_ids(db: Session, attribute_id: str) -> list[str]:
@@ -24,9 +29,14 @@ def _agent_ids(db: Session, attribute_id: str) -> list[str]:
 
 def _out(db: Session, r: Attribute) -> AttributeOut:
     raw_props = getattr(r, "object_properties", None) or []
+    raw_group = getattr(r, "group_name", None) or ""
+    raw_items = getattr(r, "array_items", None) or {}
+    norm_items = _normalize_array_items(raw_items)
     return AttributeOut(id=r.id, agent_ids=_agent_ids(db, r.id), name=r.name, type=r.type,
-                        description=r.description, enum_values=r.enum_values or [],
-                        object_properties=raw_props if isinstance(raw_props, list) else [])
+                        description=r.description, group=raw_group,
+                        enum_values=r.enum_values or [],
+                        object_properties=raw_props if isinstance(raw_props, list) else [],
+                        array_items=norm_items)
 
 
 def _check_agents_exist(db: Session, agent_ids: list[str]) -> None:
@@ -46,14 +56,80 @@ def _as_prop_dicts(raw: object) -> list[dict]:
     return props
 
 
+def _clean_group(raw: object) -> str:
+    """Trimmed free text, default empty."""
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _as_array_items_dict(raw: object) -> dict:
+    if isinstance(raw, ArrayItems):
+        return {"kind": raw.kind, "properties": [p.model_dump() for p in raw.properties]}
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
+
+
+def _normalize_array_items(raw: object) -> dict:
+    """Coerce stored array_items to {kind, properties} (defaults to string)."""
+    d = _as_array_items_dict(raw)
+    kind = str(d.get("kind", "string") or "string").strip().lower()
+    if kind not in ARRAY_ITEM_KINDS:
+        kind = "string"
+    props_raw = d.get("properties", [])
+    if kind != "object":
+        return {"kind": kind, "properties": []}
+    props = _as_prop_dicts(props_raw)
+    cleaned: list[dict] = []
+    for p in props:
+        name = str(p.get("name", "") or "").strip()
+        sub_type = p.get("type", "string")
+        null_allowed = p.get("null_allowed", True)
+        if name and sub_type in OBJECT_SUB_TYPES and isinstance(null_allowed, bool):
+            cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
+    return {"kind": kind, "properties": cleaned}
+
+
+def _validate_array_items(raw: object) -> dict:
+    d = _as_array_items_dict(raw)
+    kind_raw = d.get("kind", "string")
+    kind = str(kind_raw or "string").strip().lower()
+    if kind not in ARRAY_ITEM_KINDS:
+        raise HTTPException(422, "array kind must be string|number|object")
+    if kind in ("string", "number"):
+        return {"kind": kind, "properties": []}
+    props = _as_prop_dicts(d.get("properties", []))
+    if not props:
+        raise HTTPException(422, "array object kind requires non-empty properties")
+    cleaned: list[dict] = []
+    seen: set[str] = set()
+    for p in props:
+        name = str(p.get("name", "") or "").strip()
+        sub_type = p.get("type", "string")
+        null_allowed = p.get("null_allowed", True)
+        if not name:
+            raise HTTPException(422, "array property name must be non-blank")
+        if sub_type not in OBJECT_SUB_TYPES:
+            raise HTTPException(422, "array property type must be string|number|boolean|array")
+        if not isinstance(null_allowed, bool):
+            raise HTTPException(422, "array property null_allowed must be boolean")
+        if name in seen:
+            raise HTTPException(422, f"duplicate array property: {name}")
+        seen.add(name)
+        cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
+    return {"kind": kind, "properties": cleaned}
+
+
 def _validate(attr_type: str, enum_values: list[str],
-              object_properties: object = None) -> tuple[list[str], list[dict]]:
+              object_properties: object = None,
+              array_items: object = None) -> tuple[list[str], list[dict], dict]:
     if attr_type not in ATTRIBUTE_TYPES:
         raise HTTPException(422, "type must be string|number|boolean|enum|array|object")
     if attr_type == "enum":
         if not enum_values:
             raise HTTPException(422, "enum requires non-empty enum_values")
-        return list(enum_values), []
+        return list(enum_values), [], dict(DEFAULT_ARRAY_ITEMS)
     if attr_type == "object":
         props = _as_prop_dicts(object_properties)
         if not props:
@@ -74,29 +150,38 @@ def _validate(attr_type: str, enum_values: list[str],
                 raise HTTPException(422, f"duplicate object property: {name}")
             seen.add(name)
             cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
-        return [], cleaned
-    # string | number | boolean | array store no extra config.
-    return [], []
+        return [], cleaned, dict(DEFAULT_ARRAY_ITEMS)
+    if attr_type == "array":
+        return [], [], _validate_array_items(array_items if array_items is not None else {})
+    # string | number | boolean store no extra config.
+    return [], [], dict(DEFAULT_ARRAY_ITEMS)
 
 
 @router.get("", response_model=list[AttributeOut])
-def list_attributes(agent_id: str | None = None, db: Session = Depends(get_db)):
+def list_attributes(agent_id: str | None = None, group: str | None = None,
+                    db: Session = Depends(get_db)):
     q = db.query(Attribute).order_by(Attribute.created_at.desc())
     if agent_id:
         q = q.join(agent_attributes,
                    agent_attributes.c.attribute_id == Attribute.id
                    ).filter(agent_attributes.c.agent_id == agent_id)
+    if group is not None and str(group).strip() != "":
+        q = q.filter(Attribute.group_name == str(group).strip())
     return [_out(db, r) for r in q.limit(500).all()]
 
 
 @router.post("", response_model=AttributeOut)
 def create_attribute(payload: AttributeCreate, db: Session = Depends(get_db)):
     _check_agents_exist(db, payload.agent_ids)
-    enum_values, object_properties = _validate(
-        payload.type, payload.enum_values or [], payload.object_properties or [])
+    enum_values, object_properties, array_items = _validate(
+        payload.type, payload.enum_values or [], payload.object_properties or [],
+        payload.array_items if payload.array_items is not None else {})
     row = Attribute(name=payload.name, type=payload.type,
-                    description=payload.description, enum_values=enum_values,
-                    object_properties=object_properties)
+                    description=payload.description,
+                    group_name=_clean_group(getattr(payload, "group", "")),
+                    enum_values=enum_values,
+                    object_properties=object_properties,
+                    array_items=array_items)
     db.add(row)
     db.flush()  # need row.id for the association links
     for aid in dict.fromkeys(payload.agent_ids):
@@ -130,20 +215,29 @@ def update_attribute(attribute_id: str, payload: AttributeUpdate, db: Session = 
     new_type = payload.type if payload.type is not None else row.type
     if payload.type is not None and payload.type not in ATTRIBUTE_TYPES:
         raise HTTPException(422, "type must be string|number|boolean|enum|array|object")
-    if payload.enum_values is not None or payload.object_properties is not None or payload.type is not None:
+    if (payload.enum_values is not None or payload.object_properties is not None
+            or payload.array_items is not None or payload.type is not None):
         new_enum = payload.enum_values if payload.enum_values is not None else (row.enum_values or [])
         new_props_raw = (payload.object_properties if payload.object_properties is not None
                          else (getattr(row, "object_properties", None) or []))
-        row.enum_values, row.object_properties = _validate(new_type, new_enum, new_props_raw)
+        new_items_raw = (payload.array_items if payload.array_items is not None
+                         else (getattr(row, "array_items", None) or {}))
+        row.enum_values, row.object_properties, row.array_items = _validate(
+            new_type, new_enum, new_props_raw, new_items_raw)
+    if payload.group is not None:
+        row.group_name = _clean_group(payload.group)
     for field in ("name", "type", "description"):
         value = getattr(payload, field)
         if value is not None:
             setattr(row, field, value)
-    # Non-enum types never store options; non-object types never store sub-fields.
+    # Non-enum types never store options; non-object types never store sub-fields;
+    # non-array types reset item-shape to the string default (ignored).
     if row.type != "enum":
         row.enum_values = []
     if row.type != "object":
         row.object_properties = []
+    if row.type != "array":
+        row.array_items = dict(DEFAULT_ARRAY_ITEMS)
     db.commit()
     db.refresh(row)
     return _out(db, row)

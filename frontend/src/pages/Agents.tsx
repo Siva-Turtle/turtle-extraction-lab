@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,7 +20,7 @@ export type Agent = {
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
+export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\n| Type | Meaning |\n|---|---|\n| \`quoted\` | Value is explicitly stated in the transcript |\n| \`normalized\` | Value is explicitly stated but transformed into your canonical representation |\n| \`inferred\` | Value was not directly stated; model derived it from evidence |\n| \`not_found\` | No sufficient evidence exists |\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
 
 type Editing = {
   id?: string;
@@ -48,7 +48,13 @@ const RESULT_CONTRACT =
   'quoted = value stated word-for-word (evidence is the exact quote); ' +
   'inferred = value concluded from the input but not stated verbatim ' +
   '(evidence is the supporting passage); normalized = value standardized from a stated form ' +
-  'such as phone digits, date formats, or casing (evidence is the original stated form).';
+  'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n' +
+  '| Type | Meaning |\n' +
+  '|---|---|\n' +
+  '| `quoted` | Value is explicitly stated in the transcript |\n' +
+  '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n' +
+  '| `inferred` | Value was not directly stated; model derived it from evidence |\n' +
+  '| `not_found` | No sufficient evidence exists |';
 
 const COPY_USER_TEMPLATE = "{{Transcription}}";
 
@@ -62,8 +68,10 @@ type PreviewAttr = {
   name: string;
   type: string;
   description: string;
+  group: string;
   enum_values: string[];
   object_properties: PreviewObjectProp[];
+  array_items: { kind: string; properties: PreviewObjectProp[] };
 };
 
 /** Mirrors backend `_attr_line`: `- name (type): description [a | b]`. */
@@ -97,6 +105,24 @@ function subSchema(subType: string, nullAllowed: boolean): Record<string, unknow
   return { type: t("string") };
 }
 
+/** Mirrors backend `_array_item_schema`: array items fragment by kind. */
+function arrayItemSchema(a: PreviewAttr): Record<string, unknown> {
+  const kind = a.array_items?.kind ?? "string";
+  if (kind === "number") {
+    return { type: "number" };
+  }
+  if (kind === "object") {
+    const subProps: Record<string, unknown> = {};
+    const subRequired: string[] = [];
+    for (const p of a.array_items?.properties ?? []) {
+      subProps[p.name] = subSchema(p.type, p.null_allowed !== false);
+      subRequired.push(p.name);
+    }
+    return { type: "object", properties: subProps, required: subRequired, additionalProperties: false };
+  }
+  return { type: "string" };
+}
+
 /** Mirrors backend `build_extraction_schema` + `build_chat_payload` envelope (strict meeting_extraction). */
 function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown> {
   if (attrs.length === 0) {
@@ -112,7 +138,7 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
     } else if (a.type === "array") {
       valueSchema = {
         type: ["array", "null"],
-        items: { type: "string" },
+        items: arrayItemSchema(a),
         description: `Extracted value for ${a.name}`,
       };
     } else if (a.type === "object") {
@@ -171,8 +197,12 @@ function toPreviewAttr(a: LabAttribute): PreviewAttr {
     name: a.name,
     type: a.type,
     description: a.description,
+    group: a.group ?? "",
     enum_values: a.enum_values ?? [],
     object_properties: (a.object_properties ?? []).map((p) => ({ ...p })),
+    array_items: a.array_items?.kind === "object"
+      ? { kind: "object", properties: (a.array_items.properties ?? []).map((p) => ({ ...p })) }
+      : { kind: a.array_items?.kind ?? "string", properties: [] },
   };
 }
 
@@ -279,10 +309,34 @@ function AttributeMultiSelect({
     .map((id) => all.find((a) => a.id === id)?.name)
     .filter((n): n is string => typeof n === "string" && n !== "");
   const q = filter.trim().toLowerCase();
-  const visible = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
+  const visible = q
+    ? all.filter(
+        (a) =>
+          a.name.toLowerCase().includes(q) ||
+          (a.group ?? "").toLowerCase().includes(q),
+      )
+    : all;
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, LabAttribute[]>();
+    for (const a of visible) {
+      const g = (a.group ?? "").trim();
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(a);
+    }
+    return [...map.entries()].sort((x, y) => x[0].localeCompare(y[0]));
+  }, [visible]);
 
   function toggle(id: string) {
     onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
+  }
+
+  function toggleGroup(items: LabAttribute[]) {
+    const ids = items.map((a) => a.id);
+    const allSelected = ids.every((id) => selectedIds.includes(id));
+    onChange(allSelected
+      ? selectedIds.filter((id) => !ids.includes(id))
+      : [...selectedIds, ...ids.filter((id) => !selectedIds.includes(id))]);
   }
 
   const label =
@@ -341,7 +395,7 @@ function AttributeMultiSelect({
                   <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">
                     {all.length === 0 ? "No attributes yet — define them on the Attributes tab." : "No matches."}
                   </p>
-                ) : (
+                ) : q ? (
                   visible.map((a) => (
                     <label
                       key={a.id}
@@ -357,6 +411,52 @@ function AttributeMultiSelect({
                       <Badge tone="neutral">{a.type}</Badge>
                     </label>
                   ))
+                ) : (
+                  grouped.map(([g, items]) => {
+                    const ids = items.map((a) => a.id);
+                    const selectedCount = ids.filter((id) => selectedIds.includes(id)).length;
+                    const allSelected = selectedCount === ids.length;
+                    return (
+                      <div key={g || "__ungrouped"}>
+                        <label
+                          className={cn(
+                            "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-sans text-xs font-bold uppercase tracking-wide",
+                            allSelected
+                              ? "bg-[#e8fbf6] text-[#0d5c4a] dark:bg-white/10 dark:text-[#2fdebf]"
+                              : "text-[#8a8f98]",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = selectedCount > 0 && !allSelected;
+                            }}
+                            onChange={() => toggleGroup(items)}
+                            aria-label={g ? `Select all in ${g}` : "Select all ungrouped"}
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            {g || "Ungrouped"} ({selectedCount}/{ids.length})
+                          </span>
+                        </label>
+                        {items.map((a) => (
+                          <label
+                            key={a.id}
+                            className={cn(
+                              "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 pl-8 font-sans text-sm",
+                              selectedIds.includes(a.id)
+                                ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                                : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                            )}
+                          >
+                            <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={() => toggle(a.id)} />
+                            <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                            <Badge tone="neutral">{a.type}</Badge>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
