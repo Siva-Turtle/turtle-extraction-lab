@@ -15,4 +15,10 @@ if errorlevel 1 (
   )
 )
 "%PWSH%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\dev.ps1" %*
-exit /b %ERRORLEVEL%
+set "ERR=%ERRORLEVEL%"
+if %ERR% neq 0 (
+  echo.
+  echo Lab failed to start ^(exit %ERR%^). See the message above.
+  pause
+)
+exit /b %ERR%
