@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Star } from "lucide-react";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
+import { fieldInput } from "./Modal";
 
 export type ModelOption = { id: string; name: string };
 
@@ -221,6 +222,140 @@ export function ModelCombobox({
             <li className="px-3 py-2 font-sans text-sm text-[#8a8f98]">No matches — keep typing for a custom id.</li>
           )}
         </ul>
+      )}
+    </div>
+  );
+}
+
+export type MultiSelectOption = { value: string; label: string; sub?: string };
+
+const multiTrigger =
+  "flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-2 font-sans text-sm " +
+  "hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 " +
+  "dark:border-white/10 dark:bg-[#2e2e2e] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]";
+
+const multiList =
+  "absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]";
+
+/**
+ * Searchable multi-select filter — v2 field + dropdown styling shared with the
+ * Agents/TestLab multiselects. Collapsed shows `first + N others`, never pills.
+ */
+export function MultiSelectFilter({
+  options,
+  selected,
+  onChange,
+  placeholder,
+  ariaLabel,
+  filterPlaceholder = "Filter…",
+  emptyText = "No matches.",
+}: {
+  options: MultiSelectOption[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+  placeholder: string;
+  ariaLabel: string;
+  filterPlaceholder?: string;
+  emptyText?: string;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
+  const [filter, setFilter] = React.useState("");
+
+  const labelOf = React.useCallback(
+    (v: string) => options.find((o) => o.value === v)?.label ?? v,
+    [options],
+  );
+  const orderedLabels = selected.map(labelOf).filter((n) => n !== "");
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? options.filter(
+        (o) =>
+          o.label.toLowerCase().includes(q) ||
+          o.value.toLowerCase().includes(q) ||
+          (o.sub?.toLowerCase().includes(q) ?? false),
+      )
+    : options;
+
+  function toggle(v: string) {
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  }
+
+  const label =
+    orderedLabels.length === 0
+      ? placeholder
+      : orderedLabels.length === 1
+        ? orderedLabels[0]
+        : `${orderedLabels[0]} + ${orderedLabels.length - 1} other${orderedLabels.length - 1 === 1 ? "" : "s"}`;
+
+  return (
+    <div className="relative mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className={multiTrigger}
+      >
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-left",
+            orderedLabels.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+          )}
+        >
+          {label}
+        </span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+        </span>
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-10 cursor-default bg-transparent"
+          />
+          <div role="listbox" aria-label={ariaLabel} className={multiList}>
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={filterPlaceholder}
+              aria-label={`Filter ${ariaLabel}`}
+              className={fieldInput}
+            />
+            <div className="mt-2 grid gap-1">
+              {visible.length === 0 ? (
+                <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">{emptyText}</p>
+              ) : (
+                visible.map((o) => (
+                  <label
+                    key={o.value}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-sans text-sm",
+                      selected.includes(o.value)
+                        ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                        : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                    )}
+                  >
+                    <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{o.label}</span>
+                      {o.sub && (
+                        <span className="block truncate text-xs text-[#4a5058] dark:text-[#C3C2B7]">{o.sub}</span>
+                      )}
+                    </span>
+                    {selected.includes(o.value) && (
+                      <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
+                    )}
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

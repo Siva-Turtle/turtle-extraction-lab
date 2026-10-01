@@ -11,3 +11,9 @@ export type AttributeObjectProperty = {
   type: AttributeObjectPropertyType;
   null_allowed: boolean;
 };
+
+export type LogsQueryParams = {
+  models?: string[];
+  agent_ids?: string[];
+  dates?: string[];
+};

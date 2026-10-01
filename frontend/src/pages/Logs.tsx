@@ -3,11 +3,14 @@ import { useState } from "react";
 import { BarChart3, Braces, Check, ChevronDown, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import type { LogsQueryParams } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Card, CardTitle } from "../components/ui/Card";
+import { MultiSelectFilter } from "../components/ui/Combobox";
+import type { ModelOption } from "../components/ui/Combobox";
 import { Drawer } from "../components/ui/Drawer";
-import { fieldInput, fieldLabel } from "../components/ui/Modal";
+import { fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 
 type AgentUsage = {
@@ -95,6 +98,22 @@ function fmt(ts: string) {
     return new Date(ts).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
   } catch {
     return ts;
+  }
+}
+
+type LogAgent = { id: string; name: string };
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** YYYY-MM-DD of a log timestamp in Asia/Kolkata (matches the displayed date). */
+function toLogDate(ts: string): string | null {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    const s = d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    return DATE_RE.test(s) ? s : null;
+  } catch {
+    return null;
   }
 }
 
@@ -230,39 +249,99 @@ function InputTypeFilter({
 }
 
 export default function Logs() {
-  const { data = [], isLoading } = useQuery({
-    queryKey: ["logs"],
-    queryFn: async () => (await api.get("/logs")).data as LogRow[],
-  });
   const [activeId, setActiveId] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>("pretty");
-  const [search, setSearch] = useState("");
   const [inputFilter, setInputFilter] = useState("");
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
 
-  const active = activeId ? (data.find((l) => l.id === activeId) ?? null) : null;
+  const { data: agents = [] } = useQuery({
+    queryKey: ["agents"],
+    queryFn: async () => (await api.get("/agents")).data as LogAgent[],
+    staleTime: 60 * 1000,
+  });
+  const { data: modelsMeta } = useQuery({
+    queryKey: ["models"],
+    queryFn: async () =>
+      (await api.get("/models")).data as { live: boolean; models: ModelOption[] },
+    staleTime: 5 * 60 * 1000,
+  });
+  // Unfiltered list: stable source for the Model/Date dropdown options.
+  const { data: allLogs = [], isLoading: allLoading } = useQuery({
+    queryKey: ["logs-all"],
+    queryFn: async () => (await api.get("/logs")).data as LogRow[],
+    staleTime: 30 * 1000,
+  });
+
+  const hasServerFilters =
+    selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0;
+
+  const params: LogsQueryParams = {};
+  if (selectedModels.length > 0) params.models = selectedModels;
+  if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
+  if (selectedDates.length > 0) params.dates = selectedDates;
+
+  // Server-filtered list (AND across groups); reused only while filters are set.
+  const { data: serverLogs, isLoading: serverLoading } = useQuery({
+    queryKey: ["logs", selectedModels, selectedAgents, selectedDates],
+    queryFn: async () =>
+      (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
+    enabled: hasServerFilters,
+    staleTime: 30 * 1000,
+  });
+
+  const base = hasServerFilters ? (serverLogs ?? []) : allLogs;
+  const isLoading = allLoading || (hasServerFilters && serverLoading);
+  const totalCount = allLogs.length;
+
+  const modelOptions = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const m of modelsMeta?.models ?? []) {
+      if (typeof m.id === "string" && m.id !== "") {
+        names.set(m.id, typeof m.name === "string" && m.name !== "" ? m.name : m.id);
+      }
+    }
+    for (const l of allLogs) {
+      if (typeof l.model === "string" && l.model.trim() !== "" && !names.has(l.model)) {
+        names.set(l.model, l.model);
+      }
+    }
+    return [...names.entries()]
+      .map(([value, name]) => ({
+        value,
+        label: value,
+        sub: name !== value ? name : undefined,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [allLogs, modelsMeta]);
+
+  const agentOptions = React.useMemo(
+    () =>
+      [...agents]
+        .filter((a) => a && typeof a.id === "string" && typeof a.name === "string")
+        .map((a) => ({ value: a.id, label: a.name }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [agents],
+  );
+
+  const dateOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const l of allLogs) {
+      const d = toLogDate(l.created_at);
+      if (d) set.add(d);
+    }
+    return [...set].sort().reverse().map((d) => ({ value: d, label: d }));
+  }, [allLogs]);
+
+  const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
 
   function openLog(id: string) {
     setTab("pretty");
     setActiveId(id);
   }
 
-  const q = search.trim().toLowerCase();
-  const filtered = data.filter((l) => {
-    if (inputFilter && l.input_type !== inputFilter) return false;
-    if (!q) return true;
-    const hay = [
-      l.model ?? "",
-      l.run_id ?? "",
-      l.input_type ?? "",
-      l.filters?.client_name ?? "",
-      l.filters?.client_id ?? "",
-      l.filters?.meeting_title ?? "",
-      l.filters?.meeting_date ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-    return hay.includes(q);
-  });
+  const filtered = inputFilter ? base.filter((l) => l.input_type === inputFilter) : base;
 
   return (
     <div className="grid gap-4">
@@ -270,16 +349,42 @@ export default function Logs() {
 
       <Card>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className={fieldLabel}>
-            Search
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Model, client, meeting…"
-              aria-label="Search logs"
-              className={fieldInput}
+          <div className={fieldLabel}>
+            Model
+            <MultiSelectFilter
+              options={modelOptions}
+              selected={selectedModels}
+              onChange={setSelectedModels}
+              placeholder="All models"
+              ariaLabel="Filter by model"
+              filterPlaceholder="Search models…"
+              emptyText={modelOptions.length === 0 ? "No models yet." : "No matches."}
             />
-          </label>
+          </div>
+          <div className={fieldLabel}>
+            Agent
+            <MultiSelectFilter
+              options={agentOptions}
+              selected={selectedAgents}
+              onChange={setSelectedAgents}
+              placeholder="All agents"
+              ariaLabel="Filter by agent"
+              filterPlaceholder="Search agents…"
+              emptyText={agents.length === 0 ? "No agents yet." : "No matches."}
+            />
+          </div>
+          <div className={fieldLabel}>
+            Date
+            <MultiSelectFilter
+              options={dateOptions}
+              selected={selectedDates}
+              onChange={setSelectedDates}
+              placeholder="All dates"
+              ariaLabel="Filter by date"
+              filterPlaceholder="Search dates…"
+              emptyText={dateOptions.length === 0 ? "No dates yet." : "No matches."}
+            />
+          </div>
           <div className={fieldLabel}>
             Input type
             <InputTypeFilter value={inputFilter} onChange={setInputFilter} />
@@ -291,7 +396,7 @@ export default function Logs() {
         <Card>
           <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
         </Card>
-      ) : data.length === 0 ? (
+      ) : totalCount === 0 ? (
         <Card>
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
             No runs logged yet — run something from the Test Lab.
