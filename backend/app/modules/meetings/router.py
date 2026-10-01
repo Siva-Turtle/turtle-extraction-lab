@@ -1,6 +1,6 @@
-"""Meetings proxy: Mongo clients + Fireflies transcripts.
+"""Meetings proxy: Mongo clients + Mongo task transcripts.
 
-Browser never touches Mongo/Fireflies directly — this backend proxies everything.
+Browser never touches Mongo directly — this backend proxies everything.
 Read-only Mongo discipline: only find/find_one (no writes, ever).
 Secrets come from environment via app.core.config.settings only; never log them.
 """
@@ -9,7 +9,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.config import settings
@@ -24,44 +23,28 @@ from app.modules.meetings.schemas import (
 router = APIRouter(prefix="/api/v1/meetings", tags=["meetings"])
 
 MONGO_DB = "turtle-finance-db"
-MONGO_COLLECTION = "clients"
+MONGO_CLIENTS_COLLECTION = "clients"
+MONGO_TASKS_COLLECTION = "tasks"
 
 CACHE_TTL_SECONDS = 300
 _CACHE: dict[str, tuple[float, Any]] = {}
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
-LIST_QUERY = """
-query Transcripts($limit: Int, $fromDate: String, $toDate: String) {
-  transcripts(limit: $limit, fromDate: $fromDate, toDate: $toDate) {
-    id
-    title
-    date
-    duration
-    meeting_link
-    participants
-    organizer_email
-    meeting_attendees {
-      displayName
-      email
-    }
-  }
-}
-"""
+TITLES_RECENT_LIMIT = 500
+MEETINGS_RETURN_CAP = 200
 
-DETAIL_QUERY = """
-query TranscriptDetail($id: String!) {
-  transcript(id: $id) {
-    id
-    title
-    date
-    sentences {
-      speaker_name
-      text
-    }
-  }
+TASK_LIST_PROJECTION = {
+    "title": 1,
+    "date": 1,
+    "createdAt": 1,
+    "client": 1,
+    "participants": 1,
+    "duration": 1,
+    "duration_min": 1,
+    "durationMin": 1,
+    "durationMinutes": 1,
 }
-"""
 
 
 def clear_cache() -> None:
@@ -83,35 +66,10 @@ def _cache_set(key: str, value: Any) -> None:
     _CACHE[key] = (time.time() + CACHE_TTL_SECONDS, value)
 
 
-def build_transcription(sentences: list[dict] | None) -> str:
-    """Join Fireflies sentences into "Speaker: line" text."""
-    lines: list[str] = []
-    for s in sentences or []:
-        if not isinstance(s, dict):
-            continue
-        speaker = (s.get("speaker_name") or "Speaker") or "Speaker"
-        text = (s.get("text") or "")
-        if isinstance(text, str):
-            text = text.strip()
-        else:
-            text = str(text).strip()
-        if not text:
-            continue
-        lines.append(f"{speaker}: {text}")
-    return "\n".join(lines)
-
-
 def _mongo_503() -> HTTPException:
     return HTTPException(
         status_code=503,
         detail="MongoDB unavailable: set MONGODB_URI in backend/.env",
-    )
-
-
-def _fireflies_503() -> HTTPException:
-    return HTTPException(
-        status_code=503,
-        detail="Fireflies unavailable: set FIREFLIES_API_KEY in backend/.env",
     )
 
 
@@ -120,13 +78,6 @@ def _require_mongo_uri() -> str:
     if not uri:
         raise _mongo_503()
     return uri
-
-
-def _require_fireflies_key() -> str:
-    key = (settings.fireflies_api_key or "").strip()
-    if not key:
-        raise _fireflies_503()
-    return key
 
 
 def _mongo_client(uri: str):
@@ -142,7 +93,7 @@ def _fetch_mongo_docs() -> list[dict]:
     except Exception:
         raise _mongo_503()
     try:
-        coll = client[MONGO_DB][MONGO_COLLECTION]
+        coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
         # Read-only: find only.
         return list(coll.find({}, {"clientId": 1, "fullName": 1, "email": 1}))
     except Exception:
@@ -161,7 +112,7 @@ def _fetch_mongo_client_doc(client_id: str) -> dict | None:
     except Exception:
         raise _mongo_503()
     try:
-        coll = client[MONGO_DB][MONGO_COLLECTION]
+        coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
         doc = coll.find_one({"clientId": client_id}, {"clientId": 1, "fullName": 1, "email": 1})
         if doc is not None:
             return doc
@@ -192,146 +143,105 @@ def _fetch_mongo_client_doc(client_id: str) -> dict | None:
             pass
 
 
-def _emails_from_doc(doc: dict) -> set[str]:
-    raw = doc.get("email", [])
-    if isinstance(raw, str):
-        raw = [raw]
-    elif not isinstance(raw, list):
-        raw = []
-    out: set[str] = set()
-    for e in raw:
-        if isinstance(e, str) and e.strip():
-            out.add(e.strip().lower())
-        elif isinstance(e, dict) and e.get("email"):
-            v = str(e["email"]).strip().lower()
-            if v:
-                out.add(v)
-    return out
-
-
-def _extract_participants(t: dict) -> list[str]:
-    parts: list[str] = []
-
-    def _push(v: Any) -> None:
-        if isinstance(v, str) and v.strip():
-            parts.append(v.strip())
-        elif isinstance(v, dict):
-            email = v.get("email")
-            if isinstance(email, str) and email.strip():
-                parts.append(email.strip())
-
-    for p in t.get("participants") or []:
-        _push(p)
-    org = t.get("organizer_email")
-    if isinstance(org, str) and org.strip():
-        parts.append(org.strip())
-    for a in t.get("meeting_attendees") or []:
-        _push(a)
-    # Deduplicate preserving order.
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for p in parts:
-        if p not in seen:
-            seen.add(p)
-            uniq.append(p)
-    return uniq
-
-
-def _participant_emails_lower(t: dict) -> set[str]:
-    return {p.lower() for p in _extract_participants(t) if isinstance(p, str)}
-
-
-def _matches_client(t: dict, emails_lower: set[str] | None, name_lower: str | None) -> bool:
-    """Client match: email in participants OR name substring in title (case-insensitive)."""
-    if emails_lower is None and not name_lower:
-        return True
-    title = t.get("title") or ""
-    title_lower = title.lower() if isinstance(title, str) else str(title).lower()
-    if name_lower and name_lower in title_lower:
-        return True
-    if emails_lower:
-        if _participant_emails_lower(t) & emails_lower:
-            return True
-    return False
-
-
-def _resolve_client_filter(client_id: str | None) -> tuple[set[str] | None, str | None, bool]:
-    """Return (emails_lower|None, name_lower|None, no_match). no_match=True when doc missing."""
-    if not client_id:
-        return None, None, False
-    doc = _fetch_mongo_client_doc(client_id)
-    if not doc:
-        return set(), "", True
-    emails = _emails_from_doc(doc)
-    name = doc.get("fullName") or ""
-    name_lower = name.strip().lower() if isinstance(name, str) else str(name).strip().lower()
-    return emails, name_lower, False
-
-
-def _fireflies_post(query: str, variables: dict) -> dict:
-    key = _require_fireflies_key()
-    url = (settings.fireflies_api_url or "https://api.fireflies.ai/graphql").strip() or "https://api.fireflies.ai/graphql"
+def _find_tasks(filt: dict, proj: dict | None = None) -> list[dict]:
+    """Read-only task fetch. Sorting/caps happen in Python (tolerant date parsing)."""
+    uri = _require_mongo_uri()
     try:
-        with httpx.Client(timeout=20) as client:
-            resp = client.post(
-                url,
-                headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-                json={"query": query, "variables": variables},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = _mongo_client(uri)
+    except Exception:
+        raise _mongo_503()
+    try:
+        coll = client[MONGO_DB][MONGO_TASKS_COLLECTION]
+        # Read-only: find only.
+        docs = list(coll.find(filt, proj))
+        return [d for d in docs if isinstance(d, dict)]
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(status_code=502, detail="Fireflies request failed")
+        raise _mongo_503()
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
-def _fetch_transcripts_list(*, limit: int = 200, from_date: str | None = None,
-                            to_date: str | None = None) -> list[dict]:
-    _require_fireflies_key()
-    cache_key = f"transcripts:{limit}:{from_date}:{to_date}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached
-    variables: dict[str, Any] = {"limit": limit}
-    if from_date is not None:
-        variables["fromDate"] = from_date
-    if to_date is not None:
-        variables["toDate"] = to_date
-    data = _fireflies_post(LIST_QUERY, variables)
-    items = ((data.get("data") or {}).get("transcripts")) or []
-    if isinstance(items, dict):
-        items = [items]
-    if not isinstance(items, list):
-        items = []
-    result = [t for t in items if isinstance(t, dict)]
-    _cache_set(cache_key, result)
-    return result
-
-
-def _fetch_transcript_detail(meeting_id: str) -> dict | None:
-    _require_fireflies_key()
-    data = _fireflies_post(DETAIL_QUERY, {"id": meeting_id})
-    t = (data.get("data") or {}).get("transcript")
-    return t if isinstance(t, dict) else None
-
-
-def _ist_day_bounds(date_str: str) -> tuple[str, str]:
+def _fetch_task_by_id(meeting_id: str) -> dict | None:
+    uri = _require_mongo_uri()
     try:
-        day = datetime.strptime(date_str, "%Y-%m-%d")
+        client = _mongo_client(uri)
+    except Exception:
+        raise _mongo_503()
+    try:
+        coll = client[MONGO_DB][MONGO_TASKS_COLLECTION]
+        key: Any = meeting_id
+        try:
+            from bson import ObjectId
+
+            try:
+                key = ObjectId(meeting_id)
+            except Exception:
+                key = meeting_id
+        except Exception:
+            key = meeting_id
+        # Read-only: find_one only.
+        doc = coll.find_one({"_id": key})
+        if doc is not None:
+            return doc if isinstance(doc, dict) else None
+        if key != meeting_id:
+            try:
+                fallback = coll.find_one({"_id": meeting_id})
+            except Exception:
+                return None
+            return fallback if isinstance(fallback, dict) else None
+        return None
+    except HTTPException:
+        raise
+    except Exception:
+        raise _mongo_503()
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def _client_task_ids(doc: dict) -> list:
+    """Match tasks.client against BOTH ObjectId and str forms of the client's _id."""
+    raw = doc.get("_id")
+    ids: list = []
+    for cand in (raw, str(raw) if raw is not None else None):
+        if cand is None or cand == "":
+            continue
+        if not any(c == cand for c in ids):
+            ids.append(cand)
+    try:
+        from bson import ObjectId
+
+        oid = raw if isinstance(raw, ObjectId) else ObjectId(str(raw))
+        if not any(c == oid for c in ids):
+            ids.append(oid)
+    except Exception:
+        pass
+    return ids
+
+
+def _validate_ist_day(date_str: str) -> None:
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
-    start_ist = datetime(day.year, day.month, day.day, tzinfo=_IST)
-    end_ist = start_ist + timedelta(days=1)
-    start_utc = start_ist.astimezone(timezone.utc)
-    end_utc = end_ist.astimezone(timezone.utc)
-    return start_utc.isoformat(), end_utc.isoformat()
 
 
 def _parse_meeting_dt(value: Any) -> datetime | None:
     try:
         if value is None or value == "":
             return None
+        if isinstance(value, datetime):
+            dt = value
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         if isinstance(value, (int, float)):
             ts = float(value)
             if ts > 1e11:  # epoch ms
@@ -365,6 +275,11 @@ def _parse_meeting_dt(value: Any) -> datetime | None:
 def _to_iso_string(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
     if isinstance(value, (int, float)):
         dt = _parse_meeting_dt(value)
         return dt.isoformat() if dt else str(value)
@@ -393,11 +308,63 @@ def _to_duration_min(value: Any) -> float | None:
         return None
 
 
+def _task_raw_date(task: dict) -> Any:
+    raw = task.get("date")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raw = task.get("createdAt")
+    return raw
+
+
+def _task_date_iso(task: dict) -> str:
+    return _to_iso_string(_task_raw_date(task))
+
+
+def _task_sort_key(task: dict) -> float:
+    dt = _parse_meeting_dt(_task_raw_date(task))
+    return dt.timestamp() if dt else float("-inf")
+
+
 def _meeting_ist_date(value: Any) -> str | None:
     dt = _parse_meeting_dt(value)
     if dt is None:
         return None
     return dt.astimezone(_IST).strftime("%Y-%m-%d")
+
+
+def _task_ist_day(task: dict) -> str | None:
+    return _meeting_ist_date(_task_raw_date(task))
+
+
+def _task_participants(task: dict) -> list[str]:
+    raw = task.get("participants")
+    if not isinstance(raw, list):
+        return []
+    parts: list[str] = []
+    for p in raw:
+        if isinstance(p, str):
+            if p.strip():
+                parts.append(p.strip())
+        elif isinstance(p, dict):
+            for key in ("email", "displayName", "name"):
+                v = p.get(key)
+                if isinstance(v, str) and v.strip():
+                    parts.append(v.strip())
+                    break
+    # Deduplicate preserving order.
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def _task_duration_min(task: dict) -> float | None:
+    for key in ("duration", "duration_min", "durationMin", "durationMinutes"):
+        if key in task and task.get(key) is not None:
+            return _to_duration_min(task.get(key))
+    return None
 
 
 @router.get("/clients", response_model=list[ClientOut])
@@ -425,22 +392,37 @@ def list_clients():
 
 @router.get("/titles", response_model=TitlesOut)
 def list_titles(client_id: str | None = Query(default=None)):
-    _require_fireflies_key()
+    _require_mongo_uri()
+    cache_key = f"titles:{client_id or ''}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return TitlesOut(titles=cached)
     if client_id:
-        emails, name_lower, no_match = _resolve_client_filter(client_id)
-        if no_match:
+        doc = _fetch_mongo_client_doc(client_id)
+        if not doc:
+            _cache_set(cache_key, [])
             return TitlesOut(titles=[])
+        docs = _find_tasks(
+            {"client": {"$in": _client_task_ids(doc)}},
+            {"title": 1, "client": 1},
+        )
+        titles = _sorted_distinct_titles(docs)
     else:
-        emails, name_lower = None, None
-    items = _fetch_transcripts_list(limit=200)
+        docs = _find_tasks({}, {"title": 1, "date": 1, "createdAt": 1})
+        docs.sort(key=_task_sort_key, reverse=True)
+        docs = docs[:TITLES_RECENT_LIMIT]
+        titles = _sorted_distinct_titles(docs)
+    _cache_set(cache_key, titles)
+    return TitlesOut(titles=titles)
+
+
+def _sorted_distinct_titles(docs: list[dict]) -> list[str]:
     titles: set[str] = set()
-    for t in items:
-        if client_id and not _matches_client(t, emails, name_lower):
-            continue
-        title = t.get("title")
+    for d in docs:
+        title = d.get("title")
         if isinstance(title, str) and title.strip():
             titles.add(title.strip())
-    return TitlesOut(titles=sorted(titles, key=lambda s: s.lower()))
+    return sorted(titles, key=lambda s: s.lower())
 
 
 @router.get("", response_model=MeetingsOut)
@@ -449,57 +431,60 @@ def list_meetings(
     title: str | None = Query(default=None),
     date: str | None = Query(default=None),
 ):
-    _require_fireflies_key()
-    emails: set[str] | None = None
-    name_lower: str | None = None
-    if client_id:
-        emails, name_lower, no_match = _resolve_client_filter(client_id)
-        if no_match:
-            return MeetingsOut(meetings=[])
+    _require_mongo_uri()
     if date:
-        from_date, to_date = _ist_day_bounds(date)
-        items = _fetch_transcripts_list(limit=200, from_date=from_date, to_date=to_date)
-    else:
-        items = _fetch_transcripts_list(limit=200)
+        _validate_ist_day(date)
+    cache_key = f"meetings:{client_id or ''}:{title or ''}:{date or ''}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return MeetingsOut(meetings=cached)
+    filt: dict[str, Any] = {}
+    if client_id:
+        doc = _fetch_mongo_client_doc(client_id)
+        if not doc:
+            _cache_set(cache_key, [])
+            return MeetingsOut(meetings=[])
+        filt["client"] = {"$in": _client_task_ids(doc)}
+    if title:
+        filt["title"] = title
+    docs = _find_tasks(filt, TASK_LIST_PROJECTION)
+    if date:
+        docs = [d for d in docs if _task_ist_day(d) == date]
+    docs.sort(key=_task_sort_key, reverse=True)
+    docs = docs[:MEETINGS_RETURN_CAP]
     out: list[MeetingOut] = []
-    for t in items:
-        if client_id and not _matches_client(t, emails, name_lower):
-            continue
-        if title and (t.get("title") or "") != title:
-            continue
-        if date:
-            ist_day = _meeting_ist_date(t.get("date"))
-            if ist_day != date:
-                continue
-        mid = str(t.get("id") or "")
+    for d in docs:
+        mid = str(d.get("_id", ""))
         if not mid:
             continue
-        mtitle = t.get("title") or ""
         out.append(MeetingOut(
             id=mid,
-            title=str(mtitle),
-            date=_to_iso_string(t.get("date")),
-            duration_min=_to_duration_min(t.get("duration")),
-            participants=_extract_participants(t),
+            title=str(d.get("title") or ""),
+            date=_task_date_iso(d),
+            duration_min=_task_duration_min(d),
+            participants=_task_participants(d),
         ))
+    _cache_set(cache_key, out)
     return MeetingsOut(meetings=out)
 
 
 @router.get("/{meeting_id}/transcript", response_model=TranscriptOut)
 def get_transcript(meeting_id: str):
-    _require_fireflies_key()
-    t = _fetch_transcript_detail(meeting_id)
-    if not t:
+    _require_mongo_uri()
+    task = _fetch_task_by_id(meeting_id)
+    if not task:
         raise HTTPException(status_code=404, detail="transcript not found")
-    sentences = t.get("sentences")
-    if not sentences:
-        raise HTTPException(status_code=404, detail="transcript not found")
-    text = build_transcription(sentences if isinstance(sentences, list) else [])
-    if not text:
+    text: str | None = None
+    for key in ("fullTranscript", "detailedNotes", "summary"):
+        v = task.get(key)
+        if isinstance(v, str) and v.strip():
+            text = v
+            break
+    if text is None:
         raise HTTPException(status_code=404, detail="transcript not found")
     return TranscriptOut(
-        id=str(t.get("id") or meeting_id),
-        title=str(t.get("title") or ""),
-        date=_to_iso_string(t.get("date")),
+        id=str(task.get("_id") or meeting_id),
+        title=str(task.get("title") or ""),
+        date=_task_date_iso(task),
         transcription=text,
     )

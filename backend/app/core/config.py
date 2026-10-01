@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     cors_origins: str = "http://localhost:5175"
     mongodb_uri: str = ""
-    fireflies_api_key: str = ""
-    fireflies_api_url: str = "https://api.fireflies.ai/graphql"
 
     @property
     def cors_origin_list(self) -> list[str]:

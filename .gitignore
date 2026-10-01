@@ -5,3 +5,5 @@ __pycache__/
 node_modules/
 dist/
 logs/
+# db-init backup holds live secrets — never commit
+.env.bak
