@@ -46,36 +46,58 @@ def _agent_system_content(agent: Agent, attrs: list[Attribute]) -> str:
     return f"{base}\n\nAttributes to extract:\n{attr_lines}\n\n{RESULT_CONTRACT}"
 
 
-def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
-    """OpenAPI-compatible object schema for this run's attributes.
+def _value_schema_for_attribute(a: Attribute) -> dict:
+    """Map attribute type to the OpenAI structured-output value field.
 
-    Each attribute becomes a value-object ``{"value", "confidence",
-    "confidence_type", "evidence"}`` with ``required: ["confidence"]``.
-    All top-level properties optional (required: []), no $refs. Returns None
-    when there are no attributes (caller falls back to legacy json_object mode).
+    - string -> {"type": ["string", "null"], "description": ...}
+    - number -> {"type": ["number", "null"], ...}
+    - boolean -> {"type": ["boolean", "null"], ...}
+    - enum -> {"type": ["string", "null"], "enum": [...allowed..., None], ...}
+    """
+    if a.type == "number":
+        value_schema: dict = {"type": ["number", "null"],
+                              "description": f"Extracted value for {a.name}"}
+    elif a.type == "boolean":
+        value_schema = {"type": ["boolean", "null"],
+                        "description": f"Extracted value for {a.name}"}
+    else:
+        # string + enum share the string base; unknown types fall back to string
+        value_schema = {"type": ["string", "null"],
+                        "description": f"Extracted value for {a.name}"}
+    if a.type == "enum" and (a.enum_values or []):
+        value_schema["enum"] = [*list(a.enum_values), None]
+    return value_schema
+
+
+def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
+    """OpenAI-compatible structured-output object schema for this run's attributes.
+
+    Each attribute becomes ``{"value", "confidence", "confidence_type",
+    "evidence"}`` with all four required. Top-level ``required`` lists every
+    attribute name (missing = null value + not_found). No $refs. Returns None
+    when there are no attributes (caller falls back to json_object mode).
     """
     if not attrs:
         return None
     properties: dict = {}
+    required: list[str] = []
     for a in attrs:
-        value_schema: dict = {"description": f"Extracted value for {a.name}"}
-        if a.type == "enum" and (a.enum_values or []):
-            value_schema["enum"] = list(a.enum_values)
         properties[a.name] = {
             "type": "object",
             "description": a.description or a.name,
             "properties": {
-                "value": value_schema,
-                "confidence": {"type": "number"},
-                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
-                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
-                "evidence": {"type": "string"},
+                "value": _value_schema_for_attribute(a),
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "confidence_type": {"type": "string",
+                                    "enum": ["quoted", "inferred", "normalized", "not_found"]},
+                "evidence": {"type": ["string", "null"]},
             },
-            "required": ["confidence"],
+            "required": ["value", "confidence", "confidence_type", "evidence"],
             "additionalProperties": False,
         }
+        required.append(a.name)
     return {"type": "object", "properties": properties,
-            "required": [], "additionalProperties": False}
+            "required": required, "additionalProperties": False}
 
 
 @router.post("")

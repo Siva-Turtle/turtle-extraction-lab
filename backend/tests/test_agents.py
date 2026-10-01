@@ -140,7 +140,7 @@ def test_prompt_preview_fidelity(client, db):
     assert body["response_format"] == expected_format
     assert body["response_format"] == {
         "type": "json_schema",
-        "json_schema": {"name": "extraction", "strict": False, "schema": schema},
+        "json_schema": {"name": "meeting_extraction", "strict": True, "schema": schema},
     }
     assert body["attributes"] == [
         {"name": a.name, "type": a.type, "description": a.description,

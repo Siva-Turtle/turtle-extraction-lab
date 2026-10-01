@@ -13,17 +13,7 @@ const toneClasses: Record<BadgeTone, string> = {
   default: "bg-[#f1f2f3] text-[#4a5058] dark:bg-white/10 dark:text-[#C3C2B7]",
 };
 
-const dotClasses: Record<BadgeTone, string> = {
-  brand: "bg-[#2fdebf]",
-  success: "bg-[#22c55e]",
-  warning: "bg-[#f59e0b]",
-  danger: "bg-[#ef4444]",
-  info: "bg-[#3b82f6]",
-  neutral: "bg-[#8a8f98]",
-  default: "bg-[#8a8f98]",
-};
-
-/** Turtle theme badge: tinted pill, glowing status dot, uppercase micro type. */
+/** Turtle theme badge: tinted pill, uppercase micro type (no dot). */
 export function Badge({
   tone = "default",
   className,
@@ -41,7 +31,6 @@ export function Badge({
         className,
       )}
     >
-      <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", dotClasses[tone])} />
       {children}
     </span>
   );

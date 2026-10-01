@@ -1,11 +1,13 @@
+import * as React from "react";
 import { useState } from "react";
-import { BarChart3, Braces, Sparkles } from "lucide-react";
+import { BarChart3, Braces, Check, ChevronDown, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Card, CardTitle } from "../components/ui/Card";
 import { Drawer } from "../components/ui/Drawer";
+import { fieldInput, fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 
 type AgentUsage = {
@@ -149,6 +151,84 @@ const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
   { id: "analytics", label: "Analytics", icon: BarChart3 },
 ];
 
+const INPUT_FILTERS = ["transcription", "messages", "mail"];
+
+function InputTypeFilter({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const options = ["", ...INPUT_FILTERS];
+
+  return (
+    <div ref={rootRef} className="relative mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        role="combobox"
+        aria-expanded={open}
+        aria-label="Filter by input type"
+        className={cn(
+          "flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-2 font-sans text-sm",
+          "hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1",
+          "dark:border-white/10 dark:bg-[#2e2e2e] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]",
+        )}
+      >
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-left",
+            value ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+          )}
+        >
+          {value || "All input types"}
+        </span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+        </span>
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-label="Filter by input type"
+          className="absolute inset-x-0 top-full z-40 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]"
+        >
+          {options.map((o) => (
+            <li key={o || "all"} role="option" aria-selected={value === o}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(o);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]"
+              >
+                <span className="min-w-0 flex-1 truncate">{o || "All input types"}</span>
+                {value === o && (
+                  <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Logs() {
   const { data = [], isLoading } = useQuery({
     queryKey: ["logs"],
@@ -156,6 +236,8 @@ export default function Logs() {
   });
   const [activeId, setActiveId] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>("pretty");
+  const [search, setSearch] = useState("");
+  const [inputFilter, setInputFilter] = useState("");
 
   const active = activeId ? (data.find((l) => l.id === activeId) ?? null) : null;
 
@@ -164,12 +246,46 @@ export default function Logs() {
     setActiveId(id);
   }
 
+  const q = search.trim().toLowerCase();
+  const filtered = data.filter((l) => {
+    if (inputFilter && l.input_type !== inputFilter) return false;
+    if (!q) return true;
+    const hay = [
+      l.model ?? "",
+      l.run_id ?? "",
+      l.input_type ?? "",
+      l.filters?.client_name ?? "",
+      l.filters?.client_id ?? "",
+      l.filters?.meeting_title ?? "",
+      l.filters?.meeting_date ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  });
+
   return (
     <div className="grid gap-4">
-      <PageHeader
-        title="Run logs"
-        description="Frozen snapshots per run — agent configs, attributes, model, outputs, feedback. Never linked to live config."
-      />
+      <PageHeader title="Run logs" />
+
+      <Card>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className={fieldLabel}>
+            Search
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Model, client, meeting…"
+              aria-label="Search logs"
+              className={fieldInput}
+            />
+          </label>
+          <div className={fieldLabel}>
+            Input type
+            <InputTypeFilter value={inputFilter} onChange={setInputFilter} />
+          </div>
+        </div>
+      </Card>
 
       {isLoading ? (
         <Card>
@@ -181,54 +297,67 @@ export default function Logs() {
             No runs logged yet — run something from the Test Lab.
           </p>
         </Card>
+      ) : filtered.length === 0 ? (
+        <Card>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+            No logs match these filters.
+          </p>
+        </Card>
       ) : (
-        <div className="grid gap-3">
-          {data.map((l) => {
-            const fbCount = ratingsCount(l);
-            const usage = getUsage(l);
-            const chips = filterChips(l.filters);
-            const summary =
-              usage == null
-                ? "—"
-                : `${fmtCost(usage.cost_usd)} · ${fmtMs(usage.duration_ms)} · ${fmtTokens(usage.total_tokens)} tokens`;
-            return (
-              <Card
-                key={l.id}
-                padded={false}
-                className="p-4 transition-colors hover:border-[#1d1d1d] dark:hover:border-white/40"
-              >
-                <button
-                  onClick={() => openLog(l.id)}
-                  aria-haspopup="dialog"
-                  className="block w-full cursor-pointer text-left"
-                >
-                  <span className="flex w-full flex-wrap items-center gap-2">
-                    <Badge tone="brand">{l.input_type}</Badge>
-                    <span className="truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{l.model}</span>
-                    <span className="font-heading text-xs text-[#8a8f98]">{fmt(l.created_at)}</span>
-                    <span className="ml-auto flex items-center gap-2 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {Object.keys(l.agent_snapshot ?? {}).length} agents · {fbCount} ratings
-                    </span>
-                  </span>
-                  <span className="mt-2 flex w-full flex-wrap items-center gap-1.5">
-                    {chips.length > 0 && (
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        {chips.map((c) => (
-                          <Badge key={c} tone="neutral">
-                            {c}
-                          </Badge>
-                        ))}
-                      </span>
-                    )}
-                    <span className="ml-auto font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                      {summary}
-                    </span>
-                  </span>
-                </button>
-              </Card>
-            );
-          })}
-        </div>
+        <Card padded={false} className="overflow-x-auto">
+          <table className="w-full min-w-[840px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Model</th>
+                <th className="px-4 py-3">Input</th>
+                <th className="px-4 py-3">Agents</th>
+                <th className="px-4 py-3">Ratings</th>
+                <th className="px-4 py-3">Cost</th>
+                <th className="px-4 py-3">Tokens</th>
+                <th className="px-4 py-3">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((l) => {
+                const fbCount = ratingsCount(l);
+                const usage = getUsage(l);
+                return (
+                  <tr
+                    key={l.id}
+                    onClick={() => openLog(l.id)}
+                    className="cursor-pointer border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5"
+                  >
+                    <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {fmt(l.created_at)}
+                    </td>
+                    <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
+                      {l.model}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge tone="brand">{l.input_type}</Badge>
+                    </td>
+                    <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {Object.keys(l.agent_snapshot ?? {}).length}
+                    </td>
+                    <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {fbCount}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {usage ? fmtCost(usage.cost_usd) : "—"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {usage ? fmtTokens(usage.total_tokens) : "—"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {usage ? fmtMs(usage.duration_ms) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
       )}
 
       {active && (

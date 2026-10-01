@@ -32,15 +32,15 @@ def build_chat_payload(
     Pure function (no I/O, no secrets): ``{"model", "response_format",
     "messages": [{"role": "system", ...}, {"role": "user", ...}]}``.
     ``json_schema`` is the inner OpenAPI-compatible object schema; when
-    given, the envelope is a ``json_schema`` response_format, else the
-    legacy ``{"type": "json_object"}`` mode.
+    given, the envelope is a strict ``meeting_extraction`` json_schema
+    response_format, else the legacy ``{"type": "json_object"}`` mode.
     """
     if json_schema is None:
         response_format: dict = {"type": "json_object"}
     else:
         response_format = {
             "type": "json_schema",
-            "json_schema": {"name": "extraction", "strict": False, "schema": json_schema},
+            "json_schema": {"name": "meeting_extraction", "strict": True, "schema": json_schema},
         }
     return {
         "model": model,

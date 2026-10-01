@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -230,6 +230,137 @@ function FilterCombobox({
   );
 }
 
+/** Multi-select combobox for agents-to-run — v2 field + dropdown list styling. */
+function AgentsMultiSelect({
+  agents,
+  selected,
+  onChange,
+}: {
+  agents: Agent[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
+  const [filter, setFilter] = React.useState("");
+  const chosen = agents.filter((a) => selected.includes(a.id));
+  const q = filter.trim().toLowerCase();
+  const visible = q ? agents.filter((a) => a.name.toLowerCase().includes(q)) : agents;
+
+  function toggle(id: string) {
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  }
+
+  const label =
+    chosen.length === 0
+      ? "Select agents…"
+      : `Agents (${chosen.length}): ${chosen.map((a) => a.name).join(", ")}`;
+
+  return (
+    <div>
+      {chosen.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chosen.map((a) => (
+            <span
+              key={a.id}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+            >
+              {a.name}
+              <button
+                type="button"
+                onClick={() => toggle(a.id)}
+                aria-label={`Remove ${a.name}`}
+                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative mt-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label="Agents to run"
+          className={cn(
+            "flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-2 font-sans text-sm",
+            "hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1",
+            "dark:border-white/10 dark:bg-[#2e2e2e] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]",
+          )}
+        >
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-left",
+              chosen.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+            )}
+          >
+            {label}
+          </span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+          </span>
+        </button>
+        {open && (
+          <>
+            <button
+              type="button"
+              aria-hidden="true"
+              tabIndex={-1}
+              onClick={() => setOpen(false)}
+              className="fixed inset-0 z-10 cursor-default bg-transparent"
+            />
+            <div
+              role="listbox"
+              aria-label="Agents to run"
+              className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]"
+            >
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter…"
+                aria-label="Filter agents"
+                className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 font-sans text-[#1d1d1d] placeholder:text-[#8a8f98] border-[#e5e7eb] hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC] dark:placeholder:text-[#898781] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]"
+              />
+              <div className="mt-2 grid gap-1">
+                {visible.length === 0 ? (
+                  <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">
+                    {agents.length === 0 ? "No agents yet — create one on the Agents tab." : "No matches."}
+                  </p>
+                ) : (
+                  visible.map((a) => (
+                    <label
+                      key={a.id}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-sans text-sm",
+                        selected.includes(a.id)
+                          ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                          : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                      )}
+                    >
+                      <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} />
+                      <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                      {selected.includes(a.id) && (
+                        <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
+                      )}
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      {agents.length === 0 && (
+        <p className="mt-1 font-sans text-sm font-normal normal-case tracking-normal text-[#b91c1c]">
+          No agents yet — create one on the Agents tab.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: string; attrName: string }) {
   const qc = useQueryClient();
   const [rating, setRating] = React.useState<"up" | "down" | null>(null);
@@ -304,7 +435,6 @@ function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: s
 
 export default function TestLab() {
   const [model, setModel] = React.useState("");
-  const [modelsLive, setModelsLive] = React.useState(false);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [runId, setRunId] = React.useState<string | null>(null);
   const [outputs, setOutputs] = React.useState<RunOutputs | null>(null);
@@ -382,10 +512,6 @@ export default function TestLab() {
     if (transcriptQuery.error) toast.error(`Could not load transcript: ${serverDetail(transcriptQuery.error)}`);
   }, [transcriptQuery.error]);
 
-  function toggle(id: string) {
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
-  }
-
   function handleClientChange(v: string) {
     setClientId(v);
     setMeetingTitle("");
@@ -458,11 +584,10 @@ export default function TestLab() {
   const titleDisabled = titlesQuery.isLoading || titlesDetail !== null;
   const dateDisabled = false;
   const meetingDisabled = meetingsQuery.isLoading || meetingsDetail !== null;
-  const isUnfiltered = clientId === "" && meetingTitle === "" && meetingDate === "";
 
   return (
     <div className="grid gap-4">
-      <PageHeader title="Test Lab" description="Run agents over sample data, then rate every extracted attribute." />
+      <PageHeader title="Test Lab" />
 
       <Card>
         <div className="grid gap-4">
@@ -475,19 +600,13 @@ export default function TestLab() {
                 aria-label="Input type (locked to transcription)"
                 className={cn(fieldInput, "h-11 opacity-70")}
               />
-              <p className="mt-1 font-sans text-xs text-[#8a8f98]">locked for now — transcription only</p>
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={fieldLabel}>OpenRouter model</span>
                 <KeyStatusBadge />
               </div>
-              <ModelCombobox value={model} onChange={setModel} onLiveChange={setModelsLive} />
-              <p className="mt-1 font-sans text-xs text-[#8a8f98]">
-                {modelsLive
-                  ? "Live list from OpenRouter."
-                  : "Curated list — set OPENROUTER_API_KEY in backend/.env for the live catalogue. Any typed id still works."}
-              </p>
+              <ModelCombobox value={model} onChange={setModel} />
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
@@ -546,18 +665,7 @@ export default function TestLab() {
             </p>
           )}
           <div>
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <span className={fieldLabel}>Meeting</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={transcriptQuery.isFetching}
-                disabled={!transcriptQuery.data?.transcription?.trim()}
-                onClick={() => setPreviewOpen(true)}
-              >
-                <Eye className="h-4 w-4" aria-hidden="true" /> Preview scrubbed transcription
-              </Button>
-            </div>
+            <span className={fieldLabel}>Meeting</span>
             <FilterCombobox
               value={meetingId}
               onChange={handleMeetingChange}
@@ -572,40 +680,24 @@ export default function TestLab() {
               disabled={meetingDisabled}
               ariaLabel="Meeting"
             />
-            {isUnfiltered && meetingOptions.length > 0 && (
-              <p className="mt-1 font-sans text-xs text-[#8a8f98]">
-                Showing up to 500 most recent across all clients — narrow with the filters above.
-              </p>
-            )}
-            <p className="mt-1 font-sans text-xs text-[#8a8f98]">
-              Selecting a meeting pulls its transcription — PII-scrubbed automatically; only scrubbed text reaches the model.
-            </p>
           </div>
           <div className={fieldLabel}>
             Agents to run
-            {enabledAgents.length === 0 && (
-              <p className="mt-1 font-sans text-sm font-normal normal-case tracking-normal text-[#b91c1c]">
-                No agents yet — create one on the Agents tab.
-              </p>
-            )}
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              {enabledAgents.map((a) => (
-                <label
-                  key={a.id}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
-                    selected.includes(a.id)
-                      ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                      : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
-                  )}
-                >
-                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} />
-                  {a.name}
-                </label>
-              ))}
+            <div className="mt-1.5">
+              <AgentsMultiSelect agents={enabledAgents} selected={selected} onChange={setSelected} />
             </div>
           </div>
-          <div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={transcriptQuery.isFetching}
+              disabled={!transcriptQuery.data?.transcription?.trim()}
+              onClick={() => setPreviewOpen(true)}
+              aria-label="Preview scrubbed transcription"
+            >
+              <Eye className="h-4 w-4" aria-hidden="true" />
+            </Button>
             <Button
               loading={run.isPending}
               onClick={() => {
@@ -614,7 +706,7 @@ export default function TestLab() {
                 else run.mutate();
               }}
             >
-              <Play className="h-4 w-4" aria-hidden="true" /> {run.isPending ? "Running…" : "Run selected agents"}
+              <Play className="h-4 w-4" aria-hidden="true" /> Run
             </Button>
           </div>
         </div>

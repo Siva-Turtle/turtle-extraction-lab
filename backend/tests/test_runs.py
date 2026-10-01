@@ -88,18 +88,27 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
         # ...alongside the fixed output contract.
         assert runs_router.RESULT_CONTRACT in system_text
         # ...and in the structured schema envelope as a value-object.
-        props = call["response_format"]["json_schema"]["schema"]["properties"]
+        assert call["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {"name": "meeting_extraction", "strict": True,
+                            "schema": call["response_format"]["json_schema"]["schema"]},
+        }
+        schema = call["response_format"]["json_schema"]["schema"]
+        assert schema["required"] == ["mood"]
+        assert schema["additionalProperties"] is False
+        props = schema["properties"]
         assert props["mood"] == {
             "type": "object", "description": "Caller mood",
             "properties": {
                 "value": {"description": "Extracted value for mood",
-                          "enum": ["good", "bad"]},
-                "confidence": {"type": "number"},
-                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
-                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
-                "evidence": {"type": "string"},
+                          "type": ["string", "null"], "enum": ["good", "bad", None]},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "confidence_type": {"type": "string",
+                                    "enum": ["quoted", "inferred", "normalized", "not_found"]},
+                "evidence": {"type": ["string", "null"]},
             },
-            "required": ["confidence"], "additionalProperties": False,
+            "required": ["value", "confidence", "confidence_type", "evidence"],
+            "additionalProperties": False,
         }
     systems = {c["messages"][0]["content"] for c in seen["calls"]}
     assert any("sys1" in s for s in systems) and any("sys2" in s for s in systems)
@@ -124,22 +133,6 @@ def test_build_extraction_schema_mapping():
         return Attribute(name=name, type=type_, description=desc,
                          enum_values=enum_values or [])
 
-    def _value_object(name, description, enum=None):
-        value = {"description": f"Extracted value for {name}"}
-        if enum is not None:
-            value["enum"] = enum
-        return {
-            "type": "object", "description": description,
-            "properties": {
-                "value": value,
-                "confidence": {"type": "number"},
-                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
-                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
-                "evidence": {"type": "string"},
-            },
-            "required": ["confidence"], "additionalProperties": False,
-        }
-
     schema = build_extraction_schema([
         _attr("s", "string", "A string"),
         _attr("n", "number", "A number"),
@@ -147,28 +140,61 @@ def test_build_extraction_schema_mapping():
         _attr("e", "enum", "Pick one", ["x", "y"]),
     ])
     assert schema["type"] == "object"
-    assert schema["required"] == []
+    assert schema["required"] == ["s", "n", "b", "e"]
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["s"] == _value_object("s", "A string")
-    assert schema["properties"]["n"] == _value_object("n", "A number")
-    assert schema["properties"]["b"] == _value_object("b", "A bool")
-    assert schema["properties"]["e"] == _value_object("e", "Pick one", ["x", "y"])
-    # Enum value carries the verbatim enum array; non-enums carry no "enum" key.
+    assert schema["properties"]["s"]["properties"]["value"] == {
+        "type": ["string", "null"], "description": "Extracted value for s"}
+    assert schema["properties"]["n"]["properties"]["value"] == {
+        "type": ["number", "null"], "description": "Extracted value for n"}
+    assert schema["properties"]["b"]["properties"]["value"] == {
+        "type": ["boolean", "null"], "description": "Extracted value for b"}
     assert schema["properties"]["e"]["properties"]["value"] == {
-        "description": "Extracted value for e", "enum": ["x", "y"]}
+        "type": ["string", "null"], "description": "Extracted value for e",
+        "enum": ["x", "y", None]}
     for key in ("s", "n", "b"):
         assert "enum" not in schema["properties"][key]["properties"]["value"]
-    # Empty-enum edge falls back to untyped value.
+    # Empty-enum edge falls back to plain string value (no enum key).
     empty = build_extraction_schema([_attr("e2", "enum", "Empty", [])])
+    assert empty["properties"]["e2"]["properties"]["value"] == {
+        "type": ["string", "null"], "description": "Extracted value for e2"}
     assert "enum" not in empty["properties"]["e2"]["properties"]["value"]
+    assert empty["required"] == ["e2"]
     for prop in schema["properties"].values():
-        assert prop["required"] == ["confidence"]
+        assert prop["required"] == ["value", "confidence", "confidence_type", "evidence"]
+        assert prop["properties"]["confidence"] == {"type": "number", "minimum": 0, "maximum": 1}
         assert prop["properties"]["confidence_type"] == {
-            "type": "string", "enum": ["quoted", "inferred", "normalized"],
-            "description": "How the value was obtained: quoted, inferred, or normalized."}
-        assert prop["properties"]["confidence_type"]["enum"] == ["quoted", "inferred", "normalized"]
+            "type": "string", "enum": ["quoted", "inferred", "normalized", "not_found"]}
+        assert prop["properties"]["evidence"] == {"type": ["string", "null"]}
+        assert prop["additionalProperties"] is False
     # No $refs anywhere in the envelope.
     assert "$ref" not in str(schema)
+
+
+def test_build_extraction_schema_user_example():
+    """Spec example: client_name/age/is_nri/client_type/annual_income validates."""
+    from app.db.models import Attribute
+
+    def _attr(name, type_, desc="", enum_values=None):
+        return Attribute(name=name, type=type_, description=desc,
+                         enum_values=enum_values or [])
+
+    schema = build_extraction_schema([
+        _attr("client_name", "string", "Client name"),
+        _attr("age", "number", "Age"),
+        _attr("is_nri", "boolean", "NRI flag"),
+        _attr("client_type", "enum", "Client segment",
+              ["HNI", "UHNI", "mass_affluent", "retail"]),
+        _attr("annual_income", "number", "Annual income"),
+    ])
+    assert schema["required"] == ["client_name", "age", "is_nri",
+                                 "client_type", "annual_income"]
+    assert schema["properties"]["client_name"]["properties"]["value"]["type"] == ["string", "null"]
+    assert schema["properties"]["age"]["properties"]["value"]["type"] == ["number", "null"]
+    assert schema["properties"]["is_nri"]["properties"]["value"]["type"] == ["boolean", "null"]
+    assert schema["properties"]["client_type"]["properties"]["value"] == {
+        "type": ["string", "null"], "description": "Extracted value for client_type",
+        "enum": ["HNI", "UHNI", "mass_affluent", "retail", None]}
+    assert schema["properties"]["annual_income"]["properties"]["value"]["type"] == ["number", "null"]
 
 
 def test_result_contract_text():

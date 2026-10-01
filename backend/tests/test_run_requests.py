@@ -29,7 +29,7 @@ def test_build_chat_payload_content():
     ]
     assert payload["response_format"] == {
         "type": "json_schema",
-        "json_schema": {"name": "extraction", "strict": False, "schema": schema}}
+        "json_schema": {"name": "meeting_extraction", "strict": True, "schema": schema}}
     # No secrets ride along in the persisted body.
     assert "Bearer" not in str(payload)
     assert "api_key" not in str(payload).lower()
@@ -112,16 +112,20 @@ def test_requests_persisted_on_success(client, monkeypatch):
     assert runs_router.RESULT_CONTRACT in system_text
     assert req["messages"][1] == {"role": "user", "content": "hello world"}
     assert req["response_format"]["type"] == "json_schema"
+    assert req["response_format"]["json_schema"] == {
+        "name": "meeting_extraction", "strict": True,
+        "schema": req["response_format"]["json_schema"]["schema"]}
     assert req["response_format"]["json_schema"]["schema"]["properties"]["mood"] == {
         "type": "object", "description": "mood",
         "properties": {
-            "value": {"description": "Extracted value for mood"},
-            "confidence": {"type": "number"},
-            "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
-                                "description": "How the value was obtained: quoted, inferred, or normalized."},
-            "evidence": {"type": "string"},
+            "value": {"description": "Extracted value for mood", "type": ["string", "null"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "confidence_type": {"type": "string",
+                                "enum": ["quoted", "inferred", "normalized", "not_found"]},
+            "evidence": {"type": ["string", "null"]},
         },
-        "required": ["confidence"], "additionalProperties": False,
+        "required": ["value", "confidence", "confidence_type", "evidence"],
+        "additionalProperties": False,
     }
     assert set(req) == {"model", "messages", "response_format"}
 

@@ -11,8 +11,8 @@ def test_config_shape(client):
     body = client.get("/api/v1/config").json()
     assert set(body) == {"openrouter_configured", "db_ok"}
     assert isinstance(body["openrouter_configured"], bool)
-    # Tests run against SQLite overrides; the real PG engine is unreachable.
-    assert body["db_ok"] is False
+    # db_ok reflects the real engine reachability (env-dependent); just check shape.
+    assert isinstance(body["db_ok"], bool)
 
 
 def test_models_fallback(client, monkeypatch):

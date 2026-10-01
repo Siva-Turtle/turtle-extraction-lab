@@ -6,9 +6,9 @@ import { api } from "../lib/api";
 import { useTheme } from "./ThemeProvider";
 
 const NAV_ITEMS = [
-  { to: "/test", label: "Test Lab", icon: <FlaskConical className="h-5 w-5" aria-hidden="true" /> },
-  { to: "/agents", label: "Agents", icon: <Bot className="h-5 w-5" aria-hidden="true" /> },
   { to: "/attributes", label: "Attributes", icon: <Tags className="h-5 w-5" aria-hidden="true" /> },
+  { to: "/agents", label: "Agents", icon: <Bot className="h-5 w-5" aria-hidden="true" /> },
+  { to: "/test", label: "Test Lab", icon: <FlaskConical className="h-5 w-5" aria-hidden="true" /> },
   { to: "/logs", label: "Logs", icon: <ScrollText className="h-5 w-5" aria-hidden="true" /> },
 ];
 

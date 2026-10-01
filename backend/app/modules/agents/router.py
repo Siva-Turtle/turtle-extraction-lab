@@ -91,7 +91,7 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
     else:
         response_format = {
             "type": "json_schema",
-            "json_schema": {"name": "extraction", "strict": False, "schema": schema},
+            "json_schema": {"name": "meeting_extraction", "strict": True, "schema": schema},
         }
     return {
         "agent_id": row.id,

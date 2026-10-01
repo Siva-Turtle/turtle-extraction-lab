@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -39,7 +39,7 @@ const EMPTY: Editing = {
   is_enabled: true,
 };
 
-/** Mirrors backend result contract (runs router) so the local preview matches server truth. */
+/** Mirrors backend result contract (runs router) so the local build matches server truth. */
 const RESULT_CONTRACT =
   'Return a JSON object keyed by attribute name. Each value is an object with "value" ' +
   '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), ' +
@@ -50,21 +50,13 @@ const RESULT_CONTRACT =
   '(evidence is the supporting passage); normalized = value standardized from a stated form ' +
   'such as phone digits, date formats, or casing (evidence is the original stated form).';
 
-const LOCAL_USER_TEMPLATE = "{{scrubbed_transcription}} (run-time input arrives as the user message)";
+const COPY_USER_TEMPLATE = "{{Transcription}}";
 
 type PreviewAttr = {
   name: string;
   type: string;
   description: string;
   enum_values: string[];
-};
-
-type PromptPreview = {
-  agent_id: string;
-  system: string;
-  user_template: string;
-  response_format: unknown;
-  attributes: PreviewAttr[];
 };
 
 /** Mirrors backend `_attr_line`: `- name (type): description [a | b]`. */
@@ -83,40 +75,51 @@ function buildLocalSystem(baseInstruction: string, attrs: PreviewAttr[]): string
   return `${base}\n\nAttributes to extract:\n${lines}\n\n${RESULT_CONTRACT}`;
 }
 
-/** Mirrors backend `build_extraction_schema` + `build_chat_payload` envelope. */
+/** Mirrors backend `build_extraction_schema` + `build_chat_payload` envelope (strict meeting_extraction). */
 function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown> {
   if (attrs.length === 0) {
     return { type: "json_object" };
   }
   const properties: Record<string, unknown> = {};
   for (const a of attrs) {
-    const valueSchema: Record<string, unknown> = { description: `Extracted value for ${a.name}` };
+    let valueSchema: Record<string, unknown>;
+    if (a.type === "number") {
+      valueSchema = { type: ["number", "null"], description: `Extracted value for ${a.name}` };
+    } else if (a.type === "boolean") {
+      valueSchema = { type: ["boolean", "null"], description: `Extracted value for ${a.name}` };
+    } else {
+      valueSchema = { type: ["string", "null"], description: `Extracted value for ${a.name}` };
+    }
     if (a.type === "enum" && a.enum_values.length > 0) {
-      valueSchema.enum = [...a.enum_values];
+      valueSchema.enum = [...a.enum_values, null];
     }
     properties[a.name] = {
       type: "object",
       description: a.description || a.name,
       properties: {
         value: valueSchema,
-        confidence: { type: "number" },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
         confidence_type: {
           type: "string",
-          enum: ["quoted", "inferred", "normalized"],
-          description: "How the value was obtained: quoted, inferred, or normalized.",
+          enum: ["quoted", "inferred", "normalized", "not_found"],
         },
-        evidence: { type: "string" },
+        evidence: { type: ["string", "null"] },
       },
-      required: ["confidence"],
+      required: ["value", "confidence", "confidence_type", "evidence"],
       additionalProperties: false,
     };
   }
   return {
     type: "json_schema",
     json_schema: {
-      name: "extraction",
-      strict: false,
-      schema: { type: "object", properties, required: [], additionalProperties: false },
+      name: "meeting_extraction",
+      strict: true,
+      schema: {
+        type: "object",
+        properties,
+        required: attrs.map((a) => a.name),
+        additionalProperties: false,
+      },
     },
   };
 }
@@ -125,107 +128,106 @@ function toPreviewAttr(a: LabAttribute): PreviewAttr {
   return { name: a.name, type: a.type, description: a.description, enum_values: a.enum_values ?? [] };
 }
 
-function PreviewBlock({ label, text }: { label: string; text: string }): React.JSX.Element {
-  return (
-    <div className="rounded-xl border border-[#e5e7eb] bg-[#f7f8f8] p-3 dark:border-white/10 dark:bg-white/5">
-      <p className="font-heading text-[11px] font-bold uppercase tracking-wide text-[#8a8f98]">{label}</p>
-      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-[#1d1d1d] dark:text-[#F0EFEC]">
-        {text || "—"}
-      </pre>
-    </div>
-  );
-}
+const dropdownTrigger =
+  "flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-2 font-sans text-sm " +
+  "hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 " +
+  "dark:border-white/10 dark:bg-[#2e2e2e] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]";
 
-/**
- * Live view of the exact LLM input for this agent. Display only — preview
- * content is never sent to any model.
- */
-function PreviewPanel({
-  agentId,
-  systemInstruction,
+const dropdownList =
+  "absolute inset-x-0 top-full z-40 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]";
+
+function InputTypesField({
   selected,
+  onChange,
 }: {
-  agentId?: string;
-  systemInstruction: string;
-  selected: LabAttribute[];
+  selected: string[];
+  onChange: (v: string[]) => void;
 }): React.JSX.Element {
-  const [server, setServer] = useState<PromptPreview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const toastedFor = useRef<string | null>(null);
-  const seq = useRef(0);
-  const selKey = selected.map((a) => a.id).join(",");
+  const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    if (!agentId) {
-      setServer(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    const my = (seq.current += 1);
-    const t = window.setTimeout(() => {
-      setLoading(true);
-      api
-        .get(`/agents/${agentId}/prompt-preview`)
-        .then((res) => {
-          if (seq.current !== my) return;
-          setServer(res.data as PromptPreview);
-          setError(null);
-          setLoading(false);
-        })
-        .catch((e: unknown) => {
-          if (seq.current !== my) return;
-          const msg = e instanceof Error ? e.message : "Preview unavailable";
-          setError(msg);
-          setLoading(false);
-          const key = `${agentId}:${msg}`;
-          if (toastedFor.current !== key) {
-            toastedFor.current = key;
-            toast.error("Prompt preview unavailable — showing local build");
-          }
-        });
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [agentId, selKey, systemInstruction]);
+  function toggle(t: string) {
+    onChange(selected.includes(t) ? selected.filter((x) => x !== t) : [...selected, t]);
+  }
 
-  const attrs: PreviewAttr[] = selected.map(toPreviewAttr);
-  const base = systemInstruction || "Extract structured data.";
-  const inSync =
-    server !== null &&
-    server.attributes.map((a) => a.name).join("\0") === attrs.map((a) => a.name).join("\0") &&
-    server.system.startsWith(base);
-  const shown: PromptPreview =
-    server !== null && inSync
-      ? server
-      : {
-          agent_id: agentId ?? "unsaved",
-          system: buildLocalSystem(systemInstruction, attrs),
-          user_template: LOCAL_USER_TEMPLATE,
-          response_format: buildLocalResponseFormat(attrs),
-          attributes: attrs,
-        };
-  const isLocal = server === null || !inSync;
+  const label =
+    selected.length === 0 ? "Select input types…" : `Input types (${selected.length}): ${selected.join(", ")}`;
 
   return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className={fieldLabel}>LLM input preview</h3>
-        {loading ? (
-          <span className="font-sans text-xs text-[#8a8f98]">Loading server preview…</span>
-        ) : isLocal ? (
-          <span className="font-sans text-xs text-[#8a8f98]">local preview — server truth after save</span>
-        ) : (
-          <span className="font-sans text-xs text-[#0d5c4a] dark:text-[#5ee8cf]">server truth</span>
+    <div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#1d1d1d] bg-[#1d1d1d] py-1.5 pl-3 pr-2 font-sans text-xs text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => toggle(t)}
+                aria-label={`Remove ${t}`}
+                className="rounded-full p-0.5 hover:bg-white/20 dark:hover:bg-black/10"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative mt-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label="Input types"
+          className={dropdownTrigger}
+        >
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-left",
+              selected.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+            )}
+          >
+            {label}
+          </span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+          </span>
+        </button>
+        {open && (
+          <>
+            <button
+              type="button"
+              aria-hidden="true"
+              tabIndex={-1}
+              onClick={() => setOpen(false)}
+              className="fixed inset-0 z-10 cursor-default bg-transparent"
+            />
+            <div role="listbox" aria-label="Input types" className={cn(dropdownList, "z-20")}>
+              <div className="grid gap-1.5">
+                {INPUT_TYPES.map((t) => (
+                  <label
+                    key={t}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-sans text-sm",
+                      selected.includes(t)
+                        ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                        : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                    )}
+                  >
+                    <input type="checkbox" checked={selected.includes(t)} onChange={() => toggle(t)} />
+                    <span className="min-w-0 flex-1 truncate">{t}</span>
+                    {selected.includes(t) && (
+                      <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </div>
-      {error !== null && (
-        <p className="font-sans text-xs text-[#b91c1c]">Server preview unavailable — showing the local build.</p>
-      )}
-      <PreviewBlock label="system" text={shown.system} />
-      <PreviewBlock label="user_template" text={shown.user_template} />
-      <PreviewBlock label="response_format" text={JSON.stringify(shown.response_format, null, 2)} />
-      <p className="font-sans text-[11px] text-[#8a8f98]">Display only — preview content is never sent to any model.</p>
     </div>
   );
 }
@@ -248,6 +250,11 @@ function AttributeMultiSelect({
   function toggle(id: string) {
     onChange(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
   }
+
+  const label =
+    selected.length === 0
+      ? "Select attributes…"
+      : `Attributes (${selected.length}): ${selected.map((a) => a.name).join(", ")}`;
 
   return (
     <div>
@@ -272,9 +279,26 @@ function AttributeMultiSelect({
         </div>
       )}
       <div className="relative mt-1.5">
-        <Button variant="secondary" size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="listbox">
-          {open ? "Close" : selected.length > 0 ? `Attributes (${selected.length})` : "Select attributes…"}
-        </Button>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label="Attributes"
+          className={dropdownTrigger}
+        >
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-left",
+              selected.length > 0 ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+            )}
+          >
+            {label}
+          </span>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+            <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+          </span>
+        </button>
         {open && (
           <>
             <button
@@ -287,7 +311,7 @@ function AttributeMultiSelect({
             <div
               role="listbox"
               aria-label="Attributes"
-              className="absolute z-20 mt-1 max-h-64 w-full min-w-56 overflow-auto rounded-xl border border-[#e5e7eb] bg-white p-2 shadow-lg dark:border-white/10 dark:bg-[#1a1a1a]"
+              className={cn(dropdownList, "z-20")}
             >
               <input
                 value={filter}
@@ -296,7 +320,7 @@ function AttributeMultiSelect({
                 aria-label="Filter attributes"
                 className={fieldInput}
               />
-              <div className="mt-2 grid gap-1.5">
+              <div className="mt-2 grid gap-1">
                 {visible.length === 0 ? (
                   <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">
                     {all.length === 0 ? "No attributes yet — define them on the Attributes tab." : "No matches."}
@@ -306,10 +330,10 @@ function AttributeMultiSelect({
                     <label
                       key={a.id}
                       className={cn(
-                        "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-sm normal-case tracking-normal",
+                        "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-sans text-sm",
                         selectedIds.includes(a.id)
-                          ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                          : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                          ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                          : "text-[#1d1d1d] dark:text-[#F0EFEC]",
                       )}
                     >
                       <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={() => toggle(a.id)} />
@@ -437,19 +461,31 @@ export default function Agents() {
     },
   });
 
-  function toggleType(t: string) {
+  async function copyLlmRequest() {
     if (!editing) return;
-    const cur = editing.input_types.includes(t)
-      ? editing.input_types.filter((x) => x !== t)
-      : [...editing.input_types, t];
-    setEditing({ ...editing, input_types: cur });
+    const attrs = selectedAttrs.map(toPreviewAttr);
+    const system = buildLocalSystem(editing.system_instruction, attrs);
+    const response_format = buildLocalResponseFormat(attrs);
+    const payload = {
+      model: "{{Model}}",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: COPY_USER_TEMPLATE },
+      ],
+      response_format,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      toast.success("LLM request copied");
+    } catch {
+      toast.error("Copy failed");
+    }
   }
 
   return (
     <div className="grid gap-4">
       <PageHeader
         title="Agents"
-        description="Define the system instruction per agent. Runs use scrubbed transcription. Map attributes to each agent on its card — the preview shows the exact LLM input."
         actions={
           <Button size="sm" onClick={openNew}>
             <Plus className="h-4 w-4" aria-hidden="true" /> New agent
@@ -470,18 +506,23 @@ export default function Agents() {
       ) : (
         <div className="grid gap-3">
           {data.map((a) => (
-            <Card key={a.id} padded={false} className={cn("p-4", a.is_enabled === false && "opacity-60")}>
+            <Card
+              key={a.id}
+              padded={false}
+              onClick={() => openEdit(a)}
+              className={cn("cursor-pointer p-4", a.is_enabled === false && "opacity-60")}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <CardTitle>{a.name}</CardTitle>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CardTitle>{a.name}</CardTitle>
                     {a.input_types.map((t) => (
                       <Badge key={t} tone="brand">{t}</Badge>
                     ))}
                     {a.is_enabled === false && <Badge tone="neutral">off</Badge>}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <span className="flex items-center gap-2">
                     <button
                       type="button"
@@ -510,9 +551,6 @@ export default function Agents() {
                       {a.is_enabled !== false ? "On" : "Off"}
                     </span>
                   </span>
-                  <Button variant="secondary" size="sm" onClick={() => openEdit(a)} aria-label={`Edit ${a.name}`}>
-                    <Pencil className="h-4 w-4" aria-hidden="true" />
-                  </Button>
                   <Button
                     variant="danger"
                     size="sm"
@@ -523,14 +561,6 @@ export default function Agents() {
                   </Button>
                 </div>
               </div>
-              <details className="mt-3">
-                <summary className="cursor-pointer font-heading text-xs font-semibold text-[#4a5058] dark:text-[#C3C2B7]">
-                  System instruction
-                </summary>
-                <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f2f3] p-3 font-sans text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]">
-                  {a.system_instruction || "—"}
-                </pre>
-              </details>
             </Card>
           ))}
         </div>
@@ -538,126 +568,83 @@ export default function Agents() {
 
       {editing && (
         <Modal title={editing.id ? "Edit agent" : "New agent"} onClose={closeEditor} wide>
-          <div className="grid gap-5 md:grid-cols-5">
-            <div className="md:col-span-3">
-              <label className={fieldLabel}>
-                Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
-                <input
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  className={fieldInput}
+          <div className="grid gap-3">
+            <label className={fieldLabel}>
+              Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+              <input
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                className={fieldInput}
+              />
+            </label>
+            <div className={fieldLabel}>
+              Input types
+              <div className="mt-1.5">
+                <InputTypesField
+                  selected={editing.input_types}
+                  onChange={(v) => setEditing({ ...editing, input_types: v })}
                 />
-              </label>
-              <label className={cn(fieldLabel, "mt-3 block")}>
-                System instruction
-                <textarea
-                  value={editing.system_instruction}
-                  onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
-                  rows={3}
-                  className={fieldTextarea}
-                />
-                <p className="mt-1 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
-                  New agents start from the shared default contract above — edit freely.
-                </p>
-              </label>
-              <div className={cn(fieldLabel, "mt-3")}>
-                Input types
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {INPUT_TYPES.map((t) => (
-                    <label
-                      key={t}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
-                        editing.input_types.includes(t)
-                          ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                          : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
-                      )}
-                    >
-                      <input type="checkbox" checked={editing.input_types.includes(t)} onChange={() => toggleType(t)} />
-                      {t}
-                    </label>
-                  ))}
-                </div>
               </div>
-              <div className={cn(fieldLabel, "mt-3")}>
-                Attributes
-                <div className="mt-1.5">
-                  <AttributeMultiSelect all={allAttrs} selectedIds={effectiveIds} onChange={setSelIds} />
-                </div>
+            </div>
+            <div className={fieldLabel}>
+              Attributes
+              <div className="mt-1.5">
+                <AttributeMultiSelect all={allAttrs} selectedIds={effectiveIds} onChange={setSelIds} />
               </div>
-              {selectedAttrs.length > 0 && (
-                <div className="mt-3 grid gap-2">
-                  {selectedAttrs.map((a) => (
-                    <div key={a.id} className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-heading text-sm font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">
-                          {a.name}
-                        </span>
-                        <Badge tone="neutral">{a.type}</Badge>
-                      </div>
-                      {a.description && (
-                        <p className="mt-1 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">{a.description}</p>
-                      )}
-                      {a.type === "enum" && (a.enum_values ?? []).length > 0 && (
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {(a.enum_values ?? []).map((v) => (
-                            <Badge key={v} tone="neutral">{v}</Badge>
-                          ))}
-                        </div>
-                      )}
+            </div>
+            {selectedAttrs.length > 0 && (
+              <div className="grid gap-2">
+                {selectedAttrs.map((a) => (
+                  <div key={a.id} className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-heading text-sm font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">
+                        {a.name}
+                      </span>
+                      <Badge tone="neutral">{a.type}</Badge>
                     </div>
-                  ))}
-                </div>
-              )}
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className={fieldLabel}>Status</span>
-                <span className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={editing.is_enabled}
-                    aria-label={editing.is_enabled ? "Disable agent" : "Enable agent"}
-                    onClick={() => setEditing({ ...editing, is_enabled: !editing.is_enabled })}
-                    className={cn(
-                      "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors",
-                      "focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-2 dark:focus-visible:outline-[#2fdebf]",
-                      editing.is_enabled
-                        ? "border-transparent bg-[#2fdebf]"
-                        : "border-[#e5e7eb] bg-[#e5e7eb] dark:border-white/10 dark:bg-white/10",
+                    {a.description && (
+                      <p className="mt-1 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">{a.description}</p>
                     )}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "inline-block h-5 w-5 rounded-full bg-white shadow transition-transform",
-                        editing.is_enabled ? "translate-x-[22px]" : "translate-x-[2px]",
-                      )}
-                    />
-                  </button>
-                  <span className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                    {editing.is_enabled ? "On" : "Off"}
-                  </span>
-                </span>
+                    {a.type === "enum" && (a.enum_values ?? []).length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {(a.enum_values ?? []).map((v) => (
+                          <Badge key={v} tone="neutral">{v}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
-            <div className="md:col-span-2">
-              <PreviewPanel agentId={editing.id} systemInstruction={editing.system_instruction} selected={selectedAttrs} />
-            </div>
+            )}
+            <label className={cn(fieldLabel, "block")}>
+              System instruction
+              <textarea
+                value={editing.system_instruction}
+                onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
+                rows={6}
+                className={fieldTextarea}
+              />
+            </label>
           </div>
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeEditor}>
-              Cancel
+          <div className="mt-5 flex items-center justify-between gap-2">
+            <Button variant="secondary" size="sm" onClick={copyLlmRequest} aria-label="Copy LLM request">
+              <Copy className="h-4 w-4" aria-hidden="true" />
             </Button>
-            <Button
-              loading={save.isPending}
-              onClick={() =>
-                editing.name.trim()
-                  ? save.mutate({ ...editing, attribute_ids: effectiveIds })
-                  : toast.error("Name is required")
-              }
-            >
-              Save
-            </Button>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={closeEditor}>
+                Cancel
+              </Button>
+              <Button
+                loading={save.isPending}
+                onClick={() =>
+                  editing.name.trim()
+                    ? save.mutate({ ...editing, attribute_ids: effectiveIds })
+                    : toast.error("Name is required")
+                }
+              >
+                Save
+              </Button>
+            </div>
           </div>
         </Modal>
       )}

@@ -99,7 +99,7 @@ def test_complete_json_response_format_modes(monkeypatch):
     asyncio.run(openrouter.complete_json(model="m", system="s", user="u", json_schema=schema))
     assert seen["post_json"]["response_format"] == {
         "type": "json_schema",
-        "json_schema": {"name": "extraction", "strict": False, "schema": schema}}
+        "json_schema": {"name": "meeting_extraction", "strict": True, "schema": schema}}
 
 
 def test_pricing_unknown_without_key(monkeypatch):
