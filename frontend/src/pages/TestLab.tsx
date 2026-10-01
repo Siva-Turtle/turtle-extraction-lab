@@ -3,6 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { cn } from "../lib/cn";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card, CardTitle } from "../components/ui/Card";
+import { fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
+import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
 type AttrResult = {
@@ -13,9 +19,6 @@ type AttrResult = {
 };
 
 type RunOutputs = Record<string, Record<string, AttrResult> & { _error?: string }>;
-
-const inputCls = "mt-1 w-full rounded-lg border border-ink-200 p-2 font-sans text-sm";
-const btnPrimary = "rounded-lg bg-brand px-4 py-2 font-heading text-sm font-semibold text-ink";
 
 function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: string; attrName: string }) {
   const qc = useQueryClient();
@@ -39,37 +42,52 @@ function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: s
     onError: () => toast.error("Could not save feedback"),
   });
 
-  if (done) return <p className="mt-2 font-heading text-xs text-success">Rated {rating === "up" ? "👍" : "👎"} — saved.</p>;
+  if (done) {
+    return (
+      <p className="mt-3">
+        <Badge tone={rating === "up" ? "success" : "danger"}>rated {rating === "up" ? "👍" : "👎"} · saved</Badge>
+      </p>
+    );
+  }
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2">
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e5e7eb] pt-3 dark:border-white/10">
       <button
         onClick={() => setRating("up")}
         title="Thumbs up"
-        className={`rounded-lg border p-1.5 ${rating === "up" ? "border-success bg-success/10 text-success" : "border-ink-200"}`}
+        aria-pressed={rating === "up"}
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          rating === "up"
+            ? "border-[#22c55e] bg-[#e9f9ef] text-[#15803d]"
+            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#22c55e] dark:border-white/10 dark:text-[#C3C2B7]",
+        )}
       >
-        <ThumbsUp className="h-4 w-4" />
+        <ThumbsUp className="h-4 w-4" aria-hidden="true" />
       </button>
       <button
         onClick={() => setRating("down")}
         title="Thumbs down"
-        className={`rounded-lg border p-1.5 ${rating === "down" ? "border-danger bg-danger/10 text-danger" : "border-ink-200"}`}
+        aria-pressed={rating === "down"}
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          rating === "down"
+            ? "border-[#ef4444] bg-[#fdecec] text-[#b91c1c]"
+            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#ef4444] dark:border-white/10 dark:text-[#C3C2B7]",
+        )}
       >
-        <ThumbsDown className="h-4 w-4" />
+        <ThumbsDown className="h-4 w-4" aria-hidden="true" />
       </button>
       <input
         value={remarks}
         onChange={(e) => setRemarks(e.target.value)}
         placeholder="Remarks for this attribute…"
-        className="min-w-40 flex-1 rounded-lg border border-ink-200 p-1.5 text-sm"
+        aria-label="Remarks"
+        className="h-9 min-w-40 flex-1 rounded-full border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
       />
-      <button
-        onClick={() => (rating ? save.mutate() : toast.error("Pick 👍 or 👎 first"))}
-        disabled={save.isPending}
-        className="rounded-lg border border-ink-200 px-3 py-1.5 font-heading text-xs"
-      >
-        {save.isPending ? "Saving…" : "Save rating"}
-      </button>
+      <Button variant="secondary" size="sm" loading={save.isPending} onClick={() => (rating ? save.mutate() : toast.error("Pick 👍 or 👎 first"))}>
+        Save rating
+      </Button>
     </div>
   );
 }
@@ -116,38 +134,51 @@ export default function TestLab() {
 
   return (
     <div className="grid gap-4">
-      <section className="rounded-xl border border-ink-100 bg-surface p-5 shadow-float">
-        <h1 className="font-module text-lg">Test Lab</h1>
-        <div className="mt-4 grid gap-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="font-heading text-xs text-ink-500">
+      <PageHeader title="Test Lab" description="Run agents over sample data, then rate every extracted attribute." />
+
+      <Card>
+        <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className={fieldLabel}>
               Input type
-              <select value={inputType} onChange={(e) => setInputType(e.target.value)} className={inputCls}>
+              <select value={inputType} onChange={(e) => setInputType(e.target.value)} className={cn(fieldInput, "h-11")}>
                 <option value="transcription">transcription</option>
                 <option value="messages">messages</option>
                 <option value="mail">mail</option>
               </select>
             </label>
-            <label className="font-heading text-xs text-ink-500">
+            <label className={fieldLabel}>
               OpenRouter model
               <input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="e.g. anthropic/claude-sonnet-4"
-                className={inputCls}
+                className={fieldInput}
               />
             </label>
           </div>
-          <label className="font-heading text-xs text-ink-500">
+          <label className={fieldLabel}>
             Input data (exact transcription / message / mail)
-            <textarea value={inputData} onChange={(e) => setInputData(e.target.value)} rows={6} className={inputCls} />
+            <textarea value={inputData} onChange={(e) => setInputData(e.target.value)} rows={6} className={fieldTextarea} />
           </label>
-          <div className="font-heading text-xs text-ink-500">
+          <div className={fieldLabel}>
             Agents to run
-            {agents.length === 0 && <p className="mt-1 text-danger">No agents yet — create one on the Agents tab.</p>}
-            <div className="mt-1 flex flex-wrap gap-2">
+            {agents.length === 0 && (
+              <p className="mt-1 font-sans text-sm font-normal normal-case tracking-normal text-[#b91c1c]">
+                No agents yet — create one on the Agents tab.
+              </p>
+            )}
+            <div className="mt-1.5 flex flex-wrap gap-2">
               {agents.map((a) => (
-                <label key={a.id} className={`flex cursor-pointer items-center gap-1 rounded-lg border px-3 py-2 text-sm ${selected.includes(a.id) ? "border-brand bg-brand-50" : "border-ink-200"}`}>
+                <label
+                  key={a.id}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
+                    selected.includes(a.id)
+                      ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                      : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                  )}
+                >
                   <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} />
                   {a.name}
                 </label>
@@ -155,72 +186,80 @@ export default function TestLab() {
             </div>
           </div>
           <div>
-            <button
+            <Button
+              loading={run.isPending}
               onClick={() => {
                 const why = canRun();
                 if (why) toast.error(why);
                 else run.mutate();
               }}
-              disabled={run.isPending}
-              className={btnPrimary}
             >
-              <Play className="mr-1 inline h-4 w-4" /> {run.isPending ? "Running…" : "Run selected agents"}
-            </button>
+              <Play className="h-4 w-4" aria-hidden="true" /> {run.isPending ? "Running…" : "Run selected agents"}
+            </Button>
           </div>
         </div>
-      </section>
+      </Card>
 
       {outputs && runId && (
-        <section className="rounded-xl border border-ink-100 bg-surface p-5 shadow-float">
-          <h2 className="font-module text-base">Results <span className="font-heading text-xs font-normal text-ink-400">run {runId.slice(0, 8)}</span></h2>
-          <div className="mt-3 grid gap-4">
+        <Card>
+          <div className="mb-3 flex items-center gap-2">
+            <CardTitle>Results</CardTitle>
+            <Badge tone="neutral">run {runId.slice(0, 8)}</Badge>
+          </div>
+          <div className="grid gap-3">
             {Object.entries(outputs).map(([agentId, out]) => {
               const agent = agents.find((a) => a.id === agentId);
               if (out._error) {
                 return (
-                  <div key={agentId} className="rounded-xl border border-danger/40 bg-danger/5 p-4">
-                    <h3 className="font-heading text-sm font-semibold">{agent?.name ?? agentId}</h3>
-                    <p className="mt-1 text-sm text-danger">Agent failed: {out._error}</p>
+                  <div key={agentId} className="rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10">
+                    <CardTitle>{agent?.name ?? agentId}</CardTitle>
+                    <p className="mt-1 font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">Agent failed: {out._error}</p>
                   </div>
                 );
               }
+              const entries = (Object.entries(out) as [string, AttrResult][]).filter(([k]) => k !== "_error");
               return (
-                <div key={agentId} className="rounded-xl border border-ink-100 p-4">
-                  <h3 className="font-heading text-sm font-semibold">{agent?.name ?? agentId}</h3>
+                <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+                  <CardTitle>{agent?.name ?? agentId}</CardTitle>
                   <div className="mt-2 grid gap-2">
-                    {(Object.entries(out) as [string, AttrResult][]).filter(([k]) => k !== "_error").map(([attr, r]) => (
-                      <div key={attr} className="rounded-lg bg-ink-50 p-3">
+                    {entries.map(([attr, r]) => (
+                      <div key={attr} className="rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-heading text-sm font-semibold">{attr}</span>
-                          <span className="rounded-full bg-brand-100 px-2 py-0.5 font-heading text-[11px]">
-                            {r.confidence_type ?? "?"}
-                          </span>
-                          <span className="font-heading text-xs text-ink-500">
-                            confidence {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
+                          <span className="font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">{attr}</span>
+                          <Badge tone="brand">{r.confidence_type ?? "?"}</Badge>
+                          <span className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                            {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
                           </span>
                         </div>
-                        <div className="mt-1 h-1.5 w-full rounded-full bg-ink-100">
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb] dark:bg-white/10">
                           <div
-                            className="h-1.5 rounded-full bg-brand"
+                            className="h-1.5 rounded-full bg-[#2fdebf]"
                             style={{ width: `${Math.round((r.confidence ?? 0) * 100)}%` }}
                           />
                         </div>
-                        <p className="mt-1 text-sm"><span className="font-heading text-ink-500">Value: </span>{String(r.value ?? "—")}</p>
+                        <p className="mt-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
+                          <span className="font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
+                            Value ·{" "}
+                          </span>
+                          {String(r.value ?? "—")}
+                        </p>
                         {r.evidence && (
-                          <p className="mt-1 border-l-2 border-brand pl-2 text-sm italic text-ink-500">“{r.evidence}”</p>
+                          <p className="mt-1 border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
+                            “{r.evidence}”
+                          </p>
                         )}
                         <RatingBox runId={runId} agentName={agent?.name ?? agentId} attrName={attr} />
                       </div>
                     ))}
-                    {Object.keys(out).length === 0 && (
-                      <p className="font-heading text-xs text-ink-400">Agent returned no attributes.</p>
+                    {entries.length === 0 && (
+                      <p className="font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
                     )}
                   </div>
                 </div>
               );
             })}
           </div>
-        </section>
+        </Card>
       )}
     </div>
   );

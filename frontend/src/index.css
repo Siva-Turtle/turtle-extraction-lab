@@ -2,6 +2,104 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-turtle-page text-ink font-sans;
+/* Turtle theme tokens — mirrors turtle-crm frontend/src/index.css. */
+:root {
+  --color-turtle: #2fdebf;
+  --color-turtle-deep: #0d5c4a;
+  --color-turtle-soft: #e8fbf6;
+  --color-ink: #1d1d1d;
+  --color-bg: #eef0f4;
+  --color-line: #e5e7eb;
+  --color-muted: #4a5058;
+  --color-muted-2: #8a8f98;
+}
+
+/* Turtle motion: keyframes for open/close states, applied
+   with data-[state=...]:animate-[...] classes. */
+@keyframes turtle-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes turtle-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes turtle-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -49%) scale(0.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes turtle-sheet-in-bottom {
+  from { opacity: 0; transform: translateY(32px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes turtle-tab-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply font-sans text-ink bg-surface antialiased;
+    margin: 0;
+    min-height: 100svh;
+    overflow-x: hidden;
+  }
+
+  /* Dark theme base: no pure black anywhere, overscroll included. */
+  html.dark body {
+    @apply bg-[#161616] text-[#F0EFEC];
+  }
+
+  #root {
+    min-height: 100svh;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: clip;
+  }
+
+  h1 {
+    @apply font-display;
+  }
+
+  /* Brand focus rings everywhere */
+  :focus-visible {
+    outline: 2px solid #2edebe;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Constrain media so 360px viewports never scroll sideways */
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+
+  /* No visible scrollbars anywhere; scrolling still works */
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }

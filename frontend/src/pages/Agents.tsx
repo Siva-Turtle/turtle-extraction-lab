@@ -3,6 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { cn } from "../lib/cn";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card, CardTitle } from "../components/ui/Card";
+import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
+import { PageHeader } from "../components/ui/PageHeader";
 
 export type Agent = {
   id: string;
@@ -14,9 +20,6 @@ export type Agent = {
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
 const EMPTY = { name: "", system_instruction: "", prompt: "", input_types: [] as string[] };
-
-const inputCls = "mt-1 w-full rounded-lg border border-ink-200 p-2 font-sans text-sm";
-const btnPrimary = "rounded-lg bg-brand px-4 py-2 font-heading text-sm font-semibold text-ink";
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -57,123 +60,130 @@ export default function Agents() {
   }
 
   return (
-    <section className="rounded-xl border border-ink-100 bg-surface p-5 shadow-float">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-module text-lg">Agents</h1>
-          <p className="mt-1 font-heading text-xs text-ink-400">
-            Define system instruction + prompt per agent. Deleting an agent deletes its attributes.
-          </p>
-        </div>
-        <button onClick={() => setEditing({ ...EMPTY })} className={btnPrimary}>
-          <Plus className="mr-1 inline h-4 w-4" /> New agent
-        </button>
-      </div>
+    <div className="grid gap-4">
+      <PageHeader
+        title="Agents"
+        description="Define system instruction + prompt per agent. Deleting an agent deletes its attributes."
+        actions={
+          <Button size="sm" onClick={() => setEditing({ ...EMPTY })}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> New agent
+          </Button>
+        }
+      />
 
       {isLoading ? (
-        <p className="mt-4 font-heading text-sm text-ink-400">Loading…</p>
+        <Card>
+          <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
+        </Card>
       ) : data.length === 0 ? (
-        <p className="mt-4 rounded-lg bg-ink-50 p-4 font-heading text-sm text-ink-500">
-          No agents yet — create the first one to start testing.
-        </p>
+        <Card>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+            No agents yet — create the first one to start testing.
+          </p>
+        </Card>
       ) : (
-        <div className="mt-4 grid gap-3">
+        <div className="grid gap-3">
           {data.map((a) => (
-            <div key={a.id} className="rounded-xl border border-ink-100 p-4">
+            <Card key={a.id} padded={false} className="p-4">
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-heading text-sm font-semibold">{a.name}</h2>
-                  <div className="mt-1 flex flex-wrap gap-1">
+                <div className="min-w-0">
+                  <CardTitle>{a.name}</CardTitle>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
                     {a.input_types.map((t) => (
-                      <span key={t} className="rounded-full bg-brand-100 px-2 py-0.5 font-heading text-[11px]">
-                        {t}
-                      </span>
+                      <Badge key={t} tone="brand">{t}</Badge>
                     ))}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditing({ ...a })}
-                    className="rounded-lg border border-ink-200 p-2"
-                    title="Edit"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
+                <div className="flex shrink-0 gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => setEditing({ ...a })} aria-label={`Edit ${a.name}`}>
+                    <Pencil className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={() => window.confirm(`Delete agent "${a.name}" and its attributes?`) && remove.mutate(a.id)}
-                    className="rounded-lg border border-ink-200 p-2 text-danger"
-                    title="Delete"
+                    aria-label={`Delete ${a.name}`}
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  </Button>
                 </div>
               </div>
-              <details className="mt-2 text-xs">
-                <summary className="cursor-pointer font-heading text-ink-500">System instruction + prompt</summary>
-                <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-ink-50 p-3">{a.system_instruction}</pre>
-                <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-ink-50 p-3">{a.prompt}</pre>
+              <details className="mt-3">
+                <summary className="cursor-pointer font-heading text-xs font-semibold text-[#4a5058] dark:text-[#C3C2B7]">
+                  System instruction + prompt
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f2f3] p-3 font-sans text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]">
+                  {a.system_instruction || "—"}
+                </pre>
+                <pre className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f1f2f3] p-3 font-sans text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]">
+                  {a.prompt || "—"}
+                </pre>
               </details>
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-20 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-t-2xl bg-surface p-5 sm:rounded-2xl">
-            <h2 className="font-module text-base">{editing.id ? "Edit agent" : "New agent"}</h2>
-            <label className="mt-3 block font-heading text-xs text-ink-500">
-              Name
-              <input
-                value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                className={inputCls}
-              />
-            </label>
-            <label className="mt-3 block font-heading text-xs text-ink-500">
-              System instruction
-              <textarea
-                value={editing.system_instruction}
-                onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
-                rows={3}
-                className={inputCls}
-              />
-            </label>
-            <label className="mt-3 block font-heading text-xs text-ink-500">
-              Prompt
-              <textarea
-                value={editing.prompt}
-                onChange={(e) => setEditing({ ...editing, prompt: e.target.value })}
-                rows={4}
-                className={inputCls}
-              />
-            </label>
-            <div className="mt-3 font-heading text-xs text-ink-500">
-              Input types
-              <div className="mt-1 flex gap-2">
-                {INPUT_TYPES.map((t) => (
-                  <label key={t} className="flex items-center gap-1 rounded-lg border border-ink-200 px-3 py-2 text-sm">
-                    <input type="checkbox" checked={editing.input_types.includes(t)} onChange={() => toggleType(t)} />
-                    {t}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setEditing(null)} className="rounded-lg border border-ink-200 px-4 py-2 font-heading text-sm">
-                Cancel
-              </button>
-              <button
-                onClick={() => editing.name.trim() ? save.mutate(editing) : toast.error("Name is required")}
-                disabled={save.isPending}
-                className={btnPrimary}
-              >
-                {save.isPending ? "Saving…" : "Save"}
-              </button>
+        <Modal title={editing.id ? "Edit agent" : "New agent"} onClose={() => setEditing(null)}>
+          <label className={fieldLabel}>
+            Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+            <input
+              value={editing.name}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              className={fieldInput}
+            />
+          </label>
+          <label className={cn(fieldLabel, "mt-3 block")}>
+            System instruction
+            <textarea
+              value={editing.system_instruction}
+              onChange={(e) => setEditing({ ...editing, system_instruction: e.target.value })}
+              rows={3}
+              className={fieldTextarea}
+            />
+          </label>
+          <label className={cn(fieldLabel, "mt-3 block")}>
+            Prompt
+            <textarea
+              value={editing.prompt}
+              onChange={(e) => setEditing({ ...editing, prompt: e.target.value })}
+              rows={4}
+              className={fieldTextarea}
+            />
+          </label>
+          <div className={cn(fieldLabel, "mt-3")}>
+            Input types
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {INPUT_TYPES.map((t) => (
+                <label
+                  key={t}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded-full border px-4 py-2 font-sans text-sm normal-case tracking-normal",
+                    editing.input_types.includes(t)
+                      ? "border-[#1d1d1d] bg-[#1d1d1d] text-white dark:border-[#2fdebf] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                      : "border-[#e5e7eb] bg-white text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC]",
+                  )}
+                >
+                  <input type="checkbox" checked={editing.input_types.includes(t)} onChange={() => toggleType(t)} />
+                  {t}
+                </label>
+              ))}
             </div>
           </div>
-        </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button
+              loading={save.isPending}
+              onClick={() => editing.name.trim() ? save.mutate(editing) : toast.error("Name is required")}
+            >
+              Save
+            </Button>
+          </div>
+        </Modal>
       )}
-    </section>
+    </div>
   );
 }

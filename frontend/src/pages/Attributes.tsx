@@ -3,6 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { cn } from "../lib/cn";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
+import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
 export type LabAttribute = {
@@ -17,9 +23,6 @@ export type LabAttribute = {
 
 const TYPES = ["string", "number", "integer", "boolean", "date", "datetime", "enum", "list"];
 const EMPTY = { agent_id: "", name: "", type: "string", description: "", json_schema: "{}", required: false };
-
-const inputCls = "mt-1 w-full rounded-lg border border-ink-200 p-2 font-sans text-sm";
-const btnPrimary = "rounded-lg bg-brand px-4 py-2 font-heading text-sm font-semibold text-ink";
 
 export default function Attributes() {
   const qc = useQueryClient();
@@ -75,163 +78,170 @@ export default function Attributes() {
   }
 
   return (
-    <section className="rounded-xl border border-ink-100 bg-surface p-5 shadow-float">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-module text-lg">Attributes</h1>
-          <p className="mt-1 font-heading text-xs text-ink-400">
-            Type, description, structured-output schema — each mapped to one agent.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={agentFilter}
-            onChange={(e) => setAgentFilter(e.target.value)}
-            className="rounded-lg border border-ink-200 p-2 font-heading text-sm"
-          >
-            <option value="">All agents</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-          <button onClick={startNew} className={btnPrimary}>
-            <Plus className="mr-1 inline h-4 w-4" /> New attribute
-          </button>
-        </div>
-      </div>
+    <div className="grid gap-4">
+      <PageHeader
+        title="Attributes"
+        description="Type, description, structured-output schema — each mapped to one agent."
+        actions={
+          <>
+            <select
+              value={agentFilter}
+              onChange={(e) => setAgentFilter(e.target.value)}
+              aria-label="Filter by agent"
+              className="h-11 rounded-full border border-[#e5e7eb] bg-white px-4 font-heading text-sm font-semibold text-[#1d1d1d] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-transparent dark:text-[#F0EFEC] dark:hover:border-white/40"
+            >
+              <option value="">All agents</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <Button size="sm" onClick={startNew}>
+              <Plus className="h-4 w-4" aria-hidden="true" /> New attribute
+            </Button>
+          </>
+        }
+      />
 
       {isLoading ? (
-        <p className="mt-4 font-heading text-sm text-ink-400">Loading…</p>
+        <Card>
+          <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
+        </Card>
       ) : data.length === 0 ? (
-        <p className="mt-4 rounded-lg bg-ink-50 p-4 font-heading text-sm text-ink-500">
-          No attributes here yet.
-        </p>
+        <Card>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">No attributes here yet.</p>
+        </Card>
       ) : (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-sm">
+        <Card padded={false} className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
-              <tr className="font-heading text-xs text-ink-400">
-                <th className="p-2">Name</th>
-                <th className="p-2">Agent</th>
-                <th className="p-2">Type</th>
-                <th className="p-2">Required</th>
-                <th className="p-2">Description</th>
-                <th className="p-2"></th>
+              <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Agent</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Required</th>
+                <th className="px-4 py-3">Description</th>
+                <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
               {data.map((r) => (
-                <tr key={r.id} className="border-t border-ink-100">
-                  <td className="p-2 font-heading font-semibold">{r.name}</td>
-                  <td className="p-2">{agents.find((a) => a.id === r.agent_id)?.name ?? r.agent_id.slice(0, 8)}</td>
-                  <td className="p-2"><span className="rounded-full bg-ink-50 px-2 py-0.5 font-heading text-[11px]">{r.type}</span></td>
-                  <td className="p-2">{r.required ? "yes" : "no"}</td>
-                  <td className="p-2 text-ink-500">{r.description}</td>
-                  <td className="p-2">
-                    <div className="flex gap-1">
-                      <button
+                <tr key={r.id} className="border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5">
+                  <td className="px-4 py-3 font-heading font-semibold text-[#1d1d1d] dark:text-[#F0EFEC]">{r.name}</td>
+                  <td className="px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]">
+                    {agents.find((a) => a.id === r.agent_id)?.name ?? r.agent_id.slice(0, 8)}
+                  </td>
+                  <td className="px-4 py-3"><Badge tone="neutral">{r.type}</Badge></td>
+                  <td className="px-4 py-3">
+                    {r.required ? <Badge tone="warning">required</Badge> : <span className="font-heading text-xs text-[#8a8f98]">optional</span>}
+                  </td>
+                  <td className="max-w-64 truncate px-4 py-3 text-[#4a5058] dark:text-[#C3C2B7]" title={r.description}>
+                    {r.description || "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => setEditing({ ...r, json_schema: JSON.stringify(r.json_schema ?? {}, null, 2) })}
-                        className="rounded-lg border border-ink-200 p-1.5"
-                        title="Edit"
+                        aria-label={`Edit ${r.name}`}
                       >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={() => window.confirm(`Delete attribute "${r.name}"?`) && remove.mutate(r.id)}
-                        className="rounded-lg border border-ink-200 p-1.5 text-danger"
-                        title="Delete"
+                        aria-label={`Delete ${r.name}`}
+                        className="text-[#ef4444]"
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </Button>
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-20 flex items-end justify-center bg-ink/40 p-0 sm:items-center sm:p-6">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-t-2xl bg-surface p-5 sm:rounded-2xl">
-            <h2 className="font-module text-base">{editing.id ? "Edit attribute" : "New attribute"}</h2>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="font-heading text-xs text-ink-500">
-                Agent
-                <select
-                  value={editing.agent_id}
-                  onChange={(e) => setEditing({ ...editing, agent_id: e.target.value })}
-                  className={inputCls}
-                >
-                  {agents.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="font-heading text-xs text-ink-500">
-                Name
-                <input
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  className={inputCls}
-                />
-              </label>
-              <label className="font-heading text-xs text-ink-500">
-                Type
-                <select
-                  value={editing.type}
-                  onChange={(e) => setEditing({ ...editing, type: e.target.value })}
-                  className={inputCls}
-                >
-                  {TYPES.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 font-heading text-xs text-ink-500">
-                <input
-                  type="checkbox"
-                  checked={editing.required}
-                  onChange={(e) => setEditing({ ...editing, required: e.target.checked })}
-                />
-                Required
-              </label>
-            </div>
-            <label className="mt-3 block font-heading text-xs text-ink-500">
-              Description (goes into the agent prompt)
-              <textarea
-                value={editing.description}
-                onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-                rows={2}
-                className={inputCls}
-              />
-            </label>
-            <label className="mt-3 block font-heading text-xs text-ink-500">
-              Structured-output schema (JSON)
-              <textarea
-                value={editing.json_schema}
-                onChange={(e) => setEditing({ ...editing, json_schema: e.target.value })}
-                rows={3}
-                spellCheck={false}
-                className={`${inputCls} font-mono`}
-              />
-            </label>
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setEditing(null)} className="rounded-lg border border-ink-200 px-4 py-2 font-heading text-sm">
-                Cancel
-              </button>
-              <button
-                onClick={() => editing.name.trim() && editing.agent_id ? save.mutate(editing) : toast.error("Agent + name are required")}
-                disabled={save.isPending}
-                className={btnPrimary}
+        <Modal title={editing.id ? "Edit attribute" : "New attribute"} onClose={() => setEditing(null)}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className={fieldLabel}>
+              Agent
+              <select
+                value={editing.agent_id}
+                onChange={(e) => setEditing({ ...editing, agent_id: e.target.value })}
+                className={cn(fieldInput, "h-11")}
               >
-                {save.isPending ? "Saving…" : "Save"}
-              </button>
-            </div>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className={fieldLabel}>
+              Name <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+              <input
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                className={fieldInput}
+              />
+            </label>
+            <label className={fieldLabel}>
+              Type
+              <select
+                value={editing.type}
+                onChange={(e) => setEditing({ ...editing, type: e.target.value })}
+                className={cn(fieldInput, "h-11")}
+              >
+                {TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
+              <input
+                type="checkbox"
+                checked={editing.required}
+                onChange={(e) => setEditing({ ...editing, required: e.target.checked })}
+                className="h-5 w-5 accent-[#0d5c4a]"
+              />
+              Required attribute
+            </label>
           </div>
-        </div>
+          <label className={cn(fieldLabel, "mt-3 block")}>
+            Description (goes into the agent prompt)
+            <textarea
+              value={editing.description}
+              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+              rows={2}
+              className={fieldTextarea}
+            />
+          </label>
+          <label className={cn(fieldLabel, "mt-3 block")}>
+            Structured-output schema (JSON)
+            <textarea
+              value={editing.json_schema}
+              onChange={(e) => setEditing({ ...editing, json_schema: e.target.value })}
+              rows={3}
+              spellCheck={false}
+              className={cn(fieldTextarea, "font-mono text-xs")}
+            />
+          </label>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button
+              loading={save.isPending}
+              onClick={() => editing.name.trim() && editing.agent_id ? save.mutate(editing) : toast.error("Agent + name are required")}
+            >
+              Save
+            </Button>
+          </div>
+        </Modal>
       )}
-    </section>
+    </div>
   );
 }

@@ -94,6 +94,13 @@ covering agent/attribute CRUD, runs, per-attribute feedback, and log snapshots.
 
 ## Design
 
-Same v2 design language as the CRM prototype: white surfaces, 1px `ink-100` borders,
-12px card radius, brand `#2edebe`, Comfortaa (logo/titles) / Montserrat (labels) /
-Open Sans (body) + Plus Jakarta Sans for module headers. See `frontend/tailwind.config.ts`.
+Mirrors the CRM prototype's v2 Turtle theme exactly (`frontend/src/index.css`,
+`tailwind.config.ts`, `src/app/`, `src/components/ui/` ported from turtle-crm):
+
+- Paper cards: `rounded-2xl`, `#e5e7eb` border, float shadow; ink-bar pill buttons
+  (mint in dark mode); mint accent bar + `font-module` (Plus Jakarta Sans) page headers.
+- App shell: collapsible sidebar (mint active state), 58px top bar, `#eef0f4` page
+  background, bottom tab bar on mobile.
+- Real Turtle wordmark (`public/turtle-logo-black.svg` / `turtle-logo-white.svg`,
+  swapped by theme) + `turtle-favicon.svg`; light/dark toggle in the top bar
+  (persisted, pre-paint script prevents flashing).
