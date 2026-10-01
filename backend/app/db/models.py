@@ -46,6 +46,9 @@ class Attribute(Base):
     type: Mapped[str] = mapped_column(String(64), nullable=False, default="string")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     enum_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Ordered sub-fields for type=="object": [{name, type, null_allowed}].
+    # type in [string, number, boolean, array]; kept [] for all other types.
+    object_properties: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

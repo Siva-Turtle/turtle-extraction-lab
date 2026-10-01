@@ -68,3 +68,73 @@ def test_attribute_type_validation(client):
     assert client.patch(f"/api/v1/attributes/{atid}", json={"type": "date"}).status_code == 422
     flipped = client.patch(f"/api/v1/attributes/{atid}", json={"type": "string"}).json()
     assert flipped["type"] == "string" and flipped["enum_values"] == []
+
+
+def test_attribute_array_type(client):
+    aid = _agent_id(client)
+
+    # array needs no extra config; stray enum/object config is dropped
+    created = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "emails", "type": "array",
+        "description": "Email addresses mentioned",
+        "enum_values": ["ignored"],
+        "object_properties": [{"name": "x", "type": "string",
+                               "null_allowed": True}]}).json()
+    assert created["type"] == "array"
+    assert created["enum_values"] == []
+    assert created["object_properties"] == []
+
+
+def test_attribute_object_validation(client):
+    aid = _agent_id(client)
+
+    # missing / empty object_properties -> 422
+    assert client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "alloc", "type": "object"}).status_code == 422
+    assert client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "alloc", "type": "object",
+        "object_properties": []}).status_code == 422
+
+    # blank name, bad sub-type, dupes -> 422
+    # (non-bool null_allowed never reaches the router: pydantic coerces
+    # truthy strings to bool before validation runs)
+    bad_props = [
+        [{"name": " ", "type": "number", "null_allowed": True}],
+        [{"name": "x", "type": "date", "null_allowed": True}],
+        [{"name": "a", "type": "number", "null_allowed": True},
+         {"name": "a", "type": "string", "null_allowed": True}],
+    ]
+    for props in bad_props:
+        assert client.post("/api/v1/attributes", json={
+            "agent_ids": [aid], "name": "alloc", "type": "object",
+            "object_properties": props}).status_code == 422
+
+    # valid object round-trips ordered sub-fields, clears enum_values
+    created = client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "alloc", "type": "object",
+        "description": "Asset allocation",
+        "enum_values": ["ignored"],
+        "object_properties": [
+            {"name": "equity", "type": "number", "null_allowed": True},
+            {"name": "debt", "type": "number", "null_allowed": False},
+            {"name": "tags", "type": "array", "null_allowed": True},
+        ]}).json()
+    assert created["enum_values"] == []
+    assert created["object_properties"] == [
+        {"name": "equity", "type": "number", "null_allowed": True},
+        {"name": "debt", "type": "number", "null_allowed": False},
+        {"name": "tags", "type": "array", "null_allowed": True},
+    ]
+    atid = created["id"]
+
+    # flipping object -> array clears sub-fields
+    flipped = client.patch(f"/api/v1/attributes/{atid}", json={"type": "array"}).json()
+    assert flipped["type"] == "array" and flipped["object_properties"] == []
+
+    # flipping back to object with fresh props works
+    back = client.patch(f"/api/v1/attributes/{atid}", json={
+        "type": "object",
+        "object_properties": [{"name": "gold", "type": "number",
+                               "null_allowed": True}]}).json()
+    assert back["object_properties"] == [
+        {"name": "gold", "type": "number", "null_allowed": True}]

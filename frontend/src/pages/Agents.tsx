@@ -52,11 +52,18 @@ const RESULT_CONTRACT =
 
 const COPY_USER_TEMPLATE = "{{Transcription}}";
 
+type PreviewObjectProp = {
+  name: string;
+  type: string;
+  null_allowed: boolean;
+};
+
 type PreviewAttr = {
   name: string;
   type: string;
   description: string;
   enum_values: string[];
+  object_properties: PreviewObjectProp[];
 };
 
 /** Mirrors backend `_attr_line`: `- name (type): description [a | b]`. */
@@ -75,6 +82,21 @@ function buildLocalSystem(baseInstruction: string, attrs: PreviewAttr[]): string
   return `${base}\n\nAttributes to extract:\n${lines}\n\n${RESULT_CONTRACT}`;
 }
 
+/** Mirrors backend `_sub_schema`: one object sub-field to its schema fragment. */
+function subSchema(subType: string, nullAllowed: boolean): Record<string, unknown> {
+  const t = (base: string) => (nullAllowed ? [base, "null"] : base);
+  if (subType === "array") {
+    return { type: t("array"), items: { type: "string" } };
+  }
+  if (subType === "number") {
+    return { type: t("number") };
+  }
+  if (subType === "boolean") {
+    return { type: t("boolean") };
+  }
+  return { type: t("string") };
+}
+
 /** Mirrors backend `build_extraction_schema` + `build_chat_payload` envelope (strict meeting_extraction). */
 function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown> {
   if (attrs.length === 0) {
@@ -87,6 +109,26 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
       valueSchema = { type: ["number", "null"], description: `Extracted value for ${a.name}` };
     } else if (a.type === "boolean") {
       valueSchema = { type: ["boolean", "null"], description: `Extracted value for ${a.name}` };
+    } else if (a.type === "array") {
+      valueSchema = {
+        type: ["array", "null"],
+        items: { type: "string" },
+        description: `Extracted value for ${a.name}`,
+      };
+    } else if (a.type === "object") {
+      const subProps: Record<string, unknown> = {};
+      const subRequired: string[] = [];
+      for (const p of a.object_properties ?? []) {
+        subProps[p.name] = subSchema(p.type, p.null_allowed !== false);
+        subRequired.push(p.name);
+      }
+      valueSchema = {
+        type: ["object", "null"],
+        properties: subProps,
+        required: subRequired,
+        additionalProperties: false,
+        description: `Extracted value for ${a.name}`,
+      };
     } else {
       valueSchema = { type: ["string", "null"], description: `Extracted value for ${a.name}` };
     }
@@ -125,7 +167,13 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
 }
 
 function toPreviewAttr(a: LabAttribute): PreviewAttr {
-  return { name: a.name, type: a.type, description: a.description, enum_values: a.enum_values ?? [] };
+  return {
+    name: a.name,
+    type: a.type,
+    description: a.description,
+    enum_values: a.enum_values ?? [],
+    object_properties: (a.object_properties ?? []).map((p) => ({ ...p })),
+  };
 }
 
 const dropdownTrigger =
@@ -609,6 +657,13 @@ export default function Agents() {
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {(a.enum_values ?? []).map((v) => (
                           <Badge key={v} tone="neutral">{v}</Badge>
+                        ))}
+                      </div>
+                    )}
+                    {a.type === "object" && (a.object_properties ?? []).length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {(a.object_properties ?? []).map((p) => (
+                          <Badge key={p.name} tone="neutral">{p.name} ({p.type})</Badge>
                         ))}
                       </div>
                     )}

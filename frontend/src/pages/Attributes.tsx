@@ -12,7 +12,14 @@ import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/M
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
-export type AttributeType = "string" | "number" | "boolean" | "enum";
+export type AttributeType = "string" | "number" | "boolean" | "enum" | "array" | "object";
+
+/** Sub-field of a type=="object" attribute (dict in code comments, "object" in the UI). */
+export type AttributeObjectProperty = {
+  name: string;
+  type: "string" | "number" | "boolean" | "array";
+  null_allowed: boolean;
+};
 
 export type LabAttribute = {
   id: string;
@@ -21,15 +28,18 @@ export type LabAttribute = {
   type: AttributeType;
   description: string;
   enum_values: string[];
+  object_properties: AttributeObjectProperty[];
 };
 
-const TYPES: AttributeType[] = ["string", "number", "boolean", "enum"];
+const TYPES: AttributeType[] = ["string", "number", "boolean", "enum", "array", "object"];
+const SUB_TYPES: AttributeObjectProperty["type"][] = ["string", "number", "boolean", "array"];
 const EMPTY: {
   name: string;
   type: AttributeType;
   description: string;
   enum_values: string[];
-} = { name: "", type: "string", description: "", enum_values: [] };
+  object_properties: AttributeObjectProperty[];
+} = { name: "", type: "string", description: "", enum_values: [], object_properties: [] };
 
 /** v2 single-select for attribute type — mirrors FilterCombobox styling. */
 function TypeCombobox({
@@ -210,6 +220,115 @@ function EnumValuesEditor({
   );
 }
 
+/** Ordered sub-fields for type=="object" (dict): name + limited type + null flag.
+ * Plus-to-add; no new row while the last name is empty; exact-match dedupe. */
+function ObjectPropertiesEditor({
+  properties,
+  onChange,
+}: {
+  properties: AttributeObjectProperty[];
+  onChange: (v: AttributeObjectProperty[]) => void;
+}): React.JSX.Element {
+  const display: AttributeObjectProperty[] =
+    properties.length > 0 ? properties : [{ name: "", type: "string", null_allowed: true }];
+  const trimmed = display.map((p) => p.name.trim()).filter((n) => n !== "");
+  const counts = new Map<string, number>();
+  for (const n of trimmed) counts.set(n, (counts.get(n) ?? 0) + 1);
+  const dupes = new Set([...counts.entries()].filter(([, n]) => n > 1).map(([v]) => v));
+  const isDupeRow = (raw: string) => raw.trim() !== "" && dupes.has(raw.trim());
+
+  function setRow(i: number, next: AttributeObjectProperty) {
+    if (properties.length === 0) {
+      onChange([next]);
+      return;
+    }
+    onChange(properties.map((p, idx) => (idx === i ? next : p)));
+  }
+
+  function removeRow(i: number) {
+    if (properties.length === 0) {
+      onChange([]);
+      return;
+    }
+    onChange(properties.filter((_, idx) => idx !== i));
+  }
+
+  function addRow() {
+    const last = display[display.length - 1] ?? { name: "" };
+    if (last.name.trim() === "") return;
+    onChange([...display, { name: "", type: "string", null_allowed: true }]);
+  }
+
+  const lastEmpty = ((display[display.length - 1] ?? { name: "" }).name ?? "").trim() === "";
+
+  return (
+    <div>
+      <div className="grid gap-2">
+        <div
+          aria-hidden="true"
+          className="grid grid-cols-[minmax(0,1fr)_128px_96px_36px] items-center gap-2 px-0 font-heading text-[11px] font-bold uppercase tracking-wide text-[#8a8f98]"
+        >
+          <span>Property name</span>
+          <span>Type</span>
+          <span className="text-center">Null allowed?</span>
+          <span />
+        </div>
+        {display.map((p, i) => (
+          <div key={i} className="grid grid-cols-[minmax(0,1fr)_128px_96px_36px] items-center gap-2">
+            <input
+              value={p.name}
+              onChange={(e) => setRow(i, { ...p, name: e.target.value })}
+              spellCheck={false}
+              placeholder={`Property ${i + 1}`}
+              aria-label={`Property name ${i + 1}`}
+              className={cn(fieldInput, "mt-0 font-mono text-xs", isDupeRow(p.name) && "border-[#ef4444]")}
+            />
+            <select
+              value={p.type}
+              onChange={(e) =>
+                setRow(i, { ...p, type: e.target.value as AttributeObjectProperty["type"] })
+              }
+              aria-label={`Property type ${i + 1}`}
+              className={cn(fieldInput, "mt-0 font-mono text-xs")}
+            >
+              {SUB_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <input
+              type="checkbox"
+              checked={p.null_allowed}
+              onChange={(e) => setRow(i, { ...p, null_allowed: e.target.checked })}
+              aria-label={`Null allowed for property ${i + 1}`}
+              className="mx-auto h-5 w-5 shrink-0 accent-[#0d5c4a] dark:accent-[#2fdebf]"
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(i)}
+              aria-label={`Remove property ${i + 1}`}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] hover:text-[#b91c1c] dark:text-[#C3C2B7] dark:hover:bg-white/10"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        ))}
+      </div>
+      {dupes.size > 0 && (
+        <p role="alert" className="mt-1 font-sans text-xs text-[#b91c1c] dark:text-[#f87171]">
+          Each property name must be unique — duplicate: {[...dupes].join(", ")}
+        </p>
+      )}
+      <div className="mt-2">
+        <Button variant="secondary" size="sm" onClick={addRow} disabled={lastEmpty} aria-label="Add property">
+          <Plus className="h-4 w-4" aria-hidden="true" /> Add property
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function Attributes() {
   const qc = useQueryClient();
   const { data: agents = [] } = useQuery({
@@ -226,11 +345,16 @@ export default function Attributes() {
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
       const raw = v.enum_values ?? [];
       const cleaned = raw.map((s) => s.trim()).filter((s) => s !== "");
+      const rawProps = v.object_properties ?? [];
+      const cleanedProps = rawProps
+        .map((p) => ({ ...p, name: p.name.trim() }))
+        .filter((p) => p.name !== "");
       const body = {
         name: v.name.trim(),
         type: v.type,
         description: v.description,
         enum_values: v.type === "enum" ? cleaned : [],
+        object_properties: v.type === "object" ? cleanedProps : [],
       };
       return v.id
         ? (await api.patch(`/attributes/${v.id}`, body)).data
@@ -254,7 +378,7 @@ export default function Attributes() {
   });
 
   function startNew() {
-    setEditing({ ...EMPTY, enum_values: [] });
+    setEditing({ ...EMPTY, enum_values: [], object_properties: [] });
   }
 
   function agentNames(r: LabAttribute): string {
@@ -281,6 +405,19 @@ export default function Attributes() {
         return;
       }
     }
+    if (editing.type === "object") {
+      const cleaned = (editing.object_properties ?? [])
+        .map((p) => p.name.trim())
+        .filter((n) => n !== "");
+      if (cleaned.length === 0) {
+        toast.error("Object needs at least one property");
+        return;
+      }
+      if (new Set(cleaned).size !== cleaned.length) {
+        toast.error("Each property name must be unique");
+        return;
+      }
+    }
     save.mutate(editing);
   }
 
@@ -289,6 +426,7 @@ export default function Attributes() {
       ...r,
       agent_ids: [...(r.agent_ids ?? [])],
       enum_values: [...(r.enum_values ?? [])],
+      object_properties: (r.object_properties ?? []).map((p) => ({ ...p })),
     });
   }
 
@@ -343,6 +481,12 @@ export default function Attributes() {
                       <span className="flex flex-wrap gap-1">
                         {(r.enum_values ?? []).map((v) => (
                           <Badge key={v} tone="neutral">{v}</Badge>
+                        ))}
+                      </span>
+                    ) : r.type === "object" && (r.object_properties ?? []).length > 0 ? (
+                      <span className="flex flex-wrap gap-1">
+                        {(r.object_properties ?? []).map((p) => (
+                          <Badge key={p.name} tone="neutral">{p.name} ({p.type})</Badge>
                         ))}
                       </span>
                     ) : (
@@ -407,6 +551,7 @@ export default function Attributes() {
                     ...editing,
                     type: next,
                     enum_values: next === "enum" ? editing.enum_values : [],
+                    object_properties: next === "object" ? editing.object_properties : [],
                   })
                 }
               />
@@ -428,6 +573,17 @@ export default function Attributes() {
                 <EnumValuesEditor
                   values={editing.enum_values}
                   onChange={(v) => setEditing({ ...editing, enum_values: v })}
+                />
+              </div>
+            </div>
+          )}
+          {editing.type === "object" && (
+            <div className={cn(fieldLabel, "mt-3 block")}>
+              Properties <span aria-hidden="true" className="text-[#ef4444]"> *</span>
+              <div className="mt-1.5">
+                <ObjectPropertiesEditor
+                  properties={editing.object_properties}
+                  onChange={(v) => setEditing({ ...editing, object_properties: v })}
                 />
               </div>
             </div>

@@ -122,7 +122,7 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
     snap = logs[0]["agent_snapshot"]
     assert snap[aid1]["attributes"] == snap[aid2]["attributes"] == [
         {"name": "mood", "type": "enum", "description": "Caller mood",
-         "enum_values": ["good", "bad"]}]
+         "enum_values": ["good", "bad"], "object_properties": []}]
     assert "prompt" not in snap[aid1]  # dormant column never snapshotted
 
 
@@ -265,3 +265,96 @@ def test_system_layout_no_attributes_fallback(client, monkeypatch):
 
 def test_build_extraction_schema_empty_falls_back():
     assert build_extraction_schema([]) is None
+
+
+def _wrap(name, value_schema, description):
+    return {
+        "type": "object", "description": description,
+        "properties": {
+            "value": value_schema,
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "confidence_type": {"type": "string",
+                                "enum": ["quoted", "inferred", "normalized", "not_found"]},
+            "evidence": {"type": ["string", "null"]},
+        },
+        "required": ["value", "confidence", "confidence_type", "evidence"],
+        "additionalProperties": False,
+    }
+
+
+def test_build_extraction_schema_array_shape():
+    """Spec example: emails array emits items-string value schema."""
+    from app.db.models import Attribute
+
+    schema = build_extraction_schema([
+        Attribute(name="emails", type="array",
+                  description="Email addresses mentioned in the meeting."),
+    ])
+    assert schema["required"] == ["emails"]
+    assert schema["properties"]["emails"] == _wrap(
+        "emails",
+        {"type": ["array", "null"], "items": {"type": "string"},
+         "description": "Extracted value for emails"},
+        "Email addresses mentioned in the meeting.")
+
+
+def test_build_extraction_schema_object_shape():
+    """Spec example: asset_allocation object with ordered number sub-fields."""
+    from app.db.models import Attribute
+
+    schema = build_extraction_schema([
+        Attribute(name="asset_allocation", type="object",
+                  description="Asset allocation",
+                  object_properties=[
+                      {"name": "equity", "type": "number", "null_allowed": True},
+                      {"name": "debt", "type": "number", "null_allowed": True},
+                      {"name": "real_estate", "type": "number", "null_allowed": True},
+                      {"name": "gold", "type": "number", "null_allowed": True},
+                  ]),
+    ])
+    assert schema["required"] == ["asset_allocation"]
+    assert schema["properties"]["asset_allocation"] == _wrap(
+        "asset_allocation",
+        {"type": ["object", "null"],
+         "properties": {"equity": {"type": ["number", "null"]},
+                        "debt": {"type": ["number", "null"]},
+                        "real_estate": {"type": ["number", "null"]},
+                        "gold": {"type": ["number", "null"]}},
+         "required": ["equity", "debt", "real_estate", "gold"],
+         "additionalProperties": False,
+         "description": "Extracted value for asset_allocation"},
+        "Asset allocation")
+    assert "$ref" not in str(schema)
+
+
+def test_build_extraction_schema_object_subtype_mapping():
+    """Sub-field null_allowed toggles the null union per type."""
+    from app.db.models import Attribute
+    from app.modules.runs.router import _sub_schema
+
+    assert _sub_schema("string", True) == {"type": ["string", "null"]}
+    assert _sub_schema("string", False) == {"type": "string"}
+    assert _sub_schema("number", True) == {"type": ["number", "null"]}
+    assert _sub_schema("number", False) == {"type": "number"}
+    assert _sub_schema("boolean", True) == {"type": ["boolean", "null"]}
+    assert _sub_schema("boolean", False) == {"type": "boolean"}
+    assert _sub_schema("array", True) == {"type": ["array", "null"],
+                                          "items": {"type": "string"}}
+    assert _sub_schema("array", False) == {"type": "array",
+                                           "items": {"type": "string"}}
+
+    schema = build_extraction_schema([
+        Attribute(name="profile", type="object", description="Profile",
+                  object_properties=[
+                      {"name": "nickname", "type": "string", "null_allowed": False},
+                      {"name": "tags", "type": "array", "null_allowed": True},
+                      {"name": "vip", "type": "boolean", "null_allowed": False},
+                  ]),
+    ])
+    value = schema["properties"]["profile"]["properties"]["value"]
+    assert value["properties"] == {"nickname": {"type": "string"},
+                                   "tags": {"type": ["array", "null"],
+                                            "items": {"type": "string"}},
+                                   "vip": {"type": "boolean"}}
+    assert value["required"] == ["nickname", "tags", "vip"]
+    assert value["additionalProperties"] is False

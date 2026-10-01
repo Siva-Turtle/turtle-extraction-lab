@@ -144,7 +144,8 @@ def test_prompt_preview_fidelity(client, db):
     }
     assert body["attributes"] == [
         {"name": a.name, "type": a.type, "description": a.description,
-         "enum_values": a.enum_values or []} for a in attrs]
+         "enum_values": a.enum_values or [],
+         "object_properties": list(getattr(a, "object_properties", None) or [])} for a in attrs]
     assert {a["name"] for a in body["attributes"]} == {"topic", "sentiment"}
 
     assert client.get("/api/v1/agents/does-not-exist/prompt-preview").status_code == 404

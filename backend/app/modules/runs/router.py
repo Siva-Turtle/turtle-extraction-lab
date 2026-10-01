@@ -46,6 +46,39 @@ def _agent_system_content(agent: Agent, attrs: list[Attribute]) -> str:
     return f"{base}\n\nAttributes to extract:\n{attr_lines}\n\n{RESULT_CONTRACT}"
 
 
+def _object_properties(a: Attribute) -> list[dict]:
+    """Ordered sub-fields for type=="object" as plain dicts (DB stores JSON)."""
+    raw = getattr(a, "object_properties", None) or []
+    props: list[dict] = []
+    for p in raw:
+        if isinstance(p, dict):
+            props.append(p)
+        else:
+            props.append({"name": getattr(p, "name", ""),
+                          "type": getattr(p, "type", "string"),
+                          "null_allowed": getattr(p, "null_allowed", True)})
+    return props
+
+
+def _sub_schema(sub_type: str, null_allowed: bool) -> dict:
+    """Map one object sub-field to its JSON-schema fragment (items always string)."""
+    if sub_type == "array":
+        return {"type": (["array", "null"] if null_allowed else "array"),
+                "items": {"type": "string"}}
+    if sub_type == "number":
+        return {"type": (["number", "null"] if null_allowed else "number")}
+    if sub_type == "boolean":
+        return {"type": (["boolean", "null"] if null_allowed else "boolean")}
+    return {"type": (["string", "null"] if null_allowed else "string")}
+
+
+def _snapshot_props(a: Attribute) -> list[dict]:
+    return [{"name": str(p.get("name", "")),
+             "type": p.get("type", "string"),
+             "null_allowed": bool(p.get("null_allowed", True))}
+            for p in _object_properties(a)]
+
+
 def _value_schema_for_attribute(a: Attribute) -> dict:
     """Map attribute type to the OpenAI structured-output value field.
 
@@ -53,17 +86,31 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
     - number -> {"type": ["number", "null"], ...}
     - boolean -> {"type": ["boolean", "null"], ...}
     - enum -> {"type": ["string", "null"], "enum": [...allowed..., None], ...}
+    - array -> {"type": ["array", "null"], "items": {"type": "string"}, ...}
+    - object -> {"type": ["object", "null"], "properties": {sub-name: sub-schema},
+      "required": [all sub names], "additionalProperties": False, ...}
     """
+    desc = f"Extracted value for {a.name}"
     if a.type == "number":
-        value_schema: dict = {"type": ["number", "null"],
-                              "description": f"Extracted value for {a.name}"}
+        value_schema: dict = {"type": ["number", "null"], "description": desc}
     elif a.type == "boolean":
-        value_schema = {"type": ["boolean", "null"],
-                        "description": f"Extracted value for {a.name}"}
+        value_schema = {"type": ["boolean", "null"], "description": desc}
+    elif a.type == "array":
+        value_schema = {"type": ["array", "null"],
+                        "items": {"type": "string"}, "description": desc}
+    elif a.type == "object":
+        sub_props: dict = {}
+        sub_required: list[str] = []
+        for p in _object_properties(a):
+            sub_props[str(p.get("name", ""))] = _sub_schema(
+                str(p.get("type", "string")), bool(p.get("null_allowed", True)))
+            sub_required.append(str(p.get("name", "")))
+        value_schema = {"type": ["object", "null"], "properties": sub_props,
+                        "required": sub_required,
+                        "additionalProperties": False, "description": desc}
     else:
         # string + enum share the string base; unknown types fall back to string
-        value_schema = {"type": ["string", "null"],
-                        "description": f"Extracted value for {a.name}"}
+        value_schema = {"type": ["string", "null"], "description": desc}
     if a.type == "enum" and (a.enum_values or []):
         value_schema["enum"] = [*list(a.enum_values), None]
     return value_schema
@@ -130,7 +177,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         snapshots[agent.id] = {
             "name": agent.name, "system_instruction": agent.system_instruction,
             "attributes": [{"name": a.name, "type": a.type, "description": a.description,
-                            "enum_values": a.enum_values or []} for a in attrs],
+                            "enum_values": a.enum_values or [],
+                            "object_properties": _snapshot_props(a)} for a in attrs],
         }
         agent_start = perf_counter()
         prompt_tokens = 0

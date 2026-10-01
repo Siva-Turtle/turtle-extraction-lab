@@ -2,7 +2,16 @@
 
 from pydantic import BaseModel, Field
 
-ATTRIBUTE_TYPES = ("string", "number", "boolean", "enum")
+ATTRIBUTE_TYPES = ("string", "number", "boolean", "enum", "array", "object")
+
+# Allowed sub-field types for type=="object" (dict properties table in the UI).
+OBJECT_SUB_TYPES = ("string", "number", "boolean", "array")
+
+
+class ObjectProperty(BaseModel):
+    name: str
+    type: str = "string"
+    null_allowed: bool = True
 
 
 class AttributeCreate(BaseModel):
@@ -11,6 +20,7 @@ class AttributeCreate(BaseModel):
     type: str = "string"
     description: str = ""
     enum_values: list[str] = Field(default_factory=list)
+    object_properties: list[ObjectProperty] = Field(default_factory=list)
 
 
 class AttributeUpdate(BaseModel):
@@ -19,6 +29,7 @@ class AttributeUpdate(BaseModel):
     type: str | None = None
     description: str | None = None
     enum_values: list[str] | None = None
+    object_properties: list[ObjectProperty] | None = None
 
 
 class AttributeOut(BaseModel):
@@ -28,3 +39,4 @@ class AttributeOut(BaseModel):
     type: str = "string"
     description: str = ""
     enum_values: list[str] = Field(default_factory=list)
+    object_properties: list[ObjectProperty] = Field(default_factory=list)
