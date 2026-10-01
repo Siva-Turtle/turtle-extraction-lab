@@ -95,7 +95,8 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
                 "value": {"description": "Extracted value for mood",
                           "enum": ["good", "bad"]},
                 "confidence": {"type": "number"},
-                "confidence_type": {"type": "string"},
+                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
+                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
                 "evidence": {"type": "string"},
             },
             "required": ["confidence"], "additionalProperties": False,
@@ -132,7 +133,8 @@ def test_build_extraction_schema_mapping():
             "properties": {
                 "value": value,
                 "confidence": {"type": "number"},
-                "confidence_type": {"type": "string"},
+                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
+                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
                 "evidence": {"type": "string"},
             },
             "required": ["confidence"], "additionalProperties": False,
@@ -161,6 +163,10 @@ def test_build_extraction_schema_mapping():
     assert "enum" not in empty["properties"]["e2"]["properties"]["value"]
     for prop in schema["properties"].values():
         assert prop["required"] == ["confidence"]
+        assert prop["properties"]["confidence_type"] == {
+            "type": "string", "enum": ["quoted", "inferred", "normalized"],
+            "description": "How the value was obtained: quoted, inferred, or normalized."}
+        assert prop["properties"]["confidence_type"]["enum"] == ["quoted", "inferred", "normalized"]
     # No $refs anywhere in the envelope.
     assert "$ref" not in str(schema)
 
@@ -168,10 +174,21 @@ def test_build_extraction_schema_mapping():
 def test_result_contract_text():
     assert runs_router.RESULT_CONTRACT == (
         'Return a JSON object keyed by attribute name. Each value is an object with "value" '
-        '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|…), '
+        '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), '
         '"evidence" (exact quote from the input). If an attribute is not found in the input, '
-        'omit it from the response — never return null.'
+        'omit it from the response — never return null. '
+        'quoted = value stated word-for-word (evidence is the exact quote); '
+        'inferred = value concluded from the input but not stated verbatim '
+        '(evidence is the supporting passage); normalized = value standardized from a stated form '
+        'such as phone digits, date formats, or casing (evidence is the original stated form).'
     )
+    assert "…" not in runs_router.RESULT_CONTRACT
+    assert "(quoted|inferred|normalized)" in runs_router.RESULT_CONTRACT
+    for term in ("quoted", "inferred", "normalized"):
+        assert term in runs_router.RESULT_CONTRACT
+    assert "quoted = value stated word-for-word" in runs_router.RESULT_CONTRACT
+    assert "inferred = value concluded from the input" in runs_router.RESULT_CONTRACT
+    assert "normalized = value standardized from a stated form" in runs_router.RESULT_CONTRACT
 
 
 def test_system_layout_user_is_verbatim_input(client, monkeypatch):

@@ -14,9 +14,13 @@ router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
 RESULT_CONTRACT = (
     'Return a JSON object keyed by attribute name. Each value is an object with "value" '
-    '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|…), '
+    '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), '
     '"evidence" (exact quote from the input). If an attribute is not found in the input, '
-    'omit it from the response — never return null.'
+    'omit it from the response — never return null. '
+    'quoted = value stated word-for-word (evidence is the exact quote); '
+    'inferred = value concluded from the input but not stated verbatim '
+    '(evidence is the supporting passage); normalized = value standardized from a stated form '
+    'such as phone digits, date formats, or casing (evidence is the original stated form).'
 )
 
 
@@ -63,7 +67,8 @@ def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
             "properties": {
                 "value": value_schema,
                 "confidence": {"type": "number"},
-                "confidence_type": {"type": "string"},
+                "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
+                                    "description": "How the value was obtained: quoted, inferred, or normalized."},
                 "evidence": {"type": "string"},
             },
             "required": ["confidence"],

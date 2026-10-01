@@ -117,7 +117,8 @@ def test_requests_persisted_on_success(client, monkeypatch):
         "properties": {
             "value": {"description": "Extracted value for mood"},
             "confidence": {"type": "number"},
-            "confidence_type": {"type": "string"},
+            "confidence_type": {"type": "string", "enum": ["quoted", "inferred", "normalized"],
+                                "description": "How the value was obtained: quoted, inferred, or normalized."},
             "evidence": {"type": "string"},
         },
         "required": ["confidence"], "additionalProperties": False,

@@ -19,7 +19,7 @@ export type Agent = {
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|…), "evidence" (exact quote). Omit attributes not found — never return null.\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
+export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
 const EMPTY = { name: "", system_instruction: DEFAULT_SYSTEM_INSTRUCTION, input_types: [] as string[], is_enabled: true };
 
 export default function Agents() {
