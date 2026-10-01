@@ -12,5 +12,14 @@ class AttributeCreate(BaseModel):
     required: bool = False
 
 
+class AttributeUpdate(BaseModel):
+    agent_id: str | None = None
+    name: str | None = None
+    type: str | None = None
+    description: str | None = None
+    json_schema: dict | None = None
+    required: bool | None = None
+
+
 class AttributeOut(AttributeCreate):
     id: str

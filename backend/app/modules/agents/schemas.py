@@ -10,5 +10,12 @@ class AgentCreate(BaseModel):
     input_types: list[str] = Field(default_factory=list)
 
 
+class AgentUpdate(BaseModel):
+    name: str | None = None
+    system_instruction: str | None = None
+    prompt: str | None = None
+    input_types: list[str] | None = None
+
+
 class AgentOut(AgentCreate):
     id: str

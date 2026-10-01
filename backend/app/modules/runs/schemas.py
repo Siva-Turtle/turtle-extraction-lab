@@ -1,5 +1,7 @@
 """Test module: run selected agents over input data via an OpenRouter model."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -17,8 +19,26 @@ class RunCreate(BaseModel):
     model: str
 
 
+class RunOut(BaseModel):
+    id: str
+    input_type: str
+    model: str
+    agent_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class RunDetail(RunOut):
+    input_data: str
+    outputs: dict = Field(default_factory=dict)
+
+
 class FeedbackCreate(BaseModel):
     agent_name: str = ""
     attribute_name: str = ""
     rating: str  # up | down
     remarks: str = ""
+
+
+class FeedbackOut(FeedbackCreate):
+    id: str
+    run_id: str

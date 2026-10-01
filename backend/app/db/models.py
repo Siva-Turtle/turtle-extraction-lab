@@ -3,8 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -24,7 +23,7 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     system_instruction: Mapped[str] = mapped_column(Text, nullable=False, default="")
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    input_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    input_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -35,7 +34,7 @@ class Attribute(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False, default="string")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    json_schema: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    json_schema: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     required: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -46,8 +45,8 @@ class Run(Base):
     input_type: Mapped[str] = mapped_column(String(32), nullable=False)
     input_data: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    agent_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    outputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    agent_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    outputs: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -71,8 +70,8 @@ class RunLog(Base):
     input_type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     input_data: Mapped[str] = mapped_column(Text, nullable=False, default="")
     model: Mapped[str] = mapped_column(String(200), nullable=False, default="")
-    agent_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    attribute_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    outputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    feedback: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    agent_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    attribute_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    outputs: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    feedback: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

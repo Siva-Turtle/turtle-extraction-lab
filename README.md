@@ -18,9 +18,13 @@ and logged. Once finalised, agent configs move to the **Extraction Service**
 ```
 turtle-extraction-lab/
   CLAUDE.md / AGENTS.md   agent orientation (read first)
-  backend/                FastAPI 3.13 + SQLAlchemy 2.0 sync + psycopg, db turtle_agent_lab (PG17 :5432)
+  start-lab.cmd           double-click to start everything (backend + frontend)
+  backend/                FastAPI 3.13 + SQLAlchemy 2.0 sync + psycopg, db turtle_agent_lab
+  backend/alembic/        migrations (0001_initial: agents, attributes, runs, feedbacks, run_logs)
+  backend/tests/          pytest suite (SQLite-backed, no Postgres needed)
   frontend/               Vite + React 18 + TS, Tailwind 3.4 with CRM v2 tokens, :5175 → :8002
-  scripts/dev.ps1         starts backend + frontend
+  scripts/dev.ps1         starts backend + frontend (what start-lab.cmd calls)
+  scripts/db-init.ps1     first-time setup: create DB, write .env, migrate, seed
 ```
 
 Ports are offset from the CRM on purpose: CRM uses 8000/5173 (test stack 8001/5174),
@@ -36,29 +40,57 @@ this lab uses **8002/5175** so all three run side by side.
 - **Log:** one denormalized row per run — full agent/attribute/model snapshots + user
   feedback. **No FK to agents/attributes** (configs change later; the log must stay frozen).
 
-## First-time setup
+## First-time setup (one command)
 
-1. Create the database:
-   ```powershell
-   psql -U postgres -h localhost -c "CREATE DATABASE turtle_agent_lab;"
-   ```
-2. Configure the backend:
-   ```powershell
-   Copy-Item backend/.env.example backend/.env
-   ```
-   Set `DATABASE_URL` password and `OPENROUTER_API_KEY`.
-3. Install + run backend (from `backend/`):
-   ```powershell
-   uv sync
-   uv run uvicorn app.main:app --reload --port 8000
-   ```
-   (or `./scripts/dev.ps1` from root for backend + frontend together)
-4. Install + run frontend (from `frontend/`):
-   ```powershell
-   npm install
-   npm run dev
-   ```
-   Open http://localhost:5175 — health: `GET http://localhost:8002/api/v1/health` → `{"status":"ok"}`.
+From the repo root:
+
+```powershell
+./scripts/db-init.ps1
+```
+
+It prompts securely for the postgres password, then creates database `turtle_agent_lab`,
+writes `backend/.env`, runs `alembic upgrade head`, and seeds one demo agent
+("Contact Facts" + 3 attributes). Afterwards set `OPENROUTER_API_KEY` in `backend/.env`.
+
+## Running
+
+Double-click **`start-lab.cmd`** — or from PowerShell:
+
+```powershell
+./scripts/dev.ps1
+```
+
+This checks PostgreSQL on `localhost:5432`, refuses to start if port 8002 or 5175 is
+already held, starts the backend + frontend together with `[api]` / `[web]` output,
+and opens http://localhost:5175 once Vite answers. Ctrl+C stops both.
+Health check: `GET http://localhost:8002/api/v1/health` → `{"status":"ok"}`.
+
+Manual path (from `backend/` / `frontend/`):
+
+```powershell
+cd backend
+uv sync
+uv run alembic upgrade head
+uv run python -m app.seed
+uv run uvicorn app.main:app --reload --port 8002
+```
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+## Tests
+
+From `backend/`:
+
+```powershell
+uv run pytest -q
+```
+
+The suite runs against in-memory SQLite (no Postgres needed) with OpenRouter stubbed,
+covering agent/attribute CRUD, runs, per-attribute feedback, and log snapshots.
 
 ## Design
 

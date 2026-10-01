@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.openrouter import complete_json
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog
 from app.db.session import get_db
-from app.modules.runs.schemas import FeedbackCreate, RunCreate
+from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -57,6 +57,23 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     return {"id": run.id, "outputs": outputs}
 
 
+@router.get("", response_model=list[RunOut])
+def list_runs(db: Session = Depends(get_db)):
+    rows = db.query(Run).order_by(Run.created_at.desc()).limit(100).all()
+    return [RunOut(id=r.id, input_type=r.input_type, model=r.model,
+                   agent_ids=r.agent_ids or [], created_at=r.created_at) for r in rows]
+
+
+@router.get("/{run_id}", response_model=RunDetail)
+def get_run(run_id: str, db: Session = Depends(get_db)):
+    r = db.query(Run).filter(Run.id == run_id).first()
+    if not r:
+        raise HTTPException(404, "run not found")
+    return RunDetail(id=r.id, input_type=r.input_type, model=r.model,
+                     agent_ids=r.agent_ids or [], created_at=r.created_at,
+                     input_data=r.input_data, outputs=r.outputs or {})
+
+
 @router.post("/{run_id}/feedback")
 def add_feedback(run_id: str, payload: FeedbackCreate, db: Session = Depends(get_db)):
     run = db.query(Run).filter(Run.id == run_id).first()
@@ -72,11 +89,17 @@ def add_feedback(run_id: str, payload: FeedbackCreate, db: Session = Depends(get
         fb.setdefault(payload.agent_name or "agent", {}).update(
             {payload.attribute_name or "attribute": {"rating": payload.rating, "remarks": payload.remarks}})
         log.feedback = fb
+        # Re-assign so SQLAlchemy flags the JSON column dirty on every backend.
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(log, "feedback")
     db.commit()
     return {"ok": True}
 
 
-@router.get("")
-def list_runs(db: Session = Depends(get_db)):
-    rows = db.query(Run).order_by(Run.created_at.desc()).limit(100).all()
-    return [{"id": r.id, "input_type": r.input_type, "model": r.model, "agent_ids": r.agent_ids, "created_at": r.created_at} for r in rows]
+@router.get("/{run_id}/feedback", response_model=list[FeedbackOut])
+def list_feedback(run_id: str, db: Session = Depends(get_db)):
+    if not db.query(Run).filter(Run.id == run_id).first():
+        raise HTTPException(404, "run not found")
+    rows = db.query(Feedback).filter(Feedback.run_id == run_id).order_by(Feedback.created_at.asc()).all()
+    return [FeedbackOut(id=r.id, run_id=r.run_id, agent_name=r.agent_name,
+                        attribute_name=r.attribute_name, rating=r.rating, remarks=r.remarks) for r in rows]
