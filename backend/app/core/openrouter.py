@@ -1,5 +1,7 @@
 """Minimal OpenRouter client: chat-completions (structured JSON) + model listing."""
 
+import time
+
 import httpx
 
 from app.core.config import settings
@@ -22,8 +24,13 @@ def is_configured() -> bool:
     return bool(settings.openrouter_api_key)
 
 
-async def complete_json(*, model: str, system: str, user: str) -> dict:
-    """Call OpenRouter and return the parsed JSON object from the response."""
+async def complete_json(*, model: str, system: str, user: str) -> tuple[dict, dict]:
+    """Call OpenRouter and return (parsed_json, usage).
+
+    usage is always {"prompt_tokens": int, "completion_tokens": int,
+    "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
+    zeros and never raise.
+    """
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
     async with httpx.AsyncClient(timeout=120) as client:
@@ -47,7 +54,87 @@ async def complete_json(*, model: str, system: str, user: str) -> dict:
     import json as _json
 
     content = data["choices"][0]["message"]["content"]
-    return _json.loads(content) if isinstance(content, str) else content
+    parsed = _json.loads(content) if isinstance(content, str) else content
+    return parsed, _extract_usage(data.get("usage"))
+
+
+def _extract_usage(usage: object) -> dict:
+    """Normalize an OpenRouter ``usage`` block to ints; never raises."""
+
+    def _safe_int(v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+            return n if n >= 0 else 0
+        except Exception:
+            return 0
+
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    prompt = _safe_int(usage.get("prompt_tokens"))
+    completion = _safe_int(usage.get("completion_tokens"))
+    total = _safe_int(usage.get("total_tokens"))
+    return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+
+
+# --- Model pricing (USD per token), 24h in-process cache -------------------
+
+_PRICING_TTL_S = 24 * 3600
+_pricing_cache: dict[str, tuple[float | None, float | None]] = {}
+_pricing_expires_at: float = 0.0
+
+
+def clear_pricing_cache() -> None:
+    """Reset the in-process pricing cache (tests)."""
+    global _pricing_cache, _pricing_expires_at
+    _pricing_cache = {}
+    _pricing_expires_at = 0.0
+
+
+def _parse_price(v: object) -> float | None:
+    try:
+        if v is None:
+            return None
+        f = float(v)  # type: ignore[arg-type]
+        return f if f >= 0 else None
+    except Exception:
+        return None
+
+
+async def get_model_pricing(model: str) -> tuple[float | None, float | None]:
+    """Return (prompt_price, completion_price) USD per token, or (None, None).
+
+    Resolved via a cached ``GET /models`` call (entries carry
+    ``pricing.prompt``/``pricing.completion`` decimal strings per token).
+    On ANY failure returns (None, None) — cost becomes null, never blocks.
+    """
+    global _pricing_cache, _pricing_expires_at
+    try:
+        if not settings.openrouter_api_key:
+            return (None, None)
+        now = time.time()
+        if now < _pricing_expires_at and model in _pricing_cache:
+            return _pricing_cache[model]
+        if now < _pricing_expires_at and _pricing_cache and model not in _pricing_cache:
+            # Cache valid but model absent — genuinely unknown, no refetch.
+            return (None, None)
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"{settings.openrouter_base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            )
+            resp.raise_for_status()
+            items = resp.json().get("data", [])
+        fresh: dict[str, tuple[float | None, float | None]] = {}
+        for m in items or []:
+            if not isinstance(m, dict) or not m.get("id"):
+                continue
+            pricing = m.get("pricing") if isinstance(m.get("pricing"), dict) else {}
+            fresh[m["id"]] = (_parse_price(pricing.get("prompt")), _parse_price(pricing.get("completion")))
+        _pricing_cache = fresh
+        _pricing_expires_at = now + _PRICING_TTL_S
+        return _pricing_cache.get(model, (None, None))
+    except Exception:
+        return (None, None)
 
 
 async def fetch_models() -> tuple[list[dict], bool]:

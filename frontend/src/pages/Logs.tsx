@@ -1,10 +1,35 @@
 import { useState } from "react";
+import { BarChart3, Braces, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
-import { Card } from "../components/ui/Card";
+import { Card, CardTitle } from "../components/ui/Card";
+import { Drawer } from "../components/ui/Drawer";
 import { PageHeader } from "../components/ui/PageHeader";
+
+type AgentUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  input_cost_usd?: number | null;
+  output_cost_usd?: number | null;
+  duration_ms: number;
+  model: string;
+};
+
+type RunUsage = AgentUsage & {
+  per_agent: Record<string, AgentUsage>;
+};
+
+type LogFilters = {
+  client_id?: string;
+  client_name?: string;
+  meeting_title?: string;
+  meeting_date?: string;
+  meeting_id?: string;
+};
 
 type LogRow = {
   id: string;
@@ -13,10 +38,22 @@ type LogRow = {
   input_data: string;
   model: string;
   agent_snapshot: Record<string, { name: string; attributes: { name: string; type: string }[] }>;
+  attribute_snapshot?: Record<string, unknown>;
   outputs: Record<string, unknown>;
   feedback: Record<string, Record<string, { rating: string; remarks: string }>>;
+  usage?: RunUsage;
+  filters?: LogFilters;
   created_at: string;
 };
+
+type PrettyAttr = {
+  value?: unknown;
+  confidence?: unknown;
+  confidence_type?: unknown;
+  evidence?: unknown;
+};
+
+type DrawerTab = "pretty" | "raw" | "analytics";
 
 function fmt(ts: string) {
   try {
@@ -26,16 +63,73 @@ function fmt(ts: string) {
   }
 }
 
+function fmtTokens(n: unknown): string {
+  return typeof n === "number" && Number.isFinite(n) ? n.toLocaleString("en-IN") : "—";
+}
+
+function fmtMs(ms: unknown): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "—";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
+}
+
+function fmtCost(cost: unknown): string {
+  if (typeof cost !== "number" || !Number.isFinite(cost)) return "—";
+  return `$${cost.toFixed(6)}`;
+}
+
+/** Empty/missing usage (old rows) degrades to "—" everywhere. */
+function getUsage(l: LogRow): RunUsage | null {
+  const u = l.usage;
+  if (!u || typeof u !== "object") return null;
+  if (typeof u.total_tokens !== "number") return null;
+  return u;
+}
+
+function filterChips(f: LogFilters | undefined): string[] {
+  if (!f || typeof f !== "object") return [];
+  const chips: string[] = [];
+  const client = f.client_name ?? f.client_id;
+  if (client) chips.push(client);
+  if (f.meeting_title) chips.push(f.meeting_title);
+  if (f.meeting_date) chips.push(f.meeting_date);
+  return chips;
+}
+
+function ratingsCount(l: LogRow): number {
+  return Object.values(l.feedback ?? {}).reduce((n, m) => n + Object.keys(m ?? {}).length, 0);
+}
+
+function prettyEntries(out: unknown): [string, PrettyAttr][] {
+  if (!out || typeof out !== "object") return [];
+  return (Object.entries(out as Record<string, unknown>) as [string, unknown][])
+    .filter(([k]) => k !== "_error")
+    .map(([k, v]) => [k, (v && typeof v === "object" ? v : {}) as PrettyAttr]);
+}
+
 const sectionLabel = "font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]";
 const codeBlock =
   "mt-1.5 max-h-60 overflow-auto rounded-xl bg-[#f1f2f3] p-3 font-mono text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]";
+
+const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
+  { id: "pretty", label: "Pretty", icon: Sparkles },
+  { id: "raw", label: "Raw", icon: Braces },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+];
 
 export default function Logs() {
   const { data = [], isLoading } = useQuery({
     queryKey: ["logs"],
     queryFn: async () => (await api.get("/logs")).data as LogRow[],
   });
-  const [open, setOpen] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [tab, setTab] = useState<DrawerTab>("pretty");
+
+  const active = activeId ? (data.find((l) => l.id === activeId) ?? null) : null;
+
+  function openLog(id: string) {
+    setTab("pretty");
+    setActiveId(id);
+  }
 
   return (
     <div className="grid gap-4">
@@ -57,60 +151,341 @@ export default function Logs() {
       ) : (
         <div className="grid gap-3">
           {data.map((l) => {
-            const expanded = open === l.id;
-            const fbCount = Object.values(l.feedback ?? {}).reduce((n, m) => n + Object.keys(m).length, 0);
+            const fbCount = ratingsCount(l);
+            const usage = getUsage(l);
+            const chips = filterChips(l.filters);
+            const summary =
+              usage == null
+                ? "—"
+                : `${fmtCost(usage.cost_usd)} · ${fmtMs(usage.duration_ms)} · ${fmtTokens(usage.total_tokens)} tokens`;
             return (
-              <Card key={l.id} padded={false} className="p-4">
-                <button onClick={() => setOpen(expanded ? null : l.id)} className="flex w-full flex-wrap items-center gap-2 text-left">
-                  <Badge tone="brand">{l.input_type}</Badge>
-                  <span className="truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{l.model}</span>
-                  <span className="font-heading text-xs text-[#8a8f98]">{fmt(l.created_at)}</span>
-                  <span className="ml-auto flex items-center gap-2 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                    {Object.keys(l.agent_snapshot ?? {}).length} agents · {fbCount} ratings
-                    <span aria-hidden="true" className={cn("transition-transform", expanded && "rotate-180")}>▾</span>
+              <Card
+                key={l.id}
+                padded={false}
+                className="p-4 transition-colors hover:border-[#1d1d1d] dark:hover:border-white/40"
+              >
+                <button
+                  onClick={() => openLog(l.id)}
+                  aria-haspopup="dialog"
+                  className="block w-full cursor-pointer text-left"
+                >
+                  <span className="flex w-full flex-wrap items-center gap-2">
+                    <Badge tone="brand">{l.input_type}</Badge>
+                    <span className="truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{l.model}</span>
+                    <span className="font-heading text-xs text-[#8a8f98]">{fmt(l.created_at)}</span>
+                    <span className="ml-auto flex items-center gap-2 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {Object.keys(l.agent_snapshot ?? {}).length} agents · {fbCount} ratings
+                    </span>
+                  </span>
+                  <span className="mt-2 flex w-full flex-wrap items-center gap-1.5">
+                    {chips.length > 0 && (
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        {chips.map((c) => (
+                          <Badge key={c} tone="neutral">
+                            {c}
+                          </Badge>
+                        ))}
+                      </span>
+                    )}
+                    <span className="ml-auto font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                      {summary}
+                    </span>
                   </span>
                 </button>
-                {expanded && (
-                  <div className="mt-3 grid gap-4 border-t border-[#e5e7eb] pt-3 dark:border-white/10">
-                    <div>
-                      <h3 className={sectionLabel}>Input</h3>
-                      <pre className={cn(codeBlock, "max-h-40 whitespace-pre-wrap font-sans")}>{l.input_data}</pre>
-                    </div>
-                    <div>
-                      <h3 className={sectionLabel}>Agent snapshots (frozen at run time)</h3>
-                      <pre className={codeBlock}>{JSON.stringify(l.agent_snapshot, null, 2)}</pre>
-                    </div>
-                    <div>
-                      <h3 className={sectionLabel}>Outputs</h3>
-                      <pre className={codeBlock}>{JSON.stringify(l.outputs, null, 2)}</pre>
-                    </div>
-                    <div>
-                      <h3 className={sectionLabel}>Feedback</h3>
-                      {fbCount === 0 ? (
-                        <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No ratings yet.</p>
-                      ) : (
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          {Object.entries(l.feedback).map(([agent, attrs]) =>
-                            Object.entries(attrs).map(([attr, f]) => (
-                              <span
-                                key={`${agent}-${attr}`}
-                                title={f.remarks || undefined}
-                                className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
-                              >
-                                {agent} / {attr} {f.rating === "up" ? "👍" : "👎"}
-                              </span>
-                            )),
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
               </Card>
             );
           })}
         </div>
       )}
+
+      {active && (
+        <LogDrawer log={active} tab={tab} onTab={setTab} onClose={() => setActiveId(null)} />
+      )}
+    </div>
+  );
+}
+
+function LogDrawer({
+  log,
+  tab,
+  onTab,
+  onClose,
+}: {
+  log: LogRow;
+  tab: DrawerTab;
+  onTab: (t: DrawerTab) => void;
+  onClose: () => void;
+}) {
+  const fbCount = ratingsCount(log);
+  const usage = getUsage(log);
+  const chips = filterChips(log.filters);
+
+  return (
+    <Drawer
+      onClose={onClose}
+      title={
+        <div className="grid gap-1">
+          <p className="font-heading text-base font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
+            Run {log.run_id.slice(0, 8)}
+          </p>
+          <p className="truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
+          <p className="font-heading text-xs text-[#8a8f98]">{fmt(log.created_at)}</p>
+        </div>
+      }
+    >
+      <div className="grid gap-4 animate-[turtle-fade-in_150ms_ease-out]">
+        <div
+          role="tablist"
+          aria-label="Log detail views"
+          className="flex items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
+        >
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            const selected = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={selected}
+                onClick={() => onTab(t.id)}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
+                  selected
+                    ? "bg-white text-[#1d1d1d] shadow-[0_1px_4px_rgba(29,29,29,0.12)] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                    : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {tab === "pretty" && <PrettyPanel log={log} fbCount={fbCount} />}
+        {tab === "raw" && (
+          <div role="tabpanel">
+            <h3 className={sectionLabel}>Full log row (JSON)</h3>
+            <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(log, null, 2)}</pre>
+          </div>
+        )}
+        {tab === "analytics" && (
+          <AnalyticsPanel log={log} usage={usage} chips={chips} fbCount={fbCount} />
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
+function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
+  return (
+    <div className="grid gap-4" role="tabpanel">
+      <div>
+        <h3 className={sectionLabel}>Input</h3>
+        <pre className={cn(codeBlock, "max-h-40 whitespace-pre-wrap font-sans")}>{log.input_data}</pre>
+      </div>
+      <div className="grid gap-3">
+        {Object.entries(log.outputs ?? {}).map(([agentId, out]) => {
+          const agentName = log.agent_snapshot?.[agentId]?.name ?? agentId;
+          if (out && typeof out === "object" && "_error" in (out as Record<string, unknown>)) {
+            const err = (out as Record<string, unknown>)._error;
+            return (
+              <div
+                key={agentId}
+                className="rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10"
+              >
+                <CardTitle>{agentName}</CardTitle>
+                <p className="mt-1 font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
+                  Agent failed: {String(err)}
+                </p>
+              </div>
+            );
+          }
+          const entries = prettyEntries(out);
+          return (
+            <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+              <CardTitle>{agentName}</CardTitle>
+              <div className="mt-2 grid gap-2">
+                {entries.map(([attr, r]) => (
+                  <div key={attr} className="rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
+                        {attr}
+                      </span>
+                      <Badge tone="brand">{String(r.confidence_type ?? "?")}</Badge>
+                      <span className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                        {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb] dark:bg-white/10">
+                      <div
+                        className="h-1.5 rounded-full bg-[#2fdebf]"
+                        style={{
+                          width: `${typeof r.confidence === "number" ? Math.round(r.confidence * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="mt-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
+                      <span
+                        className={cn(sectionLabel, "inline")}
+                        style={{ fontSize: "inherit" }}
+                      >
+                        Value ·{" "}
+                      </span>
+                      {String(r.value ?? "—")}
+                    </p>
+                    {typeof r.evidence === "string" && r.evidence !== "" && (
+                      <p className="mt-1 border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
+                        “{r.evidence}”
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {entries.length === 0 && (
+                  <p className="font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div>
+        <h3 className={sectionLabel}>Feedback</h3>
+        {fbCount === 0 ? (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No ratings yet.</p>
+        ) : (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {Object.entries(log.feedback).map(([agent, attrs]) =>
+              Object.entries(attrs).map(([attr, f]) => (
+                <span
+                  key={`${agent}-${attr}`}
+                  title={f.remarks || undefined}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                >
+                  {agent} / {attr} {f.rating === "up" ? "👍" : "👎"}
+                </span>
+              )),
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsPanel({
+  log,
+  usage,
+  chips,
+  fbCount,
+}: {
+  log: LogRow;
+  usage: RunUsage | null;
+  chips: string[];
+  fbCount: number;
+}) {
+  const stats: [string, string][] = [
+    ["Model", usage?.model ?? log.model ?? "—"],
+    ["Input tokens", fmtTokens(usage?.prompt_tokens)],
+    ["Output tokens", fmtTokens(usage?.completion_tokens)],
+    ["Total tokens", fmtTokens(usage?.total_tokens)],
+    // Backend ships the input/output cost split (null when pricing unknown).
+    ["Input cost", fmtCost(usage?.input_cost_usd)],
+    ["Output cost", fmtCost(usage?.output_cost_usd)],
+    ["Total cost", fmtCost(usage?.cost_usd)],
+    ["Time taken", fmtMs(usage?.duration_ms)],
+    ["Agents run", String(Object.keys(log.agent_snapshot ?? {}).length)],
+    ["Ratings count", String(fbCount)],
+  ];
+  const perAgent = usage?.per_agent ? Object.entries(usage.per_agent) : [];
+
+  return (
+    <div className="grid gap-4" role="tabpanel">
+      <div>
+        <h3 className={sectionLabel}>Usage stats</h3>
+        <div className="mt-1.5 grid grid-cols-2 gap-2">
+          {stats.map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10"
+            >
+              <p className={sectionLabel}>{label}</p>
+              <p className="mt-1 truncate font-mono text-sm text-[#1d1d1d] dark:text-[#F0EFEC]" title={value}>
+                {value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className={sectionLabel}>Per-agent usage</h3>
+        {perAgent.length === 0 ? (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
+        ) : (
+          <div className="mt-1.5 overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
+            <table className="w-full min-w-[720px] font-sans text-xs">
+              <thead>
+                <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
+                  <th className="px-3 py-2">Agent</th>
+                  <th className="px-3 py-2">Model</th>
+                  <th className="px-3 py-2 text-right">In</th>
+                  <th className="px-3 py-2 text-right">Out</th>
+                  <th className="px-3 py-2 text-right">In-cost</th>
+                  <th className="px-3 py-2 text-right">Out-cost</th>
+                  <th className="px-3 py-2 text-right">Cost</th>
+                  <th className="px-3 py-2 text-right">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perAgent.map(([aid, u]) => (
+                  <tr
+                    key={aid}
+                    className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
+                  >
+                    <td className="px-3 py-2 font-heading font-bold">
+                      {log.agent_snapshot?.[aid]?.name ?? aid}
+                    </td>
+                    <td className="truncate px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.input_cost_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.output_cost_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.cost_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className={sectionLabel}>Applied filters</h3>
+        {chips.length === 0 ? (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
+        ) : (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {chips.map((c) => (
+              <Badge key={c} tone="neutral">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className={sectionLabel}>Run info</h3>
+        <pre className={codeBlock}>
+          {JSON.stringify(
+            { log_id: log.id, run_id: log.run_id, created_at: log.created_at },
+            null,
+            2,
+          )}
+        </pre>
+      </div>
     </div>
   );
 }

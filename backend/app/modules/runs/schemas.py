@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AttributeResult(BaseModel):
@@ -18,6 +18,12 @@ class RunCreate(BaseModel):
     meeting_id: str = ""  # when non-blank, server re-fetches + scrubs the transcript
     agent_ids: list[str] = Field(default_factory=list)
     model: str
+    filters: dict = Field(default_factory=dict)
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def _coerce_filters(cls, v):
+        return v if isinstance(v, dict) else {}
 
 
 class RunOut(BaseModel):

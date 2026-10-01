@@ -1,7 +1,9 @@
+from time import perf_counter
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.openrouter import complete_json
+from app.core.openrouter import complete_json, get_model_pricing
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog
 from app.db.session import get_db
 from app.modules.meetings.router import get_scrubbed_transcript
@@ -39,23 +41,100 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         if payload.input_type not in ("transcription", "messages", "mail"):
             raise HTTPException(422, "input_type must be transcription|messages|mail")
         input_type, input_data = payload.input_type, payload.input_data
+    filters = payload.filters if isinstance(payload.filters, dict) else {}
     agents = db.query(Agent).filter(Agent.id.in_(payload.agent_ids)).all() if payload.agent_ids else []
     if payload.agent_ids and not agents:
         raise HTTPException(404, "no matching agents")
+    wall_start = perf_counter()
     outputs: dict = {}
     snapshots: dict = {}
+    per_agent: dict = {}
+    total_in = 0
+    total_out = 0
     for agent in agents:
         attrs = db.query(Attribute).filter(Attribute.agent_id == agent.id).all()
         snapshots[agent.id] = {
             "name": agent.name, "system_instruction": agent.system_instruction, "prompt": agent.prompt,
             "attributes": [{"name": a.name, "type": a.type, "description": a.description, "json_schema": a.json_schema or {}} for a in attrs],
         }
+        agent_start = perf_counter()
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
         try:
-            outputs[agent.id] = await complete_json(
+            parsed, usage = await complete_json(
                 model=payload.model, system=agent.system_instruction or "Extract structured data.",
                 user=_agent_prompt(agent, attrs, input_type, input_data))
+            outputs[agent.id] = parsed
+            try:
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            except Exception:
+                prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
+            if prompt_tokens < 0:
+                prompt_tokens = 0
+            if completion_tokens < 0:
+                completion_tokens = 0
+            if total_tokens < 0:
+                total_tokens = 0
         except Exception as exc:
             outputs[agent.id] = {"_error": str(exc)}
+            prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
+        duration_ms = (perf_counter() - agent_start) * 1000.0
+        total_in += prompt_tokens
+        total_out += completion_tokens
+        per_agent[agent.id] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": None,
+            "input_cost_usd": None,
+            "output_cost_usd": None,
+            "duration_ms": duration_ms,
+            "model": payload.model,
+        }
+    try:
+        prompt_price, completion_price = await get_model_pricing(payload.model)
+    except Exception:
+        prompt_price, completion_price = None, None
+    total_cost: float | None = None
+    if prompt_price is not None and completion_price is not None:
+        total_cost = 0.0
+        for entry in per_agent.values():
+            cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
+            entry["cost_usd"] = round(cost, 6)
+            total_cost += cost
+        total_cost = round(total_cost, 6)
+    for entry in per_agent.values():
+        if prompt_price is None:
+            entry["input_cost_usd"] = None
+        else:
+            entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
+        if completion_price is None:
+            entry["output_cost_usd"] = None
+        else:
+            entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
+    if prompt_price is None or any(v["input_cost_usd"] is None for v in per_agent.values()):
+        total_input_cost: float | None = None
+    else:
+        total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
+    if completion_price is None or any(v["output_cost_usd"] is None for v in per_agent.values()):
+        total_output_cost: float | None = None
+    else:
+        total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
+    wall_ms = (perf_counter() - wall_start) * 1000.0
+    usage = {
+        "prompt_tokens": total_in,
+        "completion_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "cost_usd": total_cost,
+        "input_cost_usd": total_input_cost,
+        "output_cost_usd": total_output_cost,
+        "duration_ms": wall_ms,
+        "model": payload.model,
+        "per_agent": per_agent,
+    }
     run = Run(input_type=input_type, input_data=input_data, model=payload.model,
               agent_ids=payload.agent_ids, outputs=outputs)
     db.add(run)
@@ -63,9 +142,10 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.refresh(run)
     # Denormalized log row — snapshots only, no FK to agents/attributes.
     db.add(RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
-                  agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={}))
+                  agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
+                  usage=usage, filters=filters))
     db.commit()
-    return {"id": run.id, "outputs": outputs}
+    return {"id": run.id, "outputs": outputs, "usage": usage}
 
 
 @router.get("", response_model=list[RunOut])

@@ -5,8 +5,9 @@ import app.modules.runs.router as runs_router
 
 async def _fake_complete(*, model, system, user):
     assert model == "test-model"
-    return {"email": {"value": "a@b.in", "confidence": 0.9,
-                      "confidence_type": "quoted", "evidence": "mail me at a@b.in"}}
+    return ({"email": {"value": "a@b.in", "confidence": 0.9,
+                      "confidence_type": "quoted", "evidence": "mail me at a@b.in"}},
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
 
 
 def _setup(client, monkeypatch):
