@@ -164,6 +164,62 @@ if (-not (Test-TcpPortOpen -ComputerName '127.0.0.1' -Port 5432 -TimeoutMs 1000)
 try { $uvPath = (Get-Command uv -ErrorAction Stop).Source } catch {
     Write-Error "'uv' was not found on PATH. Install uv (Python 3.13 toolchain) and retry."
 }
+# Fail fast when backend/.env holds the wrong postgres password: TCP 5432
+# being open does not prove the credentials work, and without this check the
+# failure surfaces late as a 500 traceback wall on every DB-backed API call.
+# The probe prints only a masked descriptor (user/host/port/database, never
+# the password or full DATABASE_URL). Auth failure blocks; any other probe
+# problem only warns so a broken check itself cannot stop a healthy backend.
+$DbProbe = @'
+import sys
+import urllib.parse
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
+
+from app.core.config import settings
+
+
+def masked(u):
+    try:
+        p = urllib.parse.urlparse(u)
+        return "user='%s' host='%s' port='%s' database='%s'" % (
+            p.username or '?', p.hostname or '?', p.port or '?',
+            (p.path or '').lstrip('/') or '?')
+    except Exception:
+        return "host='localhost' port='5432'"
+
+
+desc = masked(settings.database_url)
+try:
+    engine = create_engine(
+        settings.database_url, pool_pre_ping=True,
+        connect_args={"connect_timeout": 2})
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+except OperationalError as exc:
+    print(desc)
+    msg = str(exc).lower()
+    markers = ("authentication failed", "password authentication",
+               "invalid password", "pg_hba")
+    sys.exit(2 if any(m in msg for m in markers) else 3)
+except Exception:
+    print(desc)
+    sys.exit(4)
+'@
+Push-Location -LiteralPath $BackendDir
+try {
+    $DbProbeOut = & $uvPath run python -c $DbProbe 2>$null
+    $DbProbeCode = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+if ($DbProbeCode -eq 2) {
+    $DbWhere = ($DbProbeOut | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($DbWhere)) { $DbWhere = "host='localhost' port='5432'" }
+    Write-Error "backend/.env DATABASE_URL credentials rejected by PostgreSQL on localhost:5432 ($DbWhere). Re-run ./scripts/db-init.ps1 and enter the correct postgres password, then start again."
+} elseif ($DbProbeCode -ne 0) {
+    Write-Warning 'Could not verify PostgreSQL credentials (probe did not complete); continuing anyway. If API calls return 503, re-run ./scripts/db-init.ps1 with the correct postgres password.'
+}
 # On Windows `npm` usually resolves to npm.ps1, which Process.Start cannot
 # launch ("not a valid application for this OS platform"); npm.cmd is the one
 # that actually runs. Prefer it, and fall back to whatever npm resolves to.
