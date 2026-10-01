@@ -131,7 +131,7 @@ export default function Attributes() {
     <div className="grid gap-4">
       <PageHeader
         title="Attributes"
-        description="Type, description, allowed values — each mapped to one or more agents."
+        description="Type, description, allowed values — each mapped to one or more agents. Every agent returns the same shape per attribute: value · confidence · confidence_type · evidence (missing attributes are omitted, never null)."
         actions={
           <>
             <select

@@ -105,10 +105,23 @@ def test_requests_persisted_on_success(client, monkeypatch):
 
     req = body["requests"][aid]
     assert req["model"] == "test-model"
-    assert req["messages"][0] == {"role": "system", "content": "be terse"}
-    assert "hello world" in req["messages"][1]["content"]
+    assert req["messages"][0]["role"] == "system"
+    system_text = req["messages"][0]["content"]
+    assert system_text.startswith("be terse")
+    assert "- mood (string): " in system_text
+    assert runs_router.RESULT_CONTRACT in system_text
+    assert req["messages"][1] == {"role": "user", "content": "hello world"}
     assert req["response_format"]["type"] == "json_schema"
-    assert "mood" in req["response_format"]["json_schema"]["schema"]["properties"]
+    assert req["response_format"]["json_schema"]["schema"]["properties"]["mood"] == {
+        "type": "object", "description": "mood",
+        "properties": {
+            "value": {"description": "Extracted value for mood"},
+            "confidence": {"type": "number"},
+            "confidence_type": {"type": "string"},
+            "evidence": {"type": "string"},
+        },
+        "required": ["confidence"], "additionalProperties": False,
+    }
     assert set(req) == {"model", "messages", "response_format"}
 
     logs = client.get("/api/v1/logs").json()
@@ -134,8 +147,11 @@ def test_requests_persisted_on_error_path(client, monkeypatch):
     # The attempted request survives even though the call failed.
     req = body["requests"][aid]
     assert req["model"] == "m"
-    assert req["messages"][0]["content"] == "Extract structured data."
-    assert "hello" in req["messages"][1]["content"]
+    system_text = req["messages"][0]["content"]
+    assert system_text.startswith("Extract structured data.")
+    assert "- mood (string): " in system_text
+    assert runs_router.RESULT_CONTRACT in system_text
+    assert req["messages"][1] == {"role": "user", "content": "hello"}
 
     logs = client.get("/api/v1/logs").json()
     assert logs[0]["outputs"][aid]["_error"] == "provider down"

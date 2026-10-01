@@ -79,13 +79,34 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
     assert set(body["outputs"]) == {aid1, aid2}
     assert len(seen["calls"]) == 2
     for call in seen["calls"]:
+        system_text = call["messages"][0]["content"]
         user_text = call["messages"][1]["content"]
-        # enum options ride along in the user prompt...
-        assert "- mood (enum: good | bad): Caller mood" in user_text
-        # ...and in the structured schema envelope.
+        # user message is the input verbatim — no labels, no wrapping.
+        assert user_text == "hello"
+        # enum options ride along in the SYSTEM prompt...
+        assert "- mood (enum): Caller mood [good | bad]" in system_text
+        # ...alongside the fixed output contract.
+        assert runs_router.RESULT_CONTRACT in system_text
+        # ...and in the structured schema envelope as a value-object.
         props = call["response_format"]["json_schema"]["schema"]["properties"]
-        assert props["mood"] == {"type": "string", "description": "Caller mood",
-                                 "enum": ["good", "bad"]}
+        assert props["mood"] == {
+            "type": "object", "description": "Caller mood",
+            "properties": {
+                "value": {"description": "Extracted value for mood",
+                          "enum": ["good", "bad"]},
+                "confidence": {"type": "number"},
+                "confidence_type": {"type": "string"},
+                "evidence": {"type": "string"},
+            },
+            "required": ["confidence"], "additionalProperties": False,
+        }
+    systems = {c["messages"][0]["content"] for c in seen["calls"]}
+    assert any("sys1" in s for s in systems) and any("sys2" in s for s in systems)
+    # Stored requests mirror the new layout.
+    for aid in (aid1, aid2):
+        req = body["requests"][aid]
+        assert req["messages"][1]["content"] == "hello"
+        assert runs_router.RESULT_CONTRACT in req["messages"][0]["content"]
 
     logs = client.get("/api/v1/logs").json()
     snap = logs[0]["agent_snapshot"]
@@ -102,6 +123,21 @@ def test_build_extraction_schema_mapping():
         return Attribute(name=name, type=type_, description=desc,
                          enum_values=enum_values or [])
 
+    def _value_object(name, description, enum=None):
+        value = {"description": f"Extracted value for {name}"}
+        if enum is not None:
+            value["enum"] = enum
+        return {
+            "type": "object", "description": description,
+            "properties": {
+                "value": value,
+                "confidence": {"type": "number"},
+                "confidence_type": {"type": "string"},
+                "evidence": {"type": "string"},
+            },
+            "required": ["confidence"], "additionalProperties": False,
+        }
+
     schema = build_extraction_schema([
         _attr("s", "string", "A string"),
         _attr("n", "number", "A number"),
@@ -111,13 +147,77 @@ def test_build_extraction_schema_mapping():
     assert schema["type"] == "object"
     assert schema["required"] == []
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["s"] == {"type": "string", "description": "A string"}
-    assert schema["properties"]["n"] == {"type": "number", "description": "A number"}
-    assert schema["properties"]["b"] == {"type": "boolean", "description": "A bool"}
-    assert schema["properties"]["e"] == {"type": "string", "description": "Pick one",
-                                         "enum": ["x", "y"]}
+    assert schema["properties"]["s"] == _value_object("s", "A string")
+    assert schema["properties"]["n"] == _value_object("n", "A number")
+    assert schema["properties"]["b"] == _value_object("b", "A bool")
+    assert schema["properties"]["e"] == _value_object("e", "Pick one", ["x", "y"])
+    # Enum value carries the verbatim enum array; non-enums carry no "enum" key.
+    assert schema["properties"]["e"]["properties"]["value"] == {
+        "description": "Extracted value for e", "enum": ["x", "y"]}
+    for key in ("s", "n", "b"):
+        assert "enum" not in schema["properties"][key]["properties"]["value"]
+    # Empty-enum edge falls back to untyped value.
+    empty = build_extraction_schema([_attr("e2", "enum", "Empty", [])])
+    assert "enum" not in empty["properties"]["e2"]["properties"]["value"]
+    for prop in schema["properties"].values():
+        assert prop["required"] == ["confidence"]
     # No $refs anywhere in the envelope.
     assert "$ref" not in str(schema)
+
+
+def test_result_contract_text():
+    assert runs_router.RESULT_CONTRACT == (
+        'Return a JSON object keyed by attribute name. Each value is an object with "value" '
+        '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|…), '
+        '"evidence" (exact quote from the input). If an attribute is not found in the input, '
+        'omit it from the response — never return null.'
+    )
+
+
+def test_system_layout_user_is_verbatim_input(client, monkeypatch):
+    seen = {}
+
+    async def _capture(payload):
+        seen.setdefault("calls", []).append(payload)
+        return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
+    aid = client.post(
+        "/api/v1/agents", json={"name": "S", "system_instruction": "be precise"}).json()["id"]
+    client.post("/api/v1/attributes", json={
+        "agent_ids": [aid], "name": "email", "type": "string", "description": "Contact email"})
+    raw = "hello a@b.in\nsecond line"
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": raw,
+        "agent_ids": [aid], "model": "m"}).json()
+    assert len(seen["calls"]) == 1
+    system_text = seen["calls"][0]["messages"][0]["content"]
+    assert system_text.startswith("be precise")
+    assert "- email (string): Contact email" in system_text
+    assert runs_router.RESULT_CONTRACT in system_text
+    assert seen["calls"][0]["messages"][1]["content"] == raw
+    assert body["requests"][aid]["messages"][1]["content"] == raw
+    assert body["requests"][aid]["messages"][0]["content"] == system_text
+
+
+def test_system_layout_no_attributes_fallback(client, monkeypatch):
+    seen = {}
+
+    async def _capture(payload):
+        seen.setdefault("calls", []).append(payload)
+        return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
+    aid = client.post("/api/v1/agents", json={"name": "N"}).json()["id"]
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "verbatim hi",
+        "agent_ids": [aid], "model": "m"}).json()
+    system_text = seen["calls"][0]["messages"][0]["content"]
+    assert "- (no attributes defined)" in system_text
+    assert runs_router.RESULT_CONTRACT in system_text
+    assert seen["calls"][0]["messages"][1]["content"] == "verbatim hi"
+    assert seen["calls"][0]["response_format"] == {"type": "json_object"}
+    assert body["requests"][aid]["messages"][1]["content"] == "verbatim hi"
 
 
 def test_build_extraction_schema_empty_falls_back():

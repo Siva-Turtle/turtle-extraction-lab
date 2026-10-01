@@ -19,7 +19,8 @@ export type Agent = {
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-const EMPTY = { name: "", system_instruction: "", input_types: [] as string[], is_enabled: true };
+export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|…), "evidence" (exact quote). Omit attributes not found — never return null.\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
+const EMPTY = { name: "", system_instruction: DEFAULT_SYSTEM_INSTRUCTION, input_types: [] as string[], is_enabled: true };
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -195,6 +196,9 @@ export default function Agents() {
               rows={3}
               className={fieldTextarea}
             />
+            <p className="mt-1 font-sans text-xs font-normal normal-case tracking-normal text-[#8a8f98]">
+              New agents start from the shared default contract above — edit freely.
+            </p>
           </label>
           <div className={cn(fieldLabel, "mt-3")}>
             Input types

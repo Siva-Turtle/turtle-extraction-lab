@@ -12,6 +12,13 @@ from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, Run
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
+RESULT_CONTRACT = (
+    'Return a JSON object keyed by attribute name. Each value is an object with "value" '
+    '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|…), '
+    '"evidence" (exact quote from the input). If an attribute is not found in the input, '
+    'omit it from the response — never return null.'
+)
+
 
 def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
     return (
@@ -23,44 +30,45 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 def _attr_line(a: Attribute) -> str:
+    base = f"- {a.name} ({a.type}): {a.description}"
     if a.type == "enum" and (a.enum_values or []):
-        return f"- {a.name} (enum: {' | '.join(a.enum_values)}): {a.description}"
-    return f"- {a.name} ({a.type}): {a.description}"
+        base += f" [{' | '.join(a.enum_values)}]"
+    return base
 
 
-def _agent_prompt(agent: Agent, attrs: list[Attribute], input_type: str, input_data: str) -> str:
+def _agent_system_content(agent: Agent, attrs: list[Attribute]) -> str:
+    base = agent.system_instruction or "Extract structured data."
     attr_lines = "\n".join(_attr_line(a) for a in attrs) or "- (no attributes defined)"
-    return f"""Input type: {input_type}
-Attributes to extract:
-{attr_lines}
-
-Return a JSON object keyed by attribute name. Each value must be an object with
-"value", "confidence" (0-1), "confidence_type" (quoted|inferred|…), "evidence" (exact quote).
-
-Input data:
-{input_data}"""
+    return f"{base}\n\nAttributes to extract:\n{attr_lines}\n\n{RESULT_CONTRACT}"
 
 
 def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
     """OpenAPI-compatible object schema for this run's attributes.
 
-    All properties optional (required: []), no $refs. Returns None when there
-    are no attributes (caller falls back to legacy json_object mode).
+    Each attribute becomes a value-object ``{"value", "confidence",
+    "confidence_type", "evidence"}`` with ``required: ["confidence"]``.
+    All top-level properties optional (required: []), no $refs. Returns None
+    when there are no attributes (caller falls back to legacy json_object mode).
     """
     if not attrs:
         return None
     properties: dict = {}
     for a in attrs:
-        if a.type == "number":
-            prop: dict = {"type": "number", "description": a.description or ""}
-        elif a.type == "boolean":
-            prop = {"type": "boolean", "description": a.description or ""}
-        elif a.type == "enum":
-            prop = {"type": "string", "description": a.description or "",
-                    "enum": list(a.enum_values or [])}
-        else:
-            prop = {"type": "string", "description": a.description or ""}
-        properties[a.name] = prop
+        value_schema: dict = {"description": f"Extracted value for {a.name}"}
+        if a.type == "enum" and (a.enum_values or []):
+            value_schema["enum"] = list(a.enum_values)
+        properties[a.name] = {
+            "type": "object",
+            "description": a.description or a.name,
+            "properties": {
+                "value": value_schema,
+                "confidence": {"type": "number"},
+                "confidence_type": {"type": "string"},
+                "evidence": {"type": "string"},
+            },
+            "required": ["confidence"],
+            "additionalProperties": False,
+        }
     return {"type": "object", "properties": properties,
             "required": [], "additionalProperties": False}
 
@@ -101,11 +109,11 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
-        system = agent.system_instruction or "Extract structured data."
-        user_prompt = _agent_prompt(agent, attrs, input_type, input_data)
+        system_content = _agent_system_content(agent, attrs)
+        user_content = input_data
         schema = build_extraction_schema(attrs)
         payload_body = build_chat_payload(
-            model=payload.model, system=system, user=user_prompt, json_schema=schema)
+            model=payload.model, system=system_content, user=user_content, json_schema=schema)
         requests[agent.id] = copy.deepcopy(payload_body)
         try:
             parsed, usage = await complete_json_payload(payload_body)
