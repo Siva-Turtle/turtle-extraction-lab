@@ -1,0 +1,164 @@
+import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, ChevronDown } from "lucide-react";
+import { api } from "../../lib/api";
+import { cn } from "../../lib/cn";
+
+export type ModelOption = { id: string; name: string };
+
+/**
+ * Searchable model picker: type to filter, arrows + Enter to pick,
+ * free text always allowed (custom model ids). Mirrors the v2 field style.
+ */
+export function ModelCombobox({
+  value,
+  onChange,
+  onLiveChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onLiveChange?: (live: boolean) => void;
+}): React.JSX.Element {
+  const { data } = useQuery({
+    queryKey: ["models"],
+    queryFn: async () => (await api.get("/models")).data as { live: boolean; models: ModelOption[] },
+    staleTime: 5 * 60 * 1000,
+  });
+  const options = data?.models ?? [];
+  React.useEffect(() => {
+    onLiveChange?.(data?.live ?? false);
+  }, [data?.live, onLiveChange]);
+
+  const [open, setOpen] = React.useState(false);
+  const [highlight, setHighlight] = React.useState(0);
+  const rootRef = React.useRef<HTMLDivElement>(null);
+
+  const q = value.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q))
+    : options;
+  const rows = filtered.slice(0, 50);
+  const exact = options.some((o) => o.id === value.trim());
+  const showCustom = value.trim() !== "" && !exact;
+
+  React.useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  React.useEffect(() => setHighlight(0), [value]);
+
+  function pick(v: string) {
+    onChange(v);
+    setOpen(false);
+  }
+
+  function onKey(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
+      setOpen(true);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const total = rows.length + (showCustom ? 1 : 0);
+      setHighlight((h) => (total === 0 ? 0 : Math.min(h + 1, total - 1)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter" && open) {
+      e.preventDefault();
+      if (highlight < rows.length) pick(rows[highlight].id);
+      else if (showCustom) pick(value.trim());
+    }
+  }
+
+  const customIndex = rows.length; // "use custom" row sits after options
+
+  return (
+    <div ref={rootRef} className="relative mt-1.5">
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKey}
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        placeholder="e.g. anthropic/claude-sonnet-4 — type to search"
+        className="h-11 w-full min-w-0 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 font-sans text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC] dark:placeholder:text-[#898781] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="Toggle model list"
+        onClick={() => setOpen((o) => !o)}
+        className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10"
+      >
+        <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute inset-x-0 top-full z-40 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]"
+        >
+          {rows.map((o, i) => (
+            <li key={o.id} role="option" aria-selected={value.trim() === o.id}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(o.id)}
+                onMouseEnter={() => setHighlight(i)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm",
+                  i === highlight
+                    ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                    : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                )}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-xs">{o.id}</span>
+                  {o.name !== o.id && (
+                    <span className="block truncate text-xs text-[#4a5058] dark:text-[#C3C2B7]">{o.name}</span>
+                  )}
+                </span>
+                {value.trim() === o.id && <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />}
+              </button>
+            </li>
+          ))}
+          {showCustom && (
+            <li role="option" aria-selected={false}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(value.trim())}
+                onMouseEnter={() => setHighlight(customIndex)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]",
+                  highlight === customIndex && "bg-[#e8fbf6] dark:bg-white/10",
+                )}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-mono text-xs">Use “{value.trim()}”</span>
+                  <span className="block text-xs text-[#4a5058] dark:text-[#C3C2B7]">custom model id</span>
+                </span>
+              </button>
+            </li>
+          )}
+          {rows.length === 0 && !showCustom && (
+            <li className="px-3 py-2 font-sans text-sm text-[#8a8f98]">No matches — keep typing for a custom id.</li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}

@@ -7,6 +7,7 @@ import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
+import { ModelCombobox } from "../components/ui/Combobox";
 import { fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
@@ -19,6 +20,22 @@ type AttrResult = {
 };
 
 type RunOutputs = Record<string, Record<string, AttrResult> & { _error?: string }>;
+
+/** Answers "is the API key loaded" without ever exposing the key itself. */
+function KeyStatusBadge() {
+  const { data } = useQuery({
+    queryKey: ["lab-config"],
+    queryFn: async () =>
+      (await api.get("/config")).data as { openrouter_configured: boolean; db_ok: boolean },
+    staleTime: 60 * 1000,
+  });
+  if (!data) return null;
+  return data.openrouter_configured ? (
+    <Badge tone="success">key set</Badge>
+  ) : (
+    <Badge tone="danger">no key</Badge>
+  );
+}
 
 function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: string; attrName: string }) {
   const qc = useQueryClient();
@@ -96,6 +113,7 @@ export default function TestLab() {
   const [inputType, setInputType] = useState("transcription");
   const [inputData, setInputData] = useState("");
   const [model, setModel] = useState("");
+  const [modelsLive, setModelsLive] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<RunOutputs | null>(null);
@@ -147,15 +165,18 @@ export default function TestLab() {
                 <option value="mail">mail</option>
               </select>
             </label>
-            <label className={fieldLabel}>
-              OpenRouter model
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. anthropic/claude-sonnet-4"
-                className={fieldInput}
-              />
-            </label>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={fieldLabel}>OpenRouter model</span>
+                <KeyStatusBadge />
+              </div>
+              <ModelCombobox value={model} onChange={setModel} onLiveChange={setModelsLive} />
+              <p className="mt-1 font-sans text-xs text-[#8a8f98]">
+                {modelsLive
+                  ? "Live list from OpenRouter."
+                  : "Curated list — set OPENROUTER_API_KEY in backend/.env for the live catalogue. Any typed id still works."}
+              </p>
+            </div>
           </div>
           <label className={fieldLabel}>
             Input data (exact transcription / message / mail)

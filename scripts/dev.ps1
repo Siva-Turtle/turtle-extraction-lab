@@ -143,6 +143,14 @@ if (-not (Test-Path -LiteralPath $FrontendDir -PathType Container)) {
 
 Import-DotEnvFile -Path $DotEnvPath
 
+# Fail fast when the backend was never configured: without backend/.env the
+# API falls back to a placeholder DATABASE_URL and every DB call 500s with a
+# password-auth wall of traceback. One command fixes it (prompts for the
+# postgres password itself).
+if (-not (Test-Path -LiteralPath $DotEnvPath -PathType Leaf)) {
+    Write-Error "backend/.env not found. Run ./scripts/db-init.ps1 once first (it creates the turtle_agent_lab database, writes backend/.env, migrates and seeds), then start the lab again."
+}
+
 # Idempotency: clear stale lab orphans first, then refuse duplicates.
 Stop-StaleBackend
 Assert-PortFree -Port $ApiPort
