@@ -117,20 +117,50 @@ try {
     Write-Host '==> Step 2/4: writing backend/.env from .env.example'
     $encoded = [System.Uri]::EscapeDataString($plainPassword)
     $databaseUrl = "DATABASE_URL=postgresql+psycopg://${DbUser}:${encoded}@${DbHost}:${Port}/${DbName}"
+    $oldMap = @{}
+    $oldOrder = @()
+    $hadOldEnv = Test-Path -LiteralPath $EnvFile -PathType Leaf
+    if ($hadOldEnv) {
+        Copy-Item -LiteralPath $EnvFile -Destination "$EnvFile.bak" -Force
+        Write-Host "    backed up existing .env to $EnvFile.bak."
+        foreach ($oldLine in (Get-Content -LiteralPath $EnvFile)) {
+            if ($oldLine -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
+                $oldKey = $Matches[1]
+                if (-not $oldMap.ContainsKey($oldKey)) {
+                    $oldMap[$oldKey] = $oldLine
+                    $oldOrder += $oldKey
+                }
+            }
+        }
+    }
     $lines = Get-Content -LiteralPath $EnvExample
+    $templateKeys = @{}
     $replaced = $false
     $out = foreach ($line in $lines) {
-        if ($line -match '^\s*DATABASE_URL\s*=') {
-            $replaced = $true
-            $databaseUrl
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
+            $templateKey = $Matches[1]
+            if (-not $templateKeys.ContainsKey($templateKey)) { $templateKeys[$templateKey] = $true }
+            if ($templateKey -eq 'DATABASE_URL') {
+                $replaced = $true
+                $databaseUrl
+            } elseif ($oldMap.ContainsKey($templateKey)) {
+                $oldMap[$templateKey]
+            } else {
+                $line
+            }
         } else {
             $line
         }
     }
     if (-not $replaced) { $out += $databaseUrl }
+    foreach ($oldKey in $oldOrder) {
+        if (($oldKey -ne 'DATABASE_URL') -and (-not $templateKeys.ContainsKey($oldKey))) {
+            $out += $oldMap[$oldKey]
+        }
+    }
     Set-Content -LiteralPath $EnvFile -Value $out -Encoding UTF8
     Write-Host "    wrote $EnvFile (DATABASE_URL host/port/database set; password not shown)."
-    Write-Host '    NOTE: set OPENROUTER_API_KEY in backend/.env before running test agents.'
+    Write-Host '    NOTE: existing keys (e.g. OPENROUTER_API_KEY) are preserved on rerun; only DATABASE_URL is updated. A backup is at backend/.env.bak.'
 } finally {
     $plainPassword = $null
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
