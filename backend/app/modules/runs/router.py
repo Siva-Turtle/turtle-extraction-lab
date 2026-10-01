@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.openrouter import complete_json
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog
 from app.db.session import get_db
+from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -26,8 +27,18 @@ Input data:
 
 @router.post("")
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
-    if payload.input_type not in ("transcription", "messages", "mail"):
-        raise HTTPException(422, "input_type must be transcription|messages|mail")
+    meeting_id = (payload.meeting_id or "").strip()
+    if meeting_id:
+        # meeting_id wins: server re-fetches the transcript and scrubs it —
+        # client-sent input_data/input_type are ignored entirely.
+        _task, scrubbed = get_scrubbed_transcript(meeting_id)  # 404/503 propagate
+        input_type, input_data = "transcription", scrubbed
+    else:
+        if not (payload.input_data or "").strip():
+            raise HTTPException(422, "input_data must be non-blank or provide meeting_id")
+        if payload.input_type not in ("transcription", "messages", "mail"):
+            raise HTTPException(422, "input_type must be transcription|messages|mail")
+        input_type, input_data = payload.input_type, payload.input_data
     agents = db.query(Agent).filter(Agent.id.in_(payload.agent_ids)).all() if payload.agent_ids else []
     if payload.agent_ids and not agents:
         raise HTTPException(404, "no matching agents")
@@ -42,10 +53,10 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         try:
             outputs[agent.id] = await complete_json(
                 model=payload.model, system=agent.system_instruction or "Extract structured data.",
-                user=_agent_prompt(agent, attrs, payload.input_type, payload.input_data))
+                user=_agent_prompt(agent, attrs, input_type, input_data))
         except Exception as exc:
             outputs[agent.id] = {"_error": str(exc)}
-    run = Run(input_type=payload.input_type, input_data=payload.input_data, model=payload.model,
+    run = Run(input_type=input_type, input_data=input_data, model=payload.model,
               agent_ids=payload.agent_ids, outputs=outputs)
     db.add(run)
     db.commit()

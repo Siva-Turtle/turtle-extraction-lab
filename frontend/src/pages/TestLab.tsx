@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Play, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { cn } from "../lib/cn";
@@ -8,7 +8,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { ModelCombobox } from "../components/ui/Combobox";
-import { fieldInput, fieldLabel, fieldTextarea } from "../components/ui/Modal";
+import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
@@ -29,7 +29,7 @@ type MeetingSummary = {
   duration_min: number;
   participants: string[];
 };
-type TranscriptResponse = { id: string; title: string; date: string; transcription: string };
+type TranscriptResponse = { id: string; title: string; date: string; transcription: string; scrubbed: boolean };
 
 /** Answers "is the API key loaded" without ever exposing the key itself. */
 function KeyStatusBadge() {
@@ -303,7 +303,6 @@ function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: s
 }
 
 export default function TestLab() {
-  const [inputData, setInputData] = React.useState("");
   const [model, setModel] = React.useState("");
   const [modelsLive, setModelsLive] = React.useState(false);
   const [selected, setSelected] = React.useState<string[]>([]);
@@ -313,6 +312,7 @@ export default function TestLab() {
   const [meetingTitle, setMeetingTitle] = React.useState("");
   const [meetingDate, setMeetingDate] = React.useState("");
   const [meetingId, setMeetingId] = React.useState("");
+  const [previewOpen, setPreviewOpen] = React.useState(false);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -380,11 +380,6 @@ export default function TestLab() {
     if (transcriptQuery.error) toast.error(`Could not load transcript: ${serverDetail(transcriptQuery.error)}`);
   }, [transcriptQuery.error]);
 
-  React.useEffect(() => {
-    const t = transcriptQuery.data?.transcription;
-    if (meetingId !== "" && typeof t === "string" && t !== "") setInputData(t);
-  }, [transcriptQuery.data, meetingId]);
-
   function toggle(id: string) {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
@@ -393,31 +388,31 @@ export default function TestLab() {
     setClientId(v);
     setMeetingTitle("");
     setMeetingId("");
-    setInputData("");
+    setPreviewOpen(false);
   }
 
   function handleTitleChange(v: string) {
     setMeetingTitle(v);
     setMeetingId("");
-    setInputData("");
+    setPreviewOpen(false);
   }
 
   function handleDateChange(v: string) {
     setMeetingDate(v);
     setMeetingId("");
-    setInputData("");
+    setPreviewOpen(false);
   }
 
   function handleMeetingChange(v: string) {
     setMeetingId(v);
-    setInputData("");
+    setPreviewOpen(false);
   }
 
   const run = useMutation({
     mutationFn: async () =>
       (await api.post("/runs", {
         input_type: "transcription",
-        input_data: inputData,
+        meeting_id: meetingId,
         agent_ids: selected,
         model,
       })).data as { id: string; outputs: RunOutputs },
@@ -430,7 +425,9 @@ export default function TestLab() {
   });
 
   function canRun() {
-    if (!inputData.trim()) return "Paste the input data first";
+    if (!meetingId) return "Select a meeting first";
+    if (transcriptQuery.isFetching || transcriptQuery.isLoading) return "Transcript still loading…";
+    if (!transcriptQuery.data?.transcription?.trim()) return "Transcript still loading…";
     if (!model.trim()) return "Enter an OpenRouter model id";
     if (selected.length === 0) return "Select at least one agent";
     return null;
@@ -460,7 +457,6 @@ export default function TestLab() {
   const dateDisabled = clientId === "" || clientsDetail !== null;
   const meetingDisabled =
     clientId === "" || meetingsQuery.isLoading || clientsDetail !== null || meetingsDetail !== null;
-  const transcriptLoading = meetingId !== "" && transcriptQuery.isFetching;
 
   return (
     <div className="grid gap-4">
@@ -550,7 +546,18 @@ export default function TestLab() {
             </p>
           )}
           <div>
-            <span className={fieldLabel}>Meeting</span>
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <span className={fieldLabel}>Meeting</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={transcriptQuery.isFetching}
+                disabled={!transcriptQuery.data?.transcription?.trim()}
+                onClick={() => setPreviewOpen(true)}
+              >
+                <Eye className="h-4 w-4" aria-hidden="true" /> Preview scrubbed transcription
+              </Button>
+            </div>
             <FilterCombobox
               value={meetingId}
               onChange={handleMeetingChange}
@@ -568,20 +575,9 @@ export default function TestLab() {
               ariaLabel="Meeting"
             />
             <p className="mt-1 font-sans text-xs text-[#8a8f98]">
-              Selecting a meeting pulls its transcription below — the text stays editable.
+              Selecting a meeting pulls its transcription — PII-scrubbed automatically; only scrubbed text reaches the model.
             </p>
           </div>
-          <label className={fieldLabel}>
-            Input data (transcription — editable after pull)
-            <textarea
-              value={inputData}
-              onChange={(e) => setInputData(e.target.value)}
-              rows={6}
-              disabled={transcriptLoading}
-              placeholder={transcriptLoading ? "Loading transcript…" : "Select a meeting above to pull its transcription…"}
-              className={cn(fieldTextarea, transcriptLoading && "opacity-70")}
-            />
-          </label>
           <div className={fieldLabel}>
             Agents to run
             {enabledAgents.length === 0 && (
@@ -620,6 +616,35 @@ export default function TestLab() {
           </div>
         </div>
       </Card>
+
+      {previewOpen && (
+        <Modal
+          title={
+            transcriptQuery.data
+              ? `${transcriptQuery.data.title} — ${formatMeetingDate(transcriptQuery.data.date)}`
+              : "Scrubbed transcription"
+          }
+          onClose={() => setPreviewOpen(false)}
+          wide
+        >
+          {transcriptQuery.isFetching || transcriptQuery.isLoading ? (
+            <p className="font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]">Loading transcription…</p>
+          ) : transcriptQuery.error ? (
+            <p role="alert" className="font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
+              Could not load transcript: {serverDetail(transcriptQuery.error)}
+            </p>
+          ) : (
+            <div className="grid gap-3">
+              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-xl border border-[#e5e7eb] bg-[#f1f2f3] p-4 font-sans text-sm text-[#1d1d1d] dark:border-white/10 dark:bg-white/5 dark:text-[#F0EFEC]">
+                {transcriptQuery.data?.transcription ?? ""}
+              </pre>
+              <p className="font-sans text-xs text-[#8a8f98]">
+                PII scrubbed automatically — only this text reaches the model.
+              </p>
+            </div>
+          )}
+        </Modal>
+      )}
 
       {outputs && runId && (
         <Card>

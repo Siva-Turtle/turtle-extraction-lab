@@ -29,3 +29,5 @@ class TranscriptOut(BaseModel):
     title: str
     date: str
     transcription: str
+    # Always scrubbed server-side; defaults True so old clients still parse.
+    scrubbed: bool = True

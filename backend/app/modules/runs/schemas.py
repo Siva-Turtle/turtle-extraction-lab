@@ -13,8 +13,9 @@ class AttributeResult(BaseModel):
 
 
 class RunCreate(BaseModel):
-    input_type: str  # transcription | messages | mail
-    input_data: str
+    input_type: str = ""  # transcription | messages | mail (ignored when meeting_id wins)
+    input_data: str = ""  # ignored when meeting_id present — never trust client text
+    meeting_id: str = ""  # when non-blank, server re-fetches + scrubs the transcript
     agent_ids: list[str] = Field(default_factory=list)
     model: str
 

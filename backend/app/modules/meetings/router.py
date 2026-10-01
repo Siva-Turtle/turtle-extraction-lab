@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.config import settings
+from app.core.scrub import mask_for_classifier
 from app.modules.meetings.schemas import (
     ClientOut,
     MeetingsOut,
@@ -204,6 +205,87 @@ def _fetch_task_by_id(meeting_id: str) -> dict | None:
             client.close()
         except Exception:
             pass
+
+
+def _fetch_client_doc_by_ref(ref: Any) -> dict | None:
+    """Fetch the FULL clients doc for a task's `client` ref (ObjectId or str).
+
+    Unlike _fetch_mongo_client_doc (projected lookup by clientId), this
+    resolves the task -> client link and returns the whole doc so the scrub
+    layer can use its name/phone/email fields. Read-only: find_one only.
+    """
+    uri = _require_mongo_uri()
+    try:
+        client = _mongo_client(uri)
+    except Exception:
+        raise _mongo_503()
+    try:
+        coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
+        candidates: list = []
+        if ref is not None and ref != "":
+            candidates.append(ref)
+            s = str(ref)
+            if not any(c == s for c in candidates):
+                candidates.append(s)
+            try:
+                from bson import ObjectId
+
+                try:
+                    oid = ref if isinstance(ref, ObjectId) else ObjectId(s)
+                except Exception:
+                    oid = None
+                if oid is not None and not any(c == oid for c in candidates):
+                    candidates.append(oid)
+            except Exception:
+                pass
+        for cand in candidates:
+            try:
+                doc = coll.find_one({"_id": cand})
+            except Exception:
+                continue
+            if isinstance(doc, dict):
+                return doc
+        return None
+    except HTTPException:
+        raise
+    except Exception:
+        raise _mongo_503()
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def get_scrubbed_transcript(meeting_id: str) -> tuple[dict, str]:
+    """Shared helper: task's transcript text, PII-scrubbed. Raises 404/503.
+
+    Chain: fullTranscript -> detailedNotes -> summary. The task's client doc
+    (tasks.client ObjectId/str -> clients doc) feeds the known-contact pass;
+    unknown/absent clients fall back to the generic pass only. Raw text must
+    never leave the backend — both the transcript endpoint and runs use this.
+    """
+    task = _fetch_task_by_id(meeting_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="transcript not found")
+    text: str | None = None
+    for key in ("fullTranscript", "detailedNotes", "summary"):
+        v = task.get(key)
+        if isinstance(v, str) and v.strip():
+            text = v
+            break
+    if text is None:
+        raise HTTPException(status_code=404, detail="transcript not found")
+    client_doc: dict | None = None
+    ref = task.get("client")
+    if ref is not None and ref != "":
+        try:
+            client_doc = _fetch_client_doc_by_ref(ref)
+        except HTTPException:
+            raise
+        except Exception:
+            client_doc = None
+    return task, mask_for_classifier(text, client_doc)
 
 
 def _client_task_ids(doc: dict) -> list:
@@ -471,20 +553,11 @@ def list_meetings(
 @router.get("/{meeting_id}/transcript", response_model=TranscriptOut)
 def get_transcript(meeting_id: str):
     _require_mongo_uri()
-    task = _fetch_task_by_id(meeting_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="transcript not found")
-    text: str | None = None
-    for key in ("fullTranscript", "detailedNotes", "summary"):
-        v = task.get(key)
-        if isinstance(v, str) and v.strip():
-            text = v
-            break
-    if text is None:
-        raise HTTPException(status_code=404, detail="transcript not found")
+    task, scrubbed = get_scrubbed_transcript(meeting_id)
     return TranscriptOut(
         id=str(task.get("_id") or meeting_id),
         title=str(task.get("title") or ""),
         date=_task_date_iso(task),
-        transcription=text,
+        transcription=scrubbed,
+        scrubbed=True,
     )
