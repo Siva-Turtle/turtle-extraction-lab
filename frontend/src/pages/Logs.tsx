@@ -293,7 +293,6 @@ export default function Logs() {
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
-  const [selectedMeetingTypes, setSelectedMeetingTypes] = useState<string[]>([]);
   const [selectedMeetingTitles, setSelectedMeetingTitles] = useState<string[]>([]);
 
   const { data: agents = [] } = useQuery({
@@ -316,20 +315,19 @@ export default function Logs() {
 
   const hasServerFilters =
     selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0 ||
-    selectedClients.length > 0 || selectedMeetingTypes.length > 0 || selectedMeetingTitles.length > 0;
+    selectedClients.length > 0 || selectedMeetingTitles.length > 0;
 
   const params: LogsQueryParams = {};
   if (selectedModels.length > 0) params.models = selectedModels;
   if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
   if (selectedDates.length > 0) params.dates = selectedDates;
   if (selectedClients.length > 0) params.clients = selectedClients;
-  if (selectedMeetingTypes.length > 0) params.meeting_types = selectedMeetingTypes;
   if (selectedMeetingTitles.length > 0) params.meeting_titles = selectedMeetingTitles;
 
   // Server-filtered list (AND across groups); reused only while filters are set.
   const { data: serverLogs, isLoading: serverLoading } = useQuery({
     queryKey: ["logs", selectedModels, selectedAgents, selectedDates,
-      selectedClients, selectedMeetingTypes, selectedMeetingTitles],
+      selectedClients, selectedMeetingTitles],
     queryFn: async () =>
       (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
     enabled: hasServerFilters,
@@ -385,10 +383,6 @@ export default function Logs() {
     () => distinctLogOptions(allLogs, (l) => l.client),
     [allLogs],
   );
-  const meetingTypeOptions = React.useMemo(
-    () => distinctLogOptions(allLogs, (l) => l.meeting_type),
-    [allLogs],
-  );
   const meetingTitleOptions = React.useMemo(
     () => distinctLogOptions(allLogs, (l) => l.meeting_title),
     [allLogs],
@@ -408,9 +402,9 @@ export default function Logs() {
       <PageHeader title="Run logs" />
 
       <Card>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className={fieldLabel}>
-            Model
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <span className={fieldLabel}>Model</span>
             <MultiSelectFilter
               options={modelOptions}
               selected={selectedModels}
@@ -421,8 +415,8 @@ export default function Logs() {
               emptyText={modelOptions.length === 0 ? "No models yet." : "No matches."}
             />
           </div>
-          <div className={fieldLabel}>
-            Agent
+          <div>
+            <span className={fieldLabel}>Agent</span>
             <MultiSelectFilter
               options={agentOptions}
               selected={selectedAgents}
@@ -433,8 +427,8 @@ export default function Logs() {
               emptyText={agents.length === 0 ? "No agents yet." : "No matches."}
             />
           </div>
-          <div className={fieldLabel}>
-            Date
+          <div>
+            <span className={fieldLabel}>Date</span>
             <MultiSelectFilter
               options={dateOptions}
               selected={selectedDates}
@@ -445,8 +439,8 @@ export default function Logs() {
               emptyText={dateOptions.length === 0 ? "No dates yet." : "No matches."}
             />
           </div>
-          <div className={fieldLabel}>
-            Client
+          <div>
+            <span className={fieldLabel}>Client</span>
             <MultiSelectFilter
               options={clientOptions}
               selected={selectedClients}
@@ -457,20 +451,8 @@ export default function Logs() {
               emptyText={clientOptions.length === 0 ? "No clients yet." : "No matches."}
             />
           </div>
-          <div className={fieldLabel}>
-            Meeting type
-            <MultiSelectFilter
-              options={meetingTypeOptions}
-              selected={selectedMeetingTypes}
-              onChange={setSelectedMeetingTypes}
-              placeholder="All meeting types"
-              ariaLabel="Filter by meeting type"
-              filterPlaceholder="Search meeting types…"
-              emptyText={meetingTypeOptions.length === 0 ? "No meeting types yet." : "No matches."}
-            />
-          </div>
-          <div className={fieldLabel}>
-            Meeting title
+          <div>
+            <span className={fieldLabel}>Meeting title</span>
             <MultiSelectFilter
               options={meetingTitleOptions}
               selected={selectedMeetingTitles}
@@ -481,8 +463,8 @@ export default function Logs() {
               emptyText={meetingTitleOptions.length === 0 ? "No meeting titles yet." : "No matches."}
             />
           </div>
-          <div className={fieldLabel}>
-            Input type
+          <div>
+            <span className={fieldLabel}>Input type</span>
             <InputTypeFilter value={inputFilter} onChange={setInputFilter} />
           </div>
         </div>
@@ -706,14 +688,13 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
-    ["Meeting type", (log.meeting_type ?? "").trim() || "Unknown"],
     ["Meeting title", (log.meeting_title ?? "").trim() || "Unknown"],
   ];
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Meeting</h3>
-        <div className="mt-1.5 grid min-w-0 max-w-full gap-2 sm:grid-cols-3">
+        <div className="mt-1.5 grid min-w-0 max-w-full gap-2 sm:grid-cols-2">
           {meetingDetails.map(([label, value]) => {
             const unknown = value === "Unknown";
             return (
