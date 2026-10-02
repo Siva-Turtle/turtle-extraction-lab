@@ -1,14 +1,16 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Check, ChevronDown, Eye, Play } from "lucide-react";
 import { toast } from "sonner";
 import { api, meetingTypeOf, REASONING_EFFORTS } from "../lib/api";
 import type { ModelInfo, ModelReasoning } from "../lib/api";
+import { selectedAgentsOf, serverDetail } from "../lib/format";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { ModelCombobox, MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
+import { ThumbButtons } from "../components/ui/ThumbButtons";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
 import type { Agent } from "./Agents";
 
@@ -20,17 +22,6 @@ type AttrResult = {
 };
 
 type RunOutputs = Record<string, Record<string, AttrResult> & { _error?: string }>;
-
-/** Identifier-kind output shape: {selected_agents: string[]}. Null when not identifier. */
-function selectedAgentsOf(out: unknown): string[] | null {
-  if (!out || typeof out !== "object" || Array.isArray(out)) return null;
-  const v = (out as Record<string, unknown>).selected_agents;
-  if (!Array.isArray(v)) return null;
-  return v
-    .filter((x): x is string => typeof x === "string")
-    .map((s) => s.trim())
-    .filter((s) => s !== "");
-}
 
 type MeetingClient = { id: string; name: string };
 type MeetingSummary = {
@@ -56,18 +47,6 @@ function KeyStatusBadge() {
   ) : (
     <Badge tone="danger">no key</Badge>
   );
-}
-
-function serverDetail(e: unknown): string {
-  if (typeof e === "object" && e !== null && "response" in e) {
-    const resp = (e as { response?: { data?: { detail?: unknown } } }).response;
-    if (resp && typeof resp.data === "object" && resp.data !== null && "detail" in resp.data) {
-      const d = (resp.data as { detail?: unknown }).detail;
-      if (typeof d === "string" && d.trim() !== "") return d;
-    }
-  }
-  if (e instanceof Error && e.message) return e.message;
-  return "Request failed";
 }
 
 function formatMeetingDate(iso: string): string {
@@ -386,34 +365,14 @@ function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: s
     );
   }
 
+  function handleThumb(next: "up" | "down" | null) {
+    if (next === null) return;
+    setRating(next);
+  }
+
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e5e7eb] pt-3 dark:border-white/10">
-      <button
-        onClick={() => setRating("up")}
-        title="Thumbs up"
-        aria-pressed={rating === "up"}
-        className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
-          rating === "up"
-            ? "border-[#22c55e] bg-[#e9f9ef] text-[#15803d]"
-            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#22c55e] dark:border-white/10 dark:text-[#C3C2B7]",
-        )}
-      >
-        <ThumbsUp className="h-4 w-4" aria-hidden="true" />
-      </button>
-      <button
-        onClick={() => setRating("down")}
-        title="Thumbs down"
-        aria-pressed={rating === "down"}
-        className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
-          rating === "down"
-            ? "border-[#ef4444] bg-[#fdecec] text-[#b91c1c]"
-            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#ef4444] dark:border-white/10 dark:text-[#C3C2B7]",
-        )}
-      >
-        <ThumbsDown className="h-4 w-4" aria-hidden="true" />
-      </button>
+      <ThumbButtons value={rating} onChange={handleThumb} />
       <input
         value={remarks}
         onChange={(e) => setRemarks(e.target.value)}

@@ -10,10 +10,12 @@ export function Drawer({
   title,
   onClose,
   children,
+  closeLabel = "Close log details",
 }: {
   title: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
+  closeLabel?: string;
 }): React.JSX.Element {
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -56,7 +58,7 @@ export function Drawer({
           <button
             autoFocus
             onClick={onClose}
-            aria-label="Close log details"
+            aria-label={closeLabel}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
           >
             <X className="h-4 w-4" aria-hidden="true" />
