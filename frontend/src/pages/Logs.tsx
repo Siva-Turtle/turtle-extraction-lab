@@ -540,13 +540,6 @@ function LogDetail({
           Back to logs
         </Button>
       </div>
-      <div className="grid min-w-0 max-w-full gap-1">
-        <p className="font-heading text-base font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-          Run {log.run_id.slice(0, 8)}
-        </p>
-        <p className="max-w-full break-all font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
-        <p className="font-heading text-xs text-[#8a8f98]">{fmt(log.created_at)}</p>
-      </div>
       <div
         role="tablist"
         aria-label="Log detail views"
