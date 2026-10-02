@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
-import { ModelCombobox, MultiSelectFilter } from "../components/ui/Combobox";
+import { ModelCombobox, MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
@@ -634,7 +634,7 @@ export default function TestLab() {
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <span className={fieldLabel}>Client</span>
-              <FilterCombobox
+              <SingleSelectFilter
                 value={clientId}
                 onChange={handleClientChange}
                 options={clientOptions}
@@ -647,6 +647,8 @@ export default function TestLab() {
                 }
                 disabled={clientDisabled}
                 ariaLabel="Client"
+                filterPlaceholder="Search clients…"
+                emptyText={clientOptions.length === 0 ? "No clients yet." : "No matches."}
               />
             </div>
             <div>

@@ -238,6 +238,191 @@ const multiList =
   "absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-2xl border border-[#e5e7eb] bg-white p-1.5 shadow-[0_8px_24px_rgba(29,29,29,0.08)] animate-[turtle-fade-in_120ms_ease-out] dark:border-white/10 dark:bg-[#1a1a1a]";
 
 /**
+ * Searchable single-select filter — same v2 field + dropdown styling as
+ * MultiSelectFilter. A text input filters the option list case-insensitively;
+ * picking one option sets the single value and closes the list. Labels render
+ * as stored (no case forcing).
+ */
+export function SingleSelectFilter({
+  options,
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  filterPlaceholder = "Filter…",
+  emptyText = "No matches.",
+  disabled,
+}: {
+  options: MultiSelectOption[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+  filterPlaceholder?: string;
+  emptyText?: string;
+  disabled?: boolean;
+}): React.JSX.Element {
+  const [open, setOpen] = React.useState(false);
+  const [filter, setFilter] = React.useState("");
+  const [highlight, setHighlight] = React.useState(0);
+
+  const selected = options.find((o) => o.value === value);
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? options.filter(
+        (o) =>
+          o.label.toLowerCase().includes(q) ||
+          o.value.toLowerCase().includes(q) ||
+          (o.sub?.toLowerCase().includes(q) ?? false),
+      )
+    : options;
+
+  const hasClear = value !== "";
+  const total = visible.length + (hasClear ? 1 : 0);
+
+  React.useEffect(() => {
+    setHighlight(0);
+  }, [filter, visible.length, value]);
+
+  function pick(v: string) {
+    onChange(v);
+    setOpen(false);
+    setFilter("");
+  }
+
+  function onTriggerKey(e: React.KeyboardEvent) {
+    if (disabled) return;
+    if (e.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (!open && (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      setOpen(true);
+    }
+  }
+
+  function onListKey(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => (total === 0 ? 0 : Math.min(h + 1, total - 1)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlight < visible.length && visible[highlight]) pick(visible[highlight].value);
+      else if (hasClear) pick("");
+    }
+  }
+
+  return (
+    <div className="relative mt-1.5">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKey}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className={cn(multiTrigger, "disabled:cursor-not-allowed disabled:opacity-50")}
+      >
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-left",
+            selected ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98] dark:text-[#898781]",
+          )}
+        >
+          {selected ? selected.label : placeholder}
+        </span>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] dark:text-[#C3C2B7] dark:hover:bg-white/10">
+          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+        </span>
+      </button>
+      {open && !disabled && (
+        <>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-10 cursor-default bg-transparent"
+          />
+          <div role="listbox" aria-label={ariaLabel} className={multiList}>
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={onListKey}
+              placeholder={filterPlaceholder}
+              aria-label={`Filter ${ariaLabel}`}
+              role="combobox"
+              aria-expanded={open}
+              aria-autocomplete="list"
+              autoFocus
+              className={fieldInput}
+            />
+            <div className="mt-2 grid gap-1">
+              {visible.map((o, i) => (
+                <div key={o.value} role="option" aria-selected={value === o.value}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => pick(o.value)}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm",
+                      i === highlight
+                        ? "bg-[#e8fbf6] text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                        : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{o.label}</span>
+                      {o.sub && (
+                        <span className="block truncate text-xs text-[#4a5058] dark:text-[#C3C2B7]">{o.sub}</span>
+                      )}
+                    </span>
+                    {value === o.value && (
+                      <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              ))}
+              {visible.length === 0 && (
+                <p className="px-2 py-1 font-sans text-xs text-[#8a8f98]">{emptyText}</p>
+              )}
+              {hasClear && (
+                <div role="option" aria-selected={false}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => pick("")}
+                    onMouseEnter={() => setHighlight(visible.length)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]",
+                      highlight === visible.length && "bg-[#e8fbf6] dark:bg-white/10",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">Clear selection</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+/**
  * Searchable multi-select filter — v2 field + dropdown styling shared with the
  * Agents/TestLab multiselects. Collapsed shows `first + N others`, never pills.
  */
