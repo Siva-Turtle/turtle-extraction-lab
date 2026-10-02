@@ -10,7 +10,6 @@ import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { ModelCombobox, MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
-import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
 
 type AttrResult = {
@@ -675,8 +674,6 @@ export default function TestLab() {
 
   return (
     <div className="grid gap-4">
-      <PageHeader title="Test Lab" />
-
       <Card>
         <div className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-3">

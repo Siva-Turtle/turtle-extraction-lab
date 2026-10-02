@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { BarChart3, Braces, ChevronLeft, Copy, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { BarChart3, Braces, ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
@@ -11,7 +11,6 @@ import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { MultiSelectFilter } from "../components/ui/Combobox";
 import type { ModelOption } from "../components/ui/Combobox";
-import { PageHeader } from "../components/ui/PageHeader";
 
 type AgentUsage = {
   prompt_tokens: number;
@@ -233,8 +232,6 @@ const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
 
 const INPUT_FILTERS = ["transcription", "messages", "mail"];
 
-const REASONING_EFFORTS = ["max", "xhigh", "high", "medium", "low", "minimal", "none"];
-
 export default function Logs() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>("pretty");
@@ -244,7 +241,6 @@ export default function Logs() {
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [selectedMeetingTypes, setSelectedMeetingTypes] = useState<string[]>([]);
-  const [selectedEfforts, setSelectedEfforts] = useState<string[]>([]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -266,20 +262,19 @@ export default function Logs() {
 
   const hasServerFilters =
     selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0 ||
-    selectedClients.length > 0 || selectedEfforts.length > 0;
+    selectedClients.length > 0;
 
   const params: LogsQueryParams = {};
   if (selectedModels.length > 0) params.models = selectedModels;
   if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
   if (selectedDates.length > 0) params.dates = selectedDates;
   if (selectedClients.length > 0) params.clients = selectedClients;
-  if (selectedEfforts.length > 0) params.reasoning_efforts = selectedEfforts;
 
   // Server-filtered list (AND across groups); reused only while filters are set.
   // Meeting-type filtering stays client-side on the derived type (no backend change).
   const { data: serverLogs, isLoading: serverLoading } = useQuery({
     queryKey: ["logs", selectedModels, selectedAgents, selectedDates,
-      selectedClients, selectedEfforts],
+      selectedClients],
     queryFn: async () =>
       (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
     enabled: hasServerFilters,
@@ -346,10 +341,6 @@ export default function Logs() {
     () => INPUT_FILTERS.map((v) => ({ value: v, label: v })),
     [],
   );
-  const reasoningEffortOptions = React.useMemo(
-    () => REASONING_EFFORTS.map((v) => ({ value: v, label: v })),
-    [],
-  );
 
   const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
 
@@ -369,8 +360,6 @@ export default function Logs() {
 
   return (
     <div className="grid gap-4">
-      <PageHeader title="Run logs" />
-
       {active ? (
         <LogDetail log={active} tab={tab} onTab={setTab} onBack={() => setActiveId(null)} />
       ) : (
@@ -440,17 +429,6 @@ export default function Logs() {
                   placeholder="All input types"
                   ariaLabel="Filter by input type"
                   filterPlaceholder="Search input types…"
-                  emptyText="No matches."
-                />
-              </div>
-              <div>
-                <MultiSelectFilter
-                  options={reasoningEffortOptions}
-                  selected={selectedEfforts}
-                  onChange={setSelectedEfforts}
-                  placeholder="All efforts"
-                  ariaLabel="Filter by reasoning effort"
-                  filterPlaceholder="Search efforts…"
                   emptyText="No matches."
                 />
               </div>
@@ -964,6 +942,7 @@ function AttrRow({
 }
 
 function PrettyPanel({ log }: { log: LogRow }) {
+  const [inputOpen, setInputOpen] = React.useState(false);
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
@@ -999,8 +978,23 @@ function PrettyPanel({ log }: { log: LogRow }) {
         </div>
       </div>
       <div className="min-w-0 max-w-full">
-        <h3 className={sectionLabel}>Input</h3>
-        <pre className={cn(codeBlock, "max-h-40 font-sans")}>{log.input_data}</pre>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setInputOpen((o) => !o)}
+            aria-expanded={inputOpen}
+            aria-label="Toggle input"
+            className="flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-[#4a5058] transition-colors hover:bg-[#f1f2f3] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
+          >
+            {inputOpen ? (
+              <ChevronDown className="h-4 w-4 transition-transform" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-4 w-4 transition-transform" aria-hidden="true" />
+            )}
+            <span className={sectionLabel}>Input</span>
+          </button>
+        </div>
+        {inputOpen && <pre className={cn(codeBlock, "max-h-40 font-sans")}>{log.input_data}</pre>}
       </div>
       <div className="grid min-w-0 max-w-full gap-3">
         {Object.entries(log.outputs ?? {}).map(([agentId, out]) => {
@@ -1119,7 +1113,7 @@ function AnalyticsPanel({
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Usage stats</h3>
-        <div className="mt-1.5 grid min-w-0 max-w-full grid-cols-2 gap-2">
+        <div className="mt-1.5 grid min-w-0 max-w-full grid-cols-2 sm:grid-cols-4 gap-2">
           {stats.map(([label, value]) => (
             <div
               key={label}

@@ -587,7 +587,7 @@ export default function Attributes() {
               placeholder="Search attributes…"
               aria-label="Search attributes"
               spellCheck={false}
-              className="h-11 w-56 rounded-xl border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC] dark:placeholder:text-[#898781] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]"
+              className="mt-1.5 h-11 w-56 rounded-xl border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC] dark:placeholder:text-[#898781] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]"
             />
             {groupOptions.length > 0 && (
               <div className="w-56">
@@ -600,7 +600,7 @@ export default function Attributes() {
                 />
               </div>
             )}
-            <Button size="sm" onClick={startNew}>
+            <Button size="md" onClick={startNew} className="mt-1.5">
               <Plus className="h-4 w-4" aria-hidden="true" /> New attribute
             </Button>
           </div>
