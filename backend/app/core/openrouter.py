@@ -26,21 +26,24 @@ def is_configured() -> bool:
 
 def build_chat_payload(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
+    schema_name: str = "meeting_extraction",
 ) -> dict:
     """Build the EXACT JSON body POSTed to OpenRouter chat-completions.
 
     Pure function (no I/O, no secrets): ``{"model", "response_format",
     "messages": [{"role": "system", ...}, {"role": "user", ...}]}``.
     ``json_schema`` is the inner OpenAPI-compatible object schema; when
-    given, the envelope is a strict ``meeting_extraction`` json_schema
-    response_format, else the legacy ``{"type": "json_object"}`` mode.
+    given, the envelope is a strict ``schema_name`` json_schema
+    response_format (``meeting_extraction`` for attribute extraction,
+    ``agent_selection`` for the identifier meta-agent), else the legacy
+    ``{"type": "json_object"}`` mode.
     """
     if json_schema is None:
         response_format: dict = {"type": "json_object"}
     else:
         response_format = {
             "type": "json_schema",
-            "json_schema": {"name": "meeting_extraction", "strict": True, "schema": json_schema},
+            "json_schema": {"name": schema_name, "strict": True, "schema": json_schema},
         }
     return {
         "model": model,

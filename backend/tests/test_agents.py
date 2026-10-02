@@ -18,6 +18,8 @@ def test_agent_crud(client):
     created = client.post("/api/v1/agents", json=_agent()).json()
     assert created["name"] == "Extractor A"
     assert "prompt" not in created  # dead field stays out of the contract
+    assert created["description"] == ""  # defaults
+    assert created["kind"] == "extraction"
     aid = created["id"]
 
     detail = client.get(f"/api/v1/agents/{aid}").json()
@@ -28,6 +30,13 @@ def test_agent_crud(client):
     patched = client.patch(f"/api/v1/agents/{aid}", json={"system_instruction": "sys v2"}).json()
     assert patched["system_instruction"] == "sys v2"
     assert patched["name"] == "Extractor A"  # untouched fields stay
+    assert patched["description"] == "" and patched["kind"] == "extraction"
+
+    described = client.patch(
+        f"/api/v1/agents/{aid}",
+        json={"description": "Routes transcripts.", "kind": "identifier"}).json()
+    assert described["description"] == "Routes transcripts."
+    assert described["kind"] == "identifier"
     assert client.patch("/api/v1/agents/does-not-exist", json={"name": "x"}).status_code == 404
 
     assert any(a["id"] == aid for a in client.get("/api/v1/agents").json())
@@ -85,9 +94,10 @@ def test_patch_agent_attribute_ids_replace(client):
     # Replace semantics: a is unlinked (but not deleted), only b remains...
     assert _linked_names(client, aid) == ["b"]
     assert client.get(f"/api/v1/attributes/{a['id']}").status_code == 200
-    # ...and AgentOut shape is unchanged.
-    assert set(patched.json()) == {"id", "name", "system_instruction",
-                                   "input_types", "is_enabled"}
+    # ...and AgentOut shape is unchanged (modulo description/kind).
+    assert set(patched.json()) == {"id", "name", "description", "kind",
+                                   "system_instruction", "input_types",
+                                   "is_enabled"}
 
     # Empty list clears all links without deleting the attributes.
     assert client.patch(f"/api/v1/agents/{aid}", json={"attribute_ids": []}).status_code == 200

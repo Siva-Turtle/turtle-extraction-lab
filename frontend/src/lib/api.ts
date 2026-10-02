@@ -26,3 +26,15 @@ export type LogsQueryParams = {
   agent_ids?: string[];
   dates?: string[];
 };
+
+export type AgentKind = "extraction" | "identifier";
+
+export type Agent = {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  system_instruction: string;
+  input_types: string[];
+  is_enabled: boolean;
+};

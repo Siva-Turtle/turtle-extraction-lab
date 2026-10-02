@@ -6,11 +6,17 @@ from app.db.models import Agent, Attribute, agent_attributes
 from app.db.session import get_db
 from app.modules.agents.schemas import AgentCreate, AgentOut, AgentUpdate
 from app.modules.runs.router import (
+    EXTRACTION_KIND,
+    IDENTIFIER_SCHEMA_NAME,
     _agent_system_content,
     _attrs_for_agent,
+    _identifier_system_content,
     _snapshot_array_items,
     _snapshot_props,
     build_extraction_schema,
+    build_identifier_schema,
+    identifier_candidates_with_examples,
+    is_identifier,
 )
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -21,7 +27,9 @@ USER_TEMPLATE = "<transcription — pulled automatically on run>"
 
 
 def _out(r: Agent) -> AgentOut:
-    return AgentOut(id=r.id, name=r.name, system_instruction=r.system_instruction,
+    return AgentOut(id=r.id, name=r.name, description=r.description or "",
+                    kind=getattr(r, "kind", None) or EXTRACTION_KIND,
+                    system_instruction=r.system_instruction,
                     input_types=r.input_types or [],
                     is_enabled=r.is_enabled if r.is_enabled is not None else True)
 
@@ -34,7 +42,9 @@ def list_agents(db: Session = Depends(get_db)):
 
 @router.post("", response_model=AgentOut)
 def create_agent(payload: AgentCreate, db: Session = Depends(get_db)):
-    row = Agent(name=payload.name, system_instruction=payload.system_instruction,
+    row = Agent(name=payload.name, description=payload.description or "",
+                kind=payload.kind or EXTRACTION_KIND,
+                system_instruction=payload.system_instruction,
                 input_types=payload.input_types,
                 is_enabled=payload.is_enabled)
     db.add(row)
@@ -56,7 +66,7 @@ def update_agent(agent_id: str, payload: AgentUpdate, db: Session = Depends(get_
     row = db.query(Agent).filter(Agent.id == agent_id).first()
     if not row:
         raise HTTPException(404, "agent not found")
-    for field in ("name", "system_instruction", "input_types", "is_enabled"):
+    for field in ("name", "description", "kind", "system_instruction", "input_types", "is_enabled"):
         value = getattr(payload, field)
         if value is not None:
             setattr(row, field, value)
@@ -85,6 +95,25 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
     row = db.query(Agent).filter(Agent.id == agent_id).first()
     if not row:
         raise HTTPException(404, "agent not found")
+    if is_identifier(row):
+        # Router preview: candidate roster, NOT attribute lists; strict
+        # agent_selection envelope (same builders the run path uses).
+        candidates = identifier_candidates_with_examples(db, exclude_id=row.id)
+        system = _identifier_system_content(row, candidates)
+        schema = build_identifier_schema()
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": IDENTIFIER_SCHEMA_NAME, "strict": True, "schema": schema},
+        }
+        return {
+            "agent_id": row.id,
+            "system": system,
+            "user_template": USER_TEMPLATE,
+            "response_format": response_format,
+            "attributes": [],
+            "candidates": [{"name": n, "description": d, "example_attributes": e}
+                           for n, d, e in candidates],
+        }
     attrs = _attrs_for_agent(db, agent_id)
     system = _agent_system_content(row, attrs)
     schema = build_extraction_schema(attrs)

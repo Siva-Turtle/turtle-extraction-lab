@@ -21,6 +21,10 @@ class Agent(Base):
     __tablename__ = "agents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Agent kind: `extraction` (default, attribute extraction) or
+    # `identifier` (meta-agent that selects which agents should run).
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="extraction")
     system_instruction: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # DORMANT: `prompt` is dead (runs use scrubbed transcription + attributes).
     # Column kept so legacy rows still load; never referenced by the API.

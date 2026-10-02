@@ -40,6 +40,113 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
     )
 
 
+# --- Agent Identifier meta-agent (kind == "identifier") -------------------
+# The identifier skips irrelevant agents to save tokens: it reads the same
+# transcript user message plus a candidate list (name + description per
+# extraction agent, WITHOUT attribute lists, plus a few uncommon example
+# attributes to disambiguate) and returns the subset of agent names to run.
+# Its prompt is built at prompt/preview/run time, never stored per-run
+# except inside the denormalized log snapshots/requests.
+
+IDENTIFIER_KIND = "identifier"
+EXTRACTION_KIND = "extraction"
+IDENTIFIER_SCHEMA_NAME = "agent_selection"
+
+IDENTIFIER_INSTRUCTION = (
+    "You are an agent router. Read the input transcript and decide which "
+    "candidate extraction agents are relevant to it. Select an agent only "
+    "when the transcript clearly contains data in its coverage area. When "
+    "in doubt, include the agent — extraction agents omit missing "
+    "attributes themselves. Return strictly the selection object."
+)
+
+# Curated uncommon example attributes per agent for disambiguation.
+# Fallback (agents not listed here): first 3 attribute names, sorted.
+IDENTIFIER_EXAMPLE_ATTRS: dict[str, list[str]] = {
+    "kc_and_feedback": ["kc_taker_attitude", "kc_taker_readiness", "kc_taker_knowledge"],
+    "tax_and_insurance": ["w8_ben"],
+}
+
+
+def is_identifier(agent: Agent) -> bool:
+    """True when this agent is the router (kind == identifier)."""
+    return (getattr(agent, "kind", None) or EXTRACTION_KIND) == IDENTIFIER_KIND
+
+
+def build_identifier_schema() -> dict:
+    """Strict structured-output schema for the identifier: a list of names."""
+    return {
+        "type": "object",
+        "properties": {
+            "selected_agents": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Names of the extraction agents to run on this input",
+            },
+        },
+        "required": ["selected_agents"],
+        "additionalProperties": False,
+    }
+
+
+def _identifier_candidates(db: Session, exclude_id: str = "") -> list[Agent]:
+    """Extraction-kind agents (the identifier itself excluded), ordered by name."""
+    q = db.query(Agent).filter(Agent.kind != IDENTIFIER_KIND).order_by(Agent.name.asc())
+    rows = q.all()
+    if exclude_id:
+        rows = [a for a in rows if a.id != exclude_id]
+    return rows
+
+
+def _identifier_example_names(agent_name: str, attr_names: list[str]) -> list[str]:
+    """Curated uncommon examples when known (and present), else sorted[:3]."""
+    curated = [n for n in IDENTIFIER_EXAMPLE_ATTRS.get(agent_name, []) if n in attr_names]
+    if curated:
+        return curated[:3]
+    return sorted(attr_names)[:3]
+
+
+def _identifier_system_content(
+    agent: Agent, candidates: list[tuple[str, str, list[str]]]
+) -> str:
+    """System prompt for the identifier: base instruction + candidate roster.
+
+    ``candidates`` is [(name, description, example_attr_names)] — attribute
+    LISTS are deliberately never included, only a few example names.
+    """
+    base = agent.system_instruction or IDENTIFIER_INSTRUCTION
+    if candidates:
+        lines: list[str] = []
+        for name, desc, examples in candidates:
+            line = f"- {name}"
+            if (desc or "").strip():
+                line += f": {desc.strip()}"
+            if examples:
+                line += f" (e.g. {', '.join(examples)})"
+            lines.append(line)
+        roster = "\n".join(lines)
+    else:
+        roster = "- (no candidate agents defined)"
+    return (
+        f"{base}\n\nCandidate agents (return a subset of these names):\n{roster}\n\n"
+        'Return a JSON object with "selected_agents": the list of agent names '
+        "to run. Include only agents whose data appears in the input. "
+        'If none apply, return {"selected_agents": []}.'
+    )
+
+
+def identifier_candidates_with_examples(
+    db: Session, exclude_id: str = "",
+) -> list[tuple[str, str, list[str]]]:
+    """Candidate (name, description, example-attrs) rows for prompt building."""
+    out: list[tuple[str, str, list[str]]] = []
+    for cand in _identifier_candidates(db, exclude_id):
+        names = [a.name for a in _attrs_for_agent(db, cand.id)]
+        out.append((cand.name, cand.description or "",
+                    _identifier_example_names(cand.name, names)))
+    return out
+
+
 def _attr_line(a: Attribute) -> str:
     base = f"- {a.name} ({a.type}): {a.description}"
     if a.type == "enum" and (a.enum_values or []):
@@ -259,7 +366,9 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     for agent in agents:
         attrs = _attrs_for_agent(db, agent.id)
         snapshots[agent.id] = {
-            "name": agent.name, "system_instruction": agent.system_instruction,
+            "name": agent.name, "description": agent.description or "",
+            "kind": getattr(agent, "kind", None) or EXTRACTION_KIND,
+            "system_instruction": agent.system_instruction,
             "attributes": [{"name": a.name, "type": a.type, "description": a.description,
                             "group": getattr(a, "group_name", "") or "",
                             "enum_values": a.enum_values or [],
@@ -270,11 +379,21 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
-        system_content = _agent_system_content(agent, attrs)
         user_content = input_data
-        schema = build_extraction_schema(attrs)
-        payload_body = build_chat_payload(
-            model=payload.model, system=system_content, user=user_content, json_schema=schema)
+        if is_identifier(agent):
+            # Router path: candidate roster (name + description + examples),
+            # NO attribute lists; strict agent_selection envelope.
+            candidates = identifier_candidates_with_examples(db, exclude_id=agent.id)
+            system_content = _identifier_system_content(agent, candidates)
+            schema: dict | None = build_identifier_schema()
+            payload_body = build_chat_payload(
+                model=payload.model, system=system_content, user=user_content,
+                json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME)
+        else:
+            system_content = _agent_system_content(agent, attrs)
+            schema = build_extraction_schema(attrs)
+            payload_body = build_chat_payload(
+                model=payload.model, system=system_content, user=user_content, json_schema=schema)
         requests[agent.id] = copy.deepcopy(payload_body)
         try:
             parsed, usage = await complete_json_payload(payload_body)

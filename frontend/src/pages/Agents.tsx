@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import type { Agent } from "../lib/api";
+export type { Agent } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -11,20 +13,13 @@ import { Modal, fieldInput, fieldLabel, fieldTextarea } from "../components/ui/M
 import { PageHeader } from "../components/ui/PageHeader";
 import type { LabAttribute } from "./Attributes";
 
-export type Agent = {
-  id: string;
-  name: string;
-  system_instruction: string;
-  input_types: string[];
-  is_enabled: boolean;
-};
-
 const INPUT_TYPES = ["transcription", "messages", "mail"];
 export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\n| Confidence Type | Meaning |\n|---|---|\n| \`quoted\` | Value is explicitly stated in the transcript |\n| \`normalized\` | Value is explicitly stated but transformed into your canonical representation |\n| \`inferred\` | Value was not directly stated; model derived it from evidence |\n| \`not_found\` | No sufficient evidence exists |\n| \`calculated\` | Mentioned as pieces of info, but model performed calculations to arrive |\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
 
 type Editing = {
   id?: string;
   name: string;
+  description: string;
   system_instruction: string;
   input_types: string[];
   is_enabled: boolean;
@@ -34,6 +29,7 @@ type SaveInput = Editing & { attribute_ids: string[] };
 
 const EMPTY: Editing = {
   name: "",
+  description: "",
   system_instruction: DEFAULT_SYSTEM_INSTRUCTION,
   input_types: [],
   is_enabled: true,
@@ -507,7 +503,7 @@ export default function Agents() {
   }
 
   function openEdit(a: Agent) {
-    setEditing({ id: a.id, name: a.name, system_instruction: a.system_instruction, input_types: [...a.input_types], is_enabled: a.is_enabled });
+    setEditing({ id: a.id, name: a.name, description: a.description ?? "", system_instruction: a.system_instruction, input_types: [...a.input_types], is_enabled: a.is_enabled });
     setSelIds(null);
   }
 
@@ -521,6 +517,7 @@ export default function Agents() {
       if (v.id) {
         const body = {
           name: v.name,
+          description: v.description,
           system_instruction: v.system_instruction,
           input_types: v.input_types,
           is_enabled: v.is_enabled,
@@ -531,6 +528,7 @@ export default function Agents() {
       const created = (
         await api.post("/agents", {
           name: v.name,
+          description: v.description,
           system_instruction: v.system_instruction,
           input_types: v.input_types,
           is_enabled: v.is_enabled,
@@ -642,11 +640,17 @@ export default function Agents() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <CardTitle>{a.name}</CardTitle>
+                    {a.kind === "identifier" && <Badge tone="brand">router</Badge>}
                     {a.input_types.map((t) => (
                       <Badge key={t} tone="brand">{t}</Badge>
                     ))}
                     {a.is_enabled === false && <Badge tone="neutral">off</Badge>}
                   </div>
+                  {(a.description ?? "").trim() !== "" && (
+                    <p className="mt-1 truncate font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]" title={a.description}>
+                      {a.description}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <span className="flex items-center gap-2">
@@ -700,6 +704,16 @@ export default function Agents() {
               <input
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                className={fieldInput}
+              />
+            </label>
+            <label className={fieldLabel}>
+              Description
+              <input
+                value={editing.description}
+                onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+                placeholder="One line: what this agent extracts"
+                aria-label="Agent description"
                 className={fieldInput}
               />
             </label>

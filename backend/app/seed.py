@@ -4,6 +4,8 @@ from app.db.models import Agent, Attribute, agent_attributes
 from app.db.session import SessionLocal
 
 AGENT_NAME = "Contact Facts"
+AGENT_DESCRIPTION = "Extracts basic contact facts (name, phone, email) stated in the input."
+AGENT_KIND = "extraction"
 AGENT_INSTRUCTION = (
     "Extract structured contact facts. Only use information stated in the input.\n\n"
     "| Confidence Type | Meaning |\n"
@@ -28,12 +30,26 @@ def main() -> None:
         if not agent:
             agent = Agent(
                 name=AGENT_NAME,
+                description=AGENT_DESCRIPTION,
+                kind=AGENT_KIND,
                 system_instruction=AGENT_INSTRUCTION,
                 input_types=["transcription", "messages", "mail"],
             )
             db.add(agent)
             db.commit()
             db.refresh(agent)
+        else:
+            # Backfill new columns on legacy rows; never overwrite user edits.
+            changed = False
+            if not (agent.description or "").strip():
+                agent.description = AGENT_DESCRIPTION
+                changed = True
+            if not (getattr(agent, "kind", None) or "").strip():
+                agent.kind = AGENT_KIND
+                changed = True
+            if changed:
+                db.commit()
+                db.refresh(agent)
         linked_ids = {r.attribute_id for r in db.execute(
             agent_attributes.select().where(agent_attributes.c.agent_id == agent.id)).all()}
         existing = {a.name: a for a in db.query(Attribute).all()}
