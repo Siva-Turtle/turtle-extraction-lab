@@ -1,11 +1,13 @@
 import * as React from "react";
 import { useState } from "react";
-import { BarChart3, Braces, Check, ChevronDown, Sparkles } from "lucide-react";
+import { BarChart3, Braces, Check, ChevronDown, Copy, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { MultiSelectFilter } from "../components/ui/Combobox";
 import type { ModelOption } from "../components/ui/Combobox";
@@ -131,6 +133,25 @@ function fmtCost(cost: unknown): string {
   return `$${cost.toFixed(6)}`;
 }
 
+const USD_TO_INR = 100;
+
+/** Shared USD + INR cost display; "—" when missing. Keeps USD format, appends INR. */
+function fmtCostBoth(cost: unknown): string {
+  if (typeof cost !== "number" || !Number.isFinite(cost)) return "—";
+  return `${fmtCost(cost)} (₹${(cost * USD_TO_INR).toFixed(2)})`;
+}
+
+/** Identifier-kind output shape: {selected_agents: string[]}. Null when not identifier. */
+function selectedAgentsOf(out: unknown): string[] | null {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return null;
+  const v = (out as Record<string, unknown>).selected_agents;
+  if (!Array.isArray(v)) return null;
+  return v
+    .filter((x): x is string => typeof x === "string")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
 /** Empty/missing usage (old rows) degrades to "—" everywhere. */
 function getUsage(l: LogRow): RunUsage | null {
   const u = l.usage;
@@ -162,7 +183,7 @@ function prettyEntries(out: unknown): [string, PrettyAttr][] {
 
 const sectionLabel = "font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]";
 const codeBlock =
-  "mt-1.5 max-h-60 overflow-auto rounded-xl bg-[#f1f2f3] p-3 font-mono text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]";
+  "mt-1.5 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-xl bg-[#f1f2f3] p-3 font-mono text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]";
 
 const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
   { id: "pretty", label: "Pretty", icon: Sparkles },
@@ -448,8 +469,8 @@ export default function Logs() {
                     <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
                       {fbCount}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {usage ? fmtCost(usage.cost_usd) : "—"}
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {usage ? fmtCostBoth(usage.cost_usd) : "—"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
                       {usage ? fmtTokens(usage.total_tokens) : "—"}
@@ -491,16 +512,16 @@ function LogDrawer({
     <Drawer
       onClose={onClose}
       title={
-        <div className="grid gap-1">
+        <div className="grid min-w-0 max-w-full gap-1">
           <p className="font-heading text-base font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
             Run {log.run_id.slice(0, 8)}
           </p>
-          <p className="truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
+          <p className="max-w-full break-all font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
           <p className="font-heading text-xs text-[#8a8f98]">{fmt(log.created_at)}</p>
         </div>
       }
     >
-      <div className="grid gap-4 animate-[turtle-fade-in_150ms_ease-out]">
+      <div className="grid min-w-0 max-w-full gap-4 animate-[turtle-fade-in_150ms_ease-out]">
         <div
           role="tablist"
           aria-label="Log detail views"
@@ -546,22 +567,58 @@ function RawPanel({ log }: { log: LogRow }) {
   const out = log.outputs;
   const hasOut =
     !!out && typeof out === "object" && Object.keys(out as Record<string, unknown>).length > 0;
+  const reqText = hasReq ? JSON.stringify(req, null, 2) : "";
+  const outText = hasOut ? JSON.stringify(out, null, 2) : "";
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }
+
   return (
-    <div className="grid gap-4" role="tabpanel">
-      <div>
-        <h3 className={sectionLabel}>1 · Sent to LLM (request)</h3>
+    <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div className="min-w-0 max-w-full">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <h3 className={sectionLabel}>1 · Sent to LLM (request)</h3>
+          {hasReq && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyText(reqText, "Raw input")}
+              aria-label="Copy raw input"
+            >
+              <Copy className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
+        </div>
         {hasReq ? (
-          <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(req, null, 2)}</pre>
+          <pre className={cn(codeBlock, "max-h-[60vh]")}>{reqText}</pre>
         ) : (
           <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">
             Request payload not recorded for runs logged before this change.
           </p>
         )}
       </div>
-      <div>
-        <h3 className={sectionLabel}>2 · Received from LLM (response)</h3>
+      <div className="min-w-0 max-w-full">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <h3 className={sectionLabel}>2 · Received from LLM (response)</h3>
+          {hasOut && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void copyText(outText, "Raw output")}
+              aria-label="Copy raw output"
+            >
+              <Copy className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          )}
+        </div>
         {hasOut ? (
-          <pre className={cn(codeBlock, "max-h-[60vh]")}>{JSON.stringify(out, null, 2)}</pre>
+          <pre className={cn(codeBlock, "max-h-[60vh]")}>{outText}</pre>
         ) : (
           <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No response recorded.</p>
         )}
@@ -572,12 +629,12 @@ function RawPanel({ log }: { log: LogRow }) {
 
 function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
   return (
-    <div className="grid gap-4" role="tabpanel">
-      <div>
+    <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Input</h3>
-        <pre className={cn(codeBlock, "max-h-40 whitespace-pre-wrap font-sans")}>{log.input_data}</pre>
+        <pre className={cn(codeBlock, "max-h-40 font-sans")}>{log.input_data}</pre>
       </div>
-      <div className="grid gap-3">
+      <div className="grid min-w-0 max-w-full gap-3">
         {Object.entries(log.outputs ?? {}).map(([agentId, out]) => {
           const agentName = log.agent_snapshot?.[agentId]?.name ?? agentId;
           if (out && typeof out === "object" && "_error" in (out as Record<string, unknown>)) {
@@ -585,44 +642,68 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
             return (
               <div
                 key={agentId}
-                className="rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10"
+                className="min-w-0 max-w-full rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10"
               >
                 <CardTitle>{agentName}</CardTitle>
-                <p className="mt-1 font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
+                <p className="mt-1 break-words font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
                   Agent failed: {String(err)}
                 </p>
               </div>
             );
           }
-          const entries = prettyEntries(out);
+          const selected = selectedAgentsOf(out);
           const snapAttrs = snapshotAttrs(log, agentId);
-          return (
-            <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
-              <CardTitle>{agentName}</CardTitle>
-              {snapAttrs.length > 0 && (
-                <div className="mt-2">
-                  <p className={sectionLabel}>Attributes (snapshot)</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {snapAttrs.map((sa, i) => (
-                      <span
-                        key={`${sa.name}-${i}`}
-                        title={typeof sa.description === "string" ? sa.description : undefined}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
-                      >
-                        {sa.name} · {String(sa.type ?? "?")}
-                        {enumChipsOf(sa).map((c) => (
-                          <Badge key={c} tone="neutral">{c}</Badge>
-                        ))}
-                      </span>
-                    ))}
-                  </div>
+          const snapshotBlock =
+            snapAttrs.length > 0 ? (
+              <div className="mt-2 min-w-0 max-w-full">
+                <p className={sectionLabel}>Attributes (snapshot)</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {snapAttrs.map((sa, i) => (
+                    <span
+                      key={`${sa.name}-${i}`}
+                      title={typeof sa.description === "string" ? sa.description : undefined}
+                      className="inline-flex max-w-full items-center gap-1.5 break-words rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
+                    >
+                      {sa.name} · {String(sa.type ?? "?")}
+                      {enumChipsOf(sa).map((c) => (
+                        <Badge key={c} tone="neutral">{c}</Badge>
+                      ))}
+                    </span>
+                  ))}
                 </div>
-              )}
-              <div className="mt-2 grid gap-2">
+              </div>
+            ) : null;
+          if (selected !== null) {
+            return (
+              <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+                <CardTitle>{agentName}</CardTitle>
+                {snapshotBlock}
+                <div className="mt-2 grid min-w-0 max-w-full gap-2">
+                  {selected.length === 0 ? (
+                    <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selected.map((name) => (
+                        <Badge key={name} tone="brand">
+                          {name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+          const entries = prettyEntries(out);
+          return (
+            <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+              <CardTitle>{agentName}</CardTitle>
+              {snapshotBlock}
+              <div className="mt-2 grid min-w-0 max-w-full gap-2">
                 {entries.map(([attr, r]) => (
-                  <div key={attr} className="rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
+                  <div key={attr} className="min-w-0 max-w-full rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
+                      <span className="break-words font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
                         {attr}
                       </span>
                       <Badge tone="brand">{String(r.confidence_type ?? "?")}</Badge>
@@ -638,7 +719,7 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
                         }}
                       />
                     </div>
-                    <p className="mt-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
+                    <p className="mt-2 break-words font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
                       <span
                         className={cn(sectionLabel, "inline")}
                         style={{ fontSize: "inherit" }}
@@ -648,7 +729,7 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
                       {String(r.value ?? "—")}
                     </p>
                     {typeof r.evidence === "string" && r.evidence !== "" && (
-                      <p className="mt-1 border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
+                      <p className="mt-1 break-words border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
                         “{r.evidence}”
                       </p>
                     )}
@@ -703,9 +784,9 @@ function AnalyticsPanel({
     ["Output tokens", fmtTokens(usage?.completion_tokens)],
     ["Total tokens", fmtTokens(usage?.total_tokens)],
     // Backend ships the input/output cost split (null when pricing unknown).
-    ["Input cost", fmtCost(usage?.input_cost_usd)],
-    ["Output cost", fmtCost(usage?.output_cost_usd)],
-    ["Total cost", fmtCost(usage?.cost_usd)],
+    ["Input cost", fmtCostBoth(usage?.input_cost_usd)],
+    ["Output cost", fmtCostBoth(usage?.output_cost_usd)],
+    ["Total cost", fmtCostBoth(usage?.cost_usd)],
     ["Time taken", fmtMs(usage?.duration_ms)],
     ["Agents run", String(Object.keys(log.agent_snapshot ?? {}).length)],
     ["Ratings count", String(fbCount)],
@@ -713,17 +794,17 @@ function AnalyticsPanel({
   const perAgent = usage?.per_agent ? Object.entries(usage.per_agent) : [];
 
   return (
-    <div className="grid gap-4" role="tabpanel">
-      <div>
+    <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Usage stats</h3>
-        <div className="mt-1.5 grid grid-cols-2 gap-2">
+        <div className="mt-1.5 grid min-w-0 max-w-full grid-cols-2 gap-2">
           {stats.map(([label, value]) => (
             <div
               key={label}
-              className="rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10"
+              className="min-w-0 max-w-full rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10"
             >
               <p className={sectionLabel}>{label}</p>
-              <p className="mt-1 truncate font-mono text-sm text-[#1d1d1d] dark:text-[#F0EFEC]" title={value}>
+              <p className="mt-1 max-w-full break-all font-mono text-sm text-[#1d1d1d] dark:text-[#F0EFEC]" title={value}>
                 {value}
               </p>
             </div>
@@ -731,13 +812,13 @@ function AnalyticsPanel({
         </div>
       </div>
 
-      <div>
+      <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Per-agent usage</h3>
         {perAgent.length === 0 ? (
           <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
         ) : (
-          <div className="mt-1.5 overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
-            <table className="w-full min-w-[720px] font-sans text-xs">
+          <div className="mt-1.5 max-w-full overflow-x-hidden rounded-xl border border-[#e5e7eb] dark:border-white/10">
+            <table className="w-full max-w-full font-sans text-xs">
               <thead>
                 <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
                   <th className="px-3 py-2">Agent</th>
@@ -756,16 +837,16 @@ function AnalyticsPanel({
                     key={aid}
                     className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
                   >
-                    <td className="px-3 py-2 font-heading font-bold">
+                    <td className="max-w-40 break-words px-3 py-2 font-heading font-bold">
                       {log.agent_snapshot?.[aid]?.name ?? aid}
                     </td>
-                    <td className="truncate px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.input_cost_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.output_cost_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtCost(u.cost_usd)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
+                    <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
                   </tr>
                 ))}
               </tbody>
