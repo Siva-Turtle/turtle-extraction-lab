@@ -292,6 +292,7 @@ export function MultiSelectFilter({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        role="combobox"
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
@@ -324,6 +325,10 @@ export function MultiSelectFilter({
               onChange={(e) => setFilter(e.target.value)}
               placeholder={filterPlaceholder}
               aria-label={`Filter ${ariaLabel}`}
+              role="combobox"
+              aria-expanded={open}
+              aria-autocomplete="list"
+              autoFocus
               className={fieldInput}
             />
             <div className="mt-2 grid gap-1">
