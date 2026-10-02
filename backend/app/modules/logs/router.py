@@ -54,6 +54,10 @@ def _out(r: RunLog) -> dict:
             "outputs": r.outputs or {}, "feedback": r.feedback or {},
             "usage": getattr(r, "usage", None) or {}, "filters": getattr(r, "filters", None) or {},
             "requests": getattr(r, "requests", None) or {},
+            # Denormalized meeting snapshot (plain strings, "" on old rows).
+            "client": getattr(r, "client", None) or "",
+            "meeting_type": getattr(r, "meeting_type", None) or "",
+            "meeting_title": getattr(r, "meeting_title", None) or "",
             "created_at": r.created_at}
 
 
@@ -64,6 +68,9 @@ def list_logs(
     models: list[str] | None = Query(default=None),
     agent_ids: list[str] | None = Query(default=None),
     dates: list[str] | None = Query(default=None),
+    clients: list[str] | None = Query(default=None),
+    meeting_types: list[str] | None = Query(default=None),
+    meeting_titles: list[str] | None = Query(default=None),
 ):
     # Accept both `models=a&models=b` and axios-style `models[]=a&models[]=b`.
     qp = request.query_params
@@ -78,9 +85,23 @@ def list_logs(
     wanted_dates = _as_list(
         dates, qp.getlist("dates[]"), qp.getlist("date"), qp.getlist("date[]"),
     )
+    wanted_clients = _as_list(
+        clients, qp.getlist("clients[]"), qp.getlist("client"), qp.getlist("client[]"),
+    )
+    wanted_types = _as_list(
+        meeting_types, qp.getlist("meeting_types[]"),
+        qp.getlist("meeting_type"), qp.getlist("meeting_type[]"),
+    )
+    wanted_titles = _as_list(
+        meeting_titles, qp.getlist("meeting_titles[]"),
+        qp.getlist("meeting_title"), qp.getlist("meeting_title[]"),
+    )
     model_set = set(wanted_models)
     agent_set = set(wanted_agents)
     date_set = set(wanted_dates)
+    client_set = set(wanted_clients)
+    type_set = set(wanted_types)
+    title_set = set(wanted_titles)
 
     rows = db.query(RunLog).order_by(RunLog.created_at.desc()).limit(500).all()
     if model_set:
@@ -93,6 +114,12 @@ def list_logs(
         ]
     if date_set:
         rows = [r for r in rows if _log_date(r.created_at) in date_set]
+    if client_set:
+        rows = [r for r in rows if (getattr(r, "client", None) or "") in client_set]
+    if type_set:
+        rows = [r for r in rows if (getattr(r, "meeting_type", None) or "") in type_set]
+    if title_set:
+        rows = [r for r in rows if (getattr(r, "meeting_title", None) or "") in title_set]
     return [_out(r) for r in rows[:100]]
 
 

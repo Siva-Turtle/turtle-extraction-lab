@@ -25,6 +25,9 @@ export type LogsQueryParams = {
   models?: string[];
   agent_ids?: string[];
   dates?: string[];
+  clients?: string[];
+  meeting_types?: string[];
+  meeting_titles?: string[];
 };
 
 export type AgentKind = "extraction" | "identifier";

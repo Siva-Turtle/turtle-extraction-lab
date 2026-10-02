@@ -51,6 +51,10 @@ type LogRow = {
   feedback: Record<string, Record<string, { rating: string; remarks: string }>>;
   usage?: RunUsage;
   filters?: LogFilters;
+  // Denormalized meeting snapshot (plain strings, "" on old rows).
+  client?: string;
+  meeting_type?: string;
+  meeting_title?: string;
   created_at: string;
 };
 
@@ -117,6 +121,18 @@ function toLogDate(ts: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Distinct non-blank values for one denormalized meeting field ("": unknown, skipped). */
+function distinctLogOptions(logs: LogRow[], pick: (l: LogRow) => string | undefined) {
+  const set = new Set<string>();
+  for (const l of logs) {
+    const v = (pick(l) ?? "").trim();
+    if (v) set.add(v);
+  }
+  return [...set]
+    .sort((a, b) => a.localeCompare(b))
+    .map((v) => ({ value: v, label: v }));
 }
 
 function fmtTokens(n: unknown): string {
@@ -276,6 +292,9 @@ export default function Logs() {
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [selectedClients, setSelectedClients] = useState<string[]>([]);
+  const [selectedMeetingTypes, setSelectedMeetingTypes] = useState<string[]>([]);
+  const [selectedMeetingTitles, setSelectedMeetingTitles] = useState<string[]>([]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -296,16 +315,21 @@ export default function Logs() {
   });
 
   const hasServerFilters =
-    selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0;
+    selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0 ||
+    selectedClients.length > 0 || selectedMeetingTypes.length > 0 || selectedMeetingTitles.length > 0;
 
   const params: LogsQueryParams = {};
   if (selectedModels.length > 0) params.models = selectedModels;
   if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
   if (selectedDates.length > 0) params.dates = selectedDates;
+  if (selectedClients.length > 0) params.clients = selectedClients;
+  if (selectedMeetingTypes.length > 0) params.meeting_types = selectedMeetingTypes;
+  if (selectedMeetingTitles.length > 0) params.meeting_titles = selectedMeetingTitles;
 
   // Server-filtered list (AND across groups); reused only while filters are set.
   const { data: serverLogs, isLoading: serverLoading } = useQuery({
-    queryKey: ["logs", selectedModels, selectedAgents, selectedDates],
+    queryKey: ["logs", selectedModels, selectedAgents, selectedDates,
+      selectedClients, selectedMeetingTypes, selectedMeetingTitles],
     queryFn: async () =>
       (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
     enabled: hasServerFilters,
@@ -354,6 +378,21 @@ export default function Logs() {
     }
     return [...set].sort().reverse().map((d) => ({ value: d, label: d }));
   }, [allLogs]);
+
+  // Meeting options: distinct non-blank snapshot values from the unfiltered
+  // list (stable while filtering, same as Date options); "" means unknown.
+  const clientOptions = React.useMemo(
+    () => distinctLogOptions(allLogs, (l) => l.client),
+    [allLogs],
+  );
+  const meetingTypeOptions = React.useMemo(
+    () => distinctLogOptions(allLogs, (l) => l.meeting_type),
+    [allLogs],
+  );
+  const meetingTitleOptions = React.useMemo(
+    () => distinctLogOptions(allLogs, (l) => l.meeting_title),
+    [allLogs],
+  );
 
   const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
 
@@ -404,6 +443,42 @@ export default function Logs() {
               ariaLabel="Filter by date"
               filterPlaceholder="Search dates…"
               emptyText={dateOptions.length === 0 ? "No dates yet." : "No matches."}
+            />
+          </div>
+          <div className={fieldLabel}>
+            Client
+            <MultiSelectFilter
+              options={clientOptions}
+              selected={selectedClients}
+              onChange={setSelectedClients}
+              placeholder="All clients"
+              ariaLabel="Filter by client"
+              filterPlaceholder="Search clients…"
+              emptyText={clientOptions.length === 0 ? "No clients yet." : "No matches."}
+            />
+          </div>
+          <div className={fieldLabel}>
+            Meeting type
+            <MultiSelectFilter
+              options={meetingTypeOptions}
+              selected={selectedMeetingTypes}
+              onChange={setSelectedMeetingTypes}
+              placeholder="All meeting types"
+              ariaLabel="Filter by meeting type"
+              filterPlaceholder="Search meeting types…"
+              emptyText={meetingTypeOptions.length === 0 ? "No meeting types yet." : "No matches."}
+            />
+          </div>
+          <div className={fieldLabel}>
+            Meeting title
+            <MultiSelectFilter
+              options={meetingTitleOptions}
+              selected={selectedMeetingTitles}
+              onChange={setSelectedMeetingTitles}
+              placeholder="All meeting titles"
+              ariaLabel="Filter by meeting title"
+              filterPlaceholder="Search meeting titles…"
+              emptyText={meetingTitleOptions.length === 0 ? "No meeting titles yet." : "No matches."}
             />
           </div>
           <div className={fieldLabel}>
@@ -628,8 +703,41 @@ function RawPanel({ log }: { log: LogRow }) {
 }
 
 function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
+  // Denormalized snapshot details — "" on old rows degrades to "Unknown".
+  const meetingDetails: [string, string][] = [
+    ["Client", (log.client ?? "").trim() || "Unknown"],
+    ["Meeting type", (log.meeting_type ?? "").trim() || "Unknown"],
+    ["Meeting title", (log.meeting_title ?? "").trim() || "Unknown"],
+  ];
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div className="min-w-0 max-w-full">
+        <h3 className={sectionLabel}>Meeting</h3>
+        <div className="mt-1.5 grid min-w-0 max-w-full gap-2 sm:grid-cols-3">
+          {meetingDetails.map(([label, value]) => {
+            const unknown = value === "Unknown";
+            return (
+              <div
+                key={label}
+                className="min-w-0 max-w-full rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10"
+              >
+                <p className={sectionLabel}>{label}</p>
+                <p
+                  className={cn(
+                    "mt-1 max-w-full break-words font-sans text-sm",
+                    unknown
+                      ? "text-[#8a8f98]"
+                      : "text-[#1d1d1d] dark:text-[#F0EFEC]",
+                  )}
+                  title={unknown ? undefined : value}
+                >
+                  {value}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
       <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Input</h3>
         <pre className={cn(codeBlock, "max-h-40 font-sans")}>{log.input_data}</pre>

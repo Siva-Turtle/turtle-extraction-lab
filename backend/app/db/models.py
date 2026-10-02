@@ -102,4 +102,9 @@ class RunLog(Base):
     usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     filters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     requests: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Denormalized meeting snapshot — plain strings, NO FK to meetings/clients.
+    # Captured at run time from the Test Lab picker; old rows carry "".
+    client: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    meeting_type: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    meeting_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

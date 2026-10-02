@@ -532,13 +532,25 @@ export default function TestLab() {
   }
 
   const run = useMutation({
-    mutationFn: async () =>
-      (await api.post("/runs", {
+    mutationFn: async () => {
+      // Denormalized meeting snapshot for the run log (plain strings only):
+      // client name from the picker, meeting type from the title filter
+      // (falls back to the instance title), meeting title from the picked
+      // meeting instance (falls back to the title filter / transcript).
+      const clientName =
+        (clientsQuery.data ?? []).find((c) => c.id === clientId)?.name ?? "";
+      const picked = (meetingsQuery.data?.meetings ?? []).find((m) => m.id === meetingId);
+      const instanceTitle = (picked?.title ?? transcriptQuery.data?.title ?? "").trim();
+      return (await api.post("/runs", {
         input_type: "transcription",
         meeting_id: meetingId,
         agent_ids: selected,
         model,
-      })).data as { id: string; outputs: RunOutputs },
+        client: clientName,
+        meeting_type: (meetingTitle || instanceTitle).trim(),
+        meeting_title: (instanceTitle || meetingTitle).trim(),
+      })).data as { id: string; outputs: RunOutputs };
+    },
     onSuccess: (res) => {
       setRunId(res.id);
       setOutputs(res.outputs);

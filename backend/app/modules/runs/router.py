@@ -341,11 +341,16 @@ def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
 @router.post("")
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     meeting_id = (payload.meeting_id or "").strip()
+    task_title = ""
     if meeting_id:
         # meeting_id wins: server re-fetches the transcript and scrubs it —
         # client-sent input_data/input_type are ignored entirely.
         _task, scrubbed = get_scrubbed_transcript(meeting_id)  # 404/503 propagate
         input_type, input_data = "transcription", scrubbed
+        try:
+            task_title = str((_task.get("title") or "")).strip()
+        except Exception:
+            task_title = ""
     else:
         if not (payload.input_data or "").strip():
             raise HTTPException(422, "input_data must be non-blank or provide meeting_id")
@@ -467,6 +472,12 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         "model": payload.model,
         "per_agent": per_agent,
     }
+    # Denormalized meeting snapshot — plain strings from the Test Lab
+    # picker, never FKs. When meeting_id is present the server-known task
+    # title fills blanks so old/direct API clients still get a snapshot.
+    client = (payload.client or "").strip()
+    meeting_type = (payload.meeting_type or "").strip() or task_title
+    meeting_title = (payload.meeting_title or "").strip() or task_title
     run = Run(input_type=input_type, input_data=input_data, model=payload.model,
               agent_ids=payload.agent_ids, outputs=outputs)
     db.add(run)
@@ -475,7 +486,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     # Denormalized log row — snapshots only, no FK to agents/attributes.
     db.add(RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
-                  usage=usage, filters=filters, requests=requests))
+                  usage=usage, filters=filters, requests=requests,
+                  client=client, meeting_type=meeting_type, meeting_title=meeting_title))
     db.commit()
     return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests}
 

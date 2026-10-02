@@ -19,6 +19,12 @@ class RunCreate(BaseModel):
     agent_ids: list[str] = Field(default_factory=list)
     model: str
     filters: dict = Field(default_factory=dict)
+    # Denormalized meeting snapshot (plain strings, never FKs): captured at
+    # run time from the Test Lab picker — client name, the meeting-title
+    # filter (type-like grouping), and the specific meeting instance title.
+    client: str = ""
+    meeting_type: str = ""
+    meeting_title: str = ""
 
     @field_validator("filters", mode="before")
     @classmethod
