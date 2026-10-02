@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 import { api, meetingTypeOf, REASONING_EFFORTS } from "../lib/api";
+import type { ModelInfo, ModelReasoning } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -450,6 +451,69 @@ export default function TestLab() {
     setSelected((s) => s.filter((id) => agents.some((a) => a.id === id && a.is_enabled !== false)));
   }, [agents]);
 
+  const { data: modelsMeta } = useQuery({
+    queryKey: ["models"],
+    queryFn: async () => (await api.get("/models")).data as { live: boolean; models: ModelInfo[] },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Per-model reasoning options (OpenRouter docs: GET /models entries MAY
+  // carry `reasoning`; supported_efforts is descending, null = all gateway
+  // efforts accepted, omitted = no effort selection exposed).
+  const modelId = model.trim();
+  const entry = modelsMeta?.models.find((m) => m.id === modelId);
+  const live = modelsMeta?.live ?? false;
+  const info: ModelReasoning | null = entry?.reasoning ?? null;
+  const supported: string[] | null = Array.isArray(info?.supported_efforts)
+    ? (info.supported_efforts as unknown[]).filter(
+        (v): v is string => typeof v === "string" && v.trim() !== "",
+      )
+    : null;
+  const mandatory = info?.mandatory === true;
+  const effortOptions = (supported ?? [...REASONING_EFFORTS])
+    .filter((v) => !(mandatory && v === "none"))
+    .map((v) => ({ value: v, label: v }));
+  const reasoningDisabled = modelId === "" || (live && !!entry && !info);
+  const reasoningPlaceholder =
+    modelId === ""
+      ? "Select a model first"
+      : reasoningDisabled
+        ? "No reasoning options for this model"
+        : "Default (no effort)";
+
+  // Clears an effort picked before the live model list arrived, if the loaded list disallows it.
+  React.useEffect(() => {
+    if (reasoningEffort !== "" && (reasoningDisabled || !effortOptions.some((o) => o.value === reasoningEffort))) setReasoningEffort("");
+  }, [reasoningEffort, reasoningDisabled, effortOptions]);
+
+  function handleModelChange(v: string) {
+    setModel(v);
+    const id = v.trim();
+    if (id === "") {
+      setReasoningEffort("");
+      return;
+    }
+    if (!modelsMeta?.live) return;
+    const e = modelsMeta.models.find((m) => m.id === id);
+    if (!e) return; // custom id unknown -> keep
+    if (!e.reasoning) {
+      setReasoningEffort("");
+      return;
+    }
+    const sup: string[] = Array.isArray(e.reasoning.supported_efforts)
+      ? (e.reasoning.supported_efforts as unknown[]).filter(
+          (x): x is string => typeof x === "string" && x.trim() !== "",
+        )
+      : [...REASONING_EFFORTS];
+    const m = e.reasoning.mandatory === true;
+    if (
+      reasoningEffort !== "" &&
+      !(sup.includes(reasoningEffort) && !(m && reasoningEffort === "none"))
+    ) {
+      setReasoningEffort("");
+    }
+  }
+
   const clientsQuery = useQuery({
     queryKey: ["meeting-clients"],
     queryFn: async () => (await api.get("/meetings/clients")).data as MeetingClient[],
@@ -630,21 +694,19 @@ export default function TestLab() {
                 <span className={fieldLabel}>OpenRouter model</span>
                 <KeyStatusBadge />
               </div>
-              <ModelCombobox value={model} onChange={setModel} />
+              <ModelCombobox value={model} onChange={handleModelChange} />
             </div>
             <div>
               <span className={fieldLabel}>Reasoning effort</span>
               <SingleSelectFilter
                 value={reasoningEffort}
                 onChange={setReasoningEffort}
-                options={REASONING_EFFORTS.map((v) => ({
-                  value: v,
-                  label: v,
-                }))}
-                placeholder="Default (no effort)"
+                options={effortOptions}
+                placeholder={reasoningPlaceholder}
                 ariaLabel="Reasoning effort"
                 filterPlaceholder="Search efforts…"
                 emptyText="No matches."
+                disabled={reasoningDisabled}
               />
             </div>
           </div>

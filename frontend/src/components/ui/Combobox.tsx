@@ -2,10 +2,11 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Star } from "lucide-react";
 import { api } from "../../lib/api";
+import type { ModelReasoning } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { fieldInput } from "./Modal";
 
-export type ModelOption = { id: string; name: string };
+export type ModelOption = { id: string; name: string; reasoning?: ModelReasoning | null };
 
 const FAV_MODELS_KEY = "lab:favourite-models";
 

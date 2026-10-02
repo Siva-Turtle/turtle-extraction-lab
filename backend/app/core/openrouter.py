@@ -227,7 +227,13 @@ async def get_model_pricing(model: str) -> tuple[float | None, float | None]:
 
 
 async def fetch_models() -> tuple[list[dict], bool]:
-    """Return (models, live). Live list from OpenRouter, else curated fallback."""
+    """Return (models, live). Live list from OpenRouter, else curated fallback.
+
+    Each live entry is {"id", "name", "reasoning"} where reasoning passes
+    through the per-model `reasoning` object when it is a dict, else None.
+    Per OpenRouter docs: supported_efforts is descending (null = all gateway
+    efforts accepted); omitted reasoning = no effort selection exposed.
+    """
     if not is_configured():
         return CURATED_MODELS, False
     try:
@@ -238,8 +244,16 @@ async def fetch_models() -> tuple[list[dict], bool]:
             )
             resp.raise_for_status()
             items = resp.json().get("data", [])
-        models = [{"id": m.get("id", ""), "name": m.get("name") or m.get("id", "")}
-                  for m in items if m.get("id")]
+        models = [
+            {
+                "id": m.get("id", ""),
+                "name": m.get("name") or m.get("id", ""),
+                # Per-model reasoning options (OpenRouter docs: per-model
+                # reasoning options; supported_efforts descending, null = all
+                # gateway efforts accepted, omitted = no effort selection).
+                "reasoning": m.get("reasoning") if isinstance(m.get("reasoning"), dict) else None,
+            }
+            for m in items if m.get("id")]
         models.sort(key=lambda m: m["id"])
         return models, True
     except Exception:

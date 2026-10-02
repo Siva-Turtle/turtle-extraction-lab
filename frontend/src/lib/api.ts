@@ -33,6 +33,16 @@ export type LogsQueryParams = {
 
 export const REASONING_EFFORTS = ["max", "xhigh", "high", "medium", "low", "minimal", "none"] as const;
 
+export type ModelReasoning = {
+  supported_efforts?: string[] | null;
+  default_effort?: string | null;
+  default_enabled?: boolean | null;
+  supports_max_tokens?: boolean | null;
+  mandatory?: boolean | null;
+};
+
+export type ModelInfo = { id: string; name: string; reasoning?: ModelReasoning | null };
+
 export type AgentKind = "extraction" | "identifier";
 
 export type Agent = {
