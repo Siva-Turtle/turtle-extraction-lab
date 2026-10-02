@@ -51,6 +51,26 @@ def test_run_and_feedback_flow(client, monkeypatch):
     assert logs[0]["feedback"] == {"A": {"email": {"rating": "up", "remarks": "exact quote"}}}
 
 
+def test_feedback_edit_overwrites_latest(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    rid = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()["id"]
+
+    assert client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": "A", "attribute_name": "email",
+        "rating": "up", "remarks": "first"}).json() == {"ok": True}
+    assert client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": "A", "attribute_name": "email",
+        "rating": "down", "remarks": "second"}).json() == {"ok": True}
+
+    logs = client.get("/api/v1/logs").json()
+    assert logs[0]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "second"}}}
+
+    got = client.get(f"/api/v1/runs/{rid}/feedback").json()
+    assert [(f["rating"], f["remarks"]) for f in got] == [("up", "first"), ("down", "second")]
+
+
 def test_run_without_key_records_error(client):
     aid = client.post("/api/v1/agents", json={"name": "B"}).json()["id"]
     run = client.post("/api/v1/runs", json={

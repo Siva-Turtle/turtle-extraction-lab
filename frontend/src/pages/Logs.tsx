@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useState } from "react";
-import { BarChart3, Braces, Copy, Sparkles } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { BarChart3, Braces, Copy, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
@@ -666,12 +666,127 @@ function RawPanel({ log }: { log: LogRow }) {
   );
 }
 
+function FeedbackEditor({
+  log,
+  agent,
+  attr,
+  rating: initialRating,
+  remarks: initialRemarks,
+  onDone,
+}: {
+  log: LogRow;
+  agent: string;
+  attr: string;
+  rating: string;
+  remarks: string;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const [rating, setRating] = React.useState<"up" | "down" | null>(
+    initialRating === "up" ? "up" : initialRating === "down" ? "down" : null,
+  );
+  const [remarks, setRemarks] = React.useState(initialRemarks ?? "");
+
+  const save = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post(`/runs/${log.run_id}/feedback`, {
+          agent_name: agent,
+          attribute_name: attr,
+          rating,
+          remarks,
+        })
+      ).data,
+    onSuccess: () => {
+      // ["logs"] covers ["logs", ...]; ["logs-all"] is a distinct key so it
+      // needs its own invalidation for the drawer (reads via allLogs.find).
+      qc.invalidateQueries({ queryKey: ["logs"] });
+      qc.invalidateQueries({ queryKey: ["logs-all"] });
+      toast.success("Rating updated");
+      onDone();
+    },
+    onError: () => toast.error("Could not save rating"),
+  });
+
+  return (
+    <div className="flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white p-2 dark:border-white/10 dark:bg-white/5">
+      <button
+        type="button"
+        onClick={() => setRating("up")}
+        title="Thumbs up"
+        aria-pressed={rating === "up"}
+        aria-label="Thumbs up"
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          rating === "up"
+            ? "border-[#22c55e] bg-[#e9f9ef] text-[#15803d]"
+            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#22c55e] dark:border-white/10 dark:text-[#C3C2B7]",
+        )}
+      >
+        <ThumbsUp className="h-4 w-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setRating("down")}
+        title="Thumbs down"
+        aria-pressed={rating === "down"}
+        aria-label="Thumbs down"
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          rating === "down"
+            ? "border-[#ef4444] bg-[#fdecec] text-[#b91c1c]"
+            : "border-[#e5e7eb] text-[#4a5058] hover:border-[#ef4444] dark:border-white/10 dark:text-[#C3C2B7]",
+        )}
+      >
+        <ThumbsDown className="h-4 w-4" aria-hidden="true" />
+      </button>
+      <input
+        value={remarks}
+        onChange={(e) => setRemarks(e.target.value)}
+        placeholder="Remarks…"
+        aria-label="Remarks"
+        className="h-9 min-w-40 flex-1 rounded-full border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
+      />
+      <Button
+        variant="secondary"
+        size="sm"
+        loading={save.isPending}
+        onClick={() => (rating ? save.mutate() : toast.error("Pick 👍 or 👎 first"))}
+      >
+        Save
+      </Button>
+      <button
+        type="button"
+        onClick={onDone}
+        className="px-1 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
     ["Meeting type", logMeetingType(log) || "Unknown"],
   ];
+  // Flattened feedback rows; defensive against missing/malformed feedback.
+  const feedback = log.feedback ?? {};
+  const fbList: { agent: string; attr: string; rating: string; remarks: string }[] = [];
+  for (const [agent, attrs] of Object.entries(feedback)) {
+    const m = (attrs ?? {}) as Record<string, { rating?: unknown; remarks?: unknown }>;
+    for (const [attr, f] of Object.entries(m)) {
+      fbList.push({
+        agent,
+        attr,
+        rating: typeof f?.rating === "string" ? f.rating : "",
+        remarks: typeof f?.remarks === "string" ? f.remarks : "",
+      });
+    }
+  }
+  const [editingKey, setEditingKey] = React.useState<string | null>(null);
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div className="min-w-0 max-w-full">
@@ -820,17 +935,39 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
           <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No ratings yet.</p>
         ) : (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {Object.entries(log.feedback).map(([agent, attrs]) =>
-              Object.entries(attrs).map(([attr, f]) => (
+            {fbList.map(({ agent, attr, rating, remarks }) => {
+              const key = `${agent}\u0000${attr}`;
+              if (editingKey === key) {
+                return (
+                  <FeedbackEditor
+                    key={key}
+                    log={log}
+                    agent={agent}
+                    attr={attr}
+                    rating={rating}
+                    remarks={remarks}
+                    onDone={() => setEditingKey(null)}
+                  />
+                );
+              }
+              return (
                 <span
-                  key={`${agent}-${attr}`}
-                  title={f.remarks || undefined}
+                  key={key}
+                  title={remarks || undefined}
                   className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
                 >
-                  {agent} / {attr} {f.rating === "up" ? "👍" : "👎"}
+                  {agent} / {attr} {rating === "up" ? "👍" : "👎"}
+                  <button
+                    type="button"
+                    onClick={() => setEditingKey(key)}
+                    aria-label={`Edit rating for ${agent} / ${attr}`}
+                    className="flex h-5 w-5 items-center justify-center rounded-full text-[#4a5058] transition-colors hover:bg-white hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
+                  >
+                    <Pencil className="h-3 w-3" aria-hidden="true" />
+                  </button>
                 </span>
-              )),
-            )}
+              );
+            })}
           </div>
         )}
       </div>

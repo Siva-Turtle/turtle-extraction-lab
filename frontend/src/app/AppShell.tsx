@@ -166,7 +166,7 @@ export function AppShell(): React.JSX.Element {
 
         {/* Page content */}
         <main className="w-full min-w-0 flex-1 bg-[#eef0f4] px-3 py-4 pb-24 sm:px-4 sm:py-6 md:pb-10 dark:bg-[#161616]">
-          <div className="mx-auto w-full min-w-0 max-w-6xl animate-[turtle-tab-panel-in_180ms_ease-out]" key={pathname}>
+          <div className="mx-auto w-full min-w-0 max-w-6xl animate-[turtle-tab-panel-in_180ms_ease-out]">
             <Outlet />
           </div>
         </main>
