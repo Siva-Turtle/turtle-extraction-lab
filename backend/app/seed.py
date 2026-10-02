@@ -6,12 +6,13 @@ from app.db.session import SessionLocal
 AGENT_NAME = "Contact Facts"
 AGENT_INSTRUCTION = (
     "Extract structured contact facts. Only use information stated in the input.\n\n"
-    "| Type | Meaning |\n"
+    "| Confidence Type | Meaning |\n"
     "|---|---|\n"
     "| `quoted` | Value is explicitly stated in the transcript |\n"
     "| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n"
     "| `inferred` | Value was not directly stated; model derived it from evidence |\n"
-    "| `not_found` | No sufficient evidence exists |"
+    "| `not_found` | No sufficient evidence exists |\n"
+    "| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |"
 )
 ATTRIBUTES = [
     ("full_name", "string", "Person's full name as stated", []),

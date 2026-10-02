@@ -121,9 +121,12 @@ def test_attribute_object_validation(client):
         ]}).json()
     assert created["enum_values"] == []
     assert created["object_properties"] == [
-        {"name": "equity", "type": "number", "null_allowed": True},
-        {"name": "debt", "type": "number", "null_allowed": False},
-        {"name": "tags", "type": "array", "null_allowed": True},
+        {"name": "equity", "type": "number", "null_allowed": True,
+         "enum": [], "description": ""},
+        {"name": "debt", "type": "number", "null_allowed": False,
+         "enum": [], "description": ""},
+        {"name": "tags", "type": "array", "null_allowed": True,
+         "enum": [], "description": ""},
     ]
     atid = created["id"]
 
@@ -137,7 +140,8 @@ def test_attribute_object_validation(client):
         "object_properties": [{"name": "gold", "type": "number",
                                "null_allowed": True}]}).json()
     assert back["object_properties"] == [
-        {"name": "gold", "type": "number", "null_allowed": True}]
+        {"name": "gold", "type": "number", "null_allowed": True,
+         "enum": [], "description": ""}]
 
 
 def test_attribute_group_crud_and_filter(client):
@@ -183,12 +187,14 @@ def test_attribute_array_item_shapes(client):
     obj = client.post("/api/v1/attributes", json={
         "agent_ids": [aid], "name": "arr_obj", "type": "array",
         "array_items": {"kind": "object", "properties": [
-            {"name": "name", "type": "string", "null_allowed": True},
+            {"name": "description", "type": "string", "null_allowed": True},
             {"name": "value", "type": "number", "null_allowed": True},
         ]}}).json()
     assert obj["array_items"] == {"kind": "object", "properties": [
-        {"name": "name", "type": "string", "null_allowed": True},
-        {"name": "value", "type": "number", "null_allowed": True},
+        {"name": "description", "type": "string", "null_allowed": True,
+         "enum": [], "description": ""},
+        {"name": "value", "type": "number", "null_allowed": True,
+         "enum": [], "description": ""},
     ]}
 
     # object kind requires properties; bad kind rejected

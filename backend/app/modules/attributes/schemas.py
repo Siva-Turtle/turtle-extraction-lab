@@ -12,6 +12,8 @@ class ObjectProperty(BaseModel):
     name: str
     type: str = "string"
     null_allowed: bool = True
+    enum: list[str] = Field(default_factory=list)
+    description: str = ""
 
 
 class ArrayItems(BaseModel):

@@ -20,7 +20,7 @@ export type Agent = {
 };
 
 const INPUT_TYPES = ["transcription", "messages", "mail"];
-export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\n| Type | Meaning |\n|---|---|\n| \`quoted\` | Value is explicitly stated in the transcript |\n| \`normalized\` | Value is explicitly stated but transformed into your canonical representation |\n| \`inferred\` | Value was not directly stated; model derived it from evidence |\n| \`not_found\` | No sufficient evidence exists |\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
+export const DEFAULT_SYSTEM_INSTRUCTION = `Extract only information stated in the input transcription.\n\nReturn a JSON object keyed by attribute name. Each value has "value", "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), "evidence" (exact quote). Omit attributes not found — never return null. quoted = stated word-for-word; inferred = concluded but not stated verbatim; normalized = standardized from a stated form (phone digits, dates, casing).\n\n| Confidence Type | Meaning |\n|---|---|\n| \`quoted\` | Value is explicitly stated in the transcript |\n| \`normalized\` | Value is explicitly stated but transformed into your canonical representation |\n| \`inferred\` | Value was not directly stated; model derived it from evidence |\n| \`not_found\` | No sufficient evidence exists |\n| \`calculated\` | Mentioned as pieces of info, but model performed calculations to arrive |\n\nThe attribute list is attached automatically; the transcription arrives as the input message.`;
 
 type Editing = {
   id?: string;
@@ -49,12 +49,13 @@ const RESULT_CONTRACT =
   'inferred = value concluded from the input but not stated verbatim ' +
   '(evidence is the supporting passage); normalized = value standardized from a stated form ' +
   'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n' +
-  '| Type | Meaning |\n' +
+  '| Confidence Type | Meaning |\n' +
   '|---|---|\n' +
   '| `quoted` | Value is explicitly stated in the transcript |\n' +
   '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n' +
   '| `inferred` | Value was not directly stated; model derived it from evidence |\n' +
-  '| `not_found` | No sufficient evidence exists |';
+  '| `not_found` | No sufficient evidence exists |\n' +
+  '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |';
 
 const COPY_USER_TEMPLATE = "{{Transcription}}";
 
@@ -62,6 +63,8 @@ type PreviewObjectProp = {
   name: string;
   type: string;
   null_allowed: boolean;
+  enum?: string[];
+  description?: string;
 };
 
 type PreviewAttr = {
@@ -91,18 +94,25 @@ function buildLocalSystem(baseInstruction: string, attrs: PreviewAttr[]): string
 }
 
 /** Mirrors backend `_sub_schema`: one object sub-field to its schema fragment. */
-function subSchema(subType: string, nullAllowed: boolean): Record<string, unknown> {
+function subSchema(subType: string, nullAllowed: boolean, subEnum?: string[], subDescription?: string): Record<string, unknown> {
   const t = (base: string) => (nullAllowed ? [base, "null"] : base);
+  let out: Record<string, unknown>;
   if (subType === "array") {
-    return { type: t("array"), items: { type: "string" } };
+    out = { type: t("array"), items: { type: "string" } };
+  } else if (subType === "number") {
+    out = { type: t("number") };
+  } else if (subType === "boolean") {
+    out = { type: t("boolean") };
+  } else {
+    out = { type: t("string") };
   }
-  if (subType === "number") {
-    return { type: t("number") };
+  if (subEnum && subEnum.length > 0) {
+    out.enum = [...subEnum];
   }
-  if (subType === "boolean") {
-    return { type: t("boolean") };
+  if (subDescription) {
+    out.description = subDescription;
   }
-  return { type: t("string") };
+  return out;
 }
 
 /** Mirrors backend `_array_item_schema`: array items fragment by kind. */
@@ -115,7 +125,7 @@ function arrayItemSchema(a: PreviewAttr): Record<string, unknown> {
     const subProps: Record<string, unknown> = {};
     const subRequired: string[] = [];
     for (const p of a.array_items?.properties ?? []) {
-      subProps[p.name] = subSchema(p.type, p.null_allowed !== false);
+      subProps[p.name] = subSchema(p.type, p.null_allowed !== false, p.enum, p.description);
       subRequired.push(p.name);
     }
     return { type: "object", properties: subProps, required: subRequired, additionalProperties: false };
@@ -145,7 +155,7 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
       const subProps: Record<string, unknown> = {};
       const subRequired: string[] = [];
       for (const p of a.object_properties ?? []) {
-        subProps[p.name] = subSchema(p.type, p.null_allowed !== false);
+        subProps[p.name] = subSchema(p.type, p.null_allowed !== false, p.enum, p.description);
         subRequired.push(p.name);
       }
       valueSchema = {
@@ -199,9 +209,9 @@ function toPreviewAttr(a: LabAttribute): PreviewAttr {
     description: a.description,
     group: a.group ?? "",
     enum_values: a.enum_values ?? [],
-    object_properties: (a.object_properties ?? []).map((p) => ({ ...p })),
+    object_properties: (a.object_properties ?? []).map((p) => ({ ...p, enum: [...(p.enum ?? [])], description: p.description ?? "" })),
     array_items: a.array_items?.kind === "object"
-      ? { kind: "object", properties: (a.array_items.properties ?? []).map((p) => ({ ...p })) }
+      ? { kind: "object", properties: (a.array_items.properties ?? []).map((p) => ({ ...p, enum: [...(p.enum ?? [])], description: p.description ?? "" })) }
       : { kind: a.array_items?.kind ?? "string", properties: [] },
   };
 }

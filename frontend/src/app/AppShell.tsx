@@ -15,15 +15,12 @@ const NAV_ITEMS = [
 function Wordmark(): React.JSX.Element {
   const { resolved } = useTheme();
   return (
-    <span className="flex min-w-0 items-center gap-2" aria-label="Turtle Extraction Lab home">
+    <span className="flex min-w-0 items-center gap-2" aria-label="Turtle home">
       <img
         src={resolved === "dark" ? "/turtle-logo-white.svg" : "/turtle-logo-black.svg"}
         alt="Turtle"
         className="h-7 w-auto"
       />
-      <span className="truncate font-module text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-        extraction lab
-      </span>
     </span>
   );
 }

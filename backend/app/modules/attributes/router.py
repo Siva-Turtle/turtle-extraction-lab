@@ -63,6 +63,31 @@ def _clean_group(raw: object) -> str:
     return str(raw).strip()
 
 
+def _clean_sub_enum(raw: object, ctx: str) -> list[str]:
+    """Validate optional sub-field enum list (constrained string support)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise HTTPException(422, f"{ctx} property enum must be a list of strings")
+    cleaned: list[str] = []
+    for v in raw:
+        if not isinstance(v, str):
+            raise HTTPException(422, f"{ctx} property enum must be a list of strings")
+        t = v.strip()
+        if t:
+            cleaned.append(t)
+    return cleaned
+
+
+def _clean_sub_description(raw: object, ctx: str) -> str:
+    """Validate optional sub-field description help-text."""
+    if raw is None or raw == "":
+        return ""
+    if not isinstance(raw, str):
+        raise HTTPException(422, f"{ctx} property description must be a string")
+    return raw.strip()
+
+
 def _as_array_items_dict(raw: object) -> dict:
     if isinstance(raw, ArrayItems):
         return {"kind": raw.kind, "properties": [p.model_dump() for p in raw.properties]}
@@ -87,7 +112,14 @@ def _normalize_array_items(raw: object) -> dict:
         sub_type = p.get("type", "string")
         null_allowed = p.get("null_allowed", True)
         if name and sub_type in OBJECT_SUB_TYPES and isinstance(null_allowed, bool):
-            cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
+            entry: dict = {"name": name, "type": sub_type, "null_allowed": null_allowed}
+            try:
+                entry["enum"] = _clean_sub_enum(p.get("enum", []), "array")
+                entry["description"] = _clean_sub_description(p.get("description", ""), "array")
+            except HTTPException:
+                entry["enum"] = []
+                entry["description"] = ""
+            cleaned.append(entry)
     return {"kind": kind, "properties": cleaned}
 
 
@@ -117,7 +149,9 @@ def _validate_array_items(raw: object) -> dict:
         if name in seen:
             raise HTTPException(422, f"duplicate array property: {name}")
         seen.add(name)
-        cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
+        cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed,
+                        "enum": _clean_sub_enum(p.get("enum", []), "array"),
+                        "description": _clean_sub_description(p.get("description", ""), "array")})
     return {"kind": kind, "properties": cleaned}
 
 
@@ -149,7 +183,9 @@ def _validate(attr_type: str, enum_values: list[str],
             if name in seen:
                 raise HTTPException(422, f"duplicate object property: {name}")
             seen.add(name)
-            cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed})
+            cleaned.append({"name": name, "type": sub_type, "null_allowed": null_allowed,
+                            "enum": _clean_sub_enum(p.get("enum", []), "object"),
+                            "description": _clean_sub_description(p.get("description", ""), "object")})
         return [], cleaned, dict(DEFAULT_ARRAY_ITEMS)
     if attr_type == "array":
         return [], [], _validate_array_items(array_items if array_items is not None else {})

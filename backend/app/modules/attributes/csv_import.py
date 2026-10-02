@@ -110,7 +110,11 @@ def _split_first_colon(s: str) -> tuple[str, str] | None:
 
 
 def parse_object_properties(inner: str) -> list[dict]:
-    """Parse `name: type` pairs; enum-like (`a|b`) -> string; all null_allowed."""
+    """Parse `name: type` pairs; enum-like (`a|b`) -> string; all null_allowed.
+
+    Sub-field literally named `name` is renamed to `description` (if the
+    model cannot get the exact name it provides a description instead).
+    """
     inner = (inner or "").strip()
     if not inner:
         return []
@@ -127,12 +131,15 @@ def parse_object_properties(inner: str) -> list[dict]:
         type_raw = right.strip()
         if not name:
             continue
+        if name == "name":
+            name = "description"
         if "|" in type_raw:
             sub_type = "string"
         else:
             t = _strip_quotes(type_raw).lower()
             sub_type = t if t in ("string", "number", "boolean", "array") else "string"
-        props.append({"name": name, "type": sub_type, "null_allowed": True})
+        props.append({"name": name, "type": sub_type, "null_allowed": True,
+                      "enum": [], "description": ""})
     return props
 
 
@@ -170,6 +177,56 @@ def build_description(csv_desc: str, original: str, normalized: str) -> str:
     return desc
 
 
+# Single source of truth for constrained/annotated item sub-fields so
+# CSV re-imports preserve the overrides (import script calls parse_row).
+TOTAL_ENUM = ["India", "Foreign", "Overall"]
+TOTAL_DESCRIPTION = (
+    "Total assets bucket: extract total assets in India, "
+    "total assets outside India (Foreign), and overall total."
+)
+RENT_DESCRIPTION = "Name/location of the property the rent expense relates to."
+
+
+def _constrain_description_prop(props: list[dict], enum: list[str] | None,
+                                description: str) -> list[dict]:
+    """Set enum/description help-text on the `description` sub-field in place."""
+    for p in props:
+        if isinstance(p, dict) and p.get("name") == "description":
+            if enum is not None:
+                p["enum"] = list(enum)
+            p["description"] = description
+            return props
+    # Missing (unexpected shape): append so the contract still holds.
+    props.append({"name": "description", "type": "string",
+                  "null_allowed": True,
+                  "enum": list(enum) if enum is not None else [],
+                  "description": description})
+    return props
+
+
+def apply_special_cases(base: str, parsed: dict) -> dict:
+    """Override total/rent item `description` sub-fields (re-import safe)."""
+    if base == "total":
+        if parsed.get("type") == "array":
+            items = parsed.get("array_items") or {}
+            if isinstance(items, dict) and items.get("kind") == "object":
+                _constrain_description_prop(
+                    items.get("properties") or [], TOTAL_ENUM, TOTAL_DESCRIPTION)
+        elif parsed.get("type") == "object":
+            _constrain_description_prop(
+                parsed.get("object_properties") or [], TOTAL_ENUM, TOTAL_DESCRIPTION)
+    elif base == "rent":
+        if parsed.get("type") == "array":
+            items = parsed.get("array_items") or {}
+            if isinstance(items, dict) and items.get("kind") == "object":
+                _constrain_description_prop(
+                    items.get("properties") or [], None, RENT_DESCRIPTION)
+        elif parsed.get("type") == "object":
+            _constrain_description_prop(
+                parsed.get("object_properties") or [], None, RENT_DESCRIPTION)
+    return parsed
+
+
 def parse_row(group: str, prop: str, typ: str,
               desc: str, enum_raw: str) -> dict:
     """Parse one CSV row to an attribute dict (name not yet de-duped)."""
@@ -190,16 +247,18 @@ def parse_row(group: str, prop: str, typ: str,
                 "object_properties": [],
                 "array_items": {"kind": "string", "properties": []}}
     if type_lower == "array":
-        return {"group": grp, "name": base, "original": original,
-                "type": "array", "description": description,
-                "enum_values": [], "object_properties": [],
-                "array_items": parse_array_spec(enum_raw)}
+        parsed = {"group": grp, "name": base, "original": original,
+                  "type": "array", "description": description,
+                  "enum_values": [], "object_properties": [],
+                  "array_items": parse_array_spec(enum_raw)}
+        return apply_special_cases(base, parsed)
     if type_lower == "object":
-        return {"group": grp, "name": base, "original": original,
-                "type": "object", "description": description,
-                "enum_values": [],
-                "object_properties": parse_object_spec(enum_raw),
-                "array_items": {"kind": "string", "properties": []}}
+        parsed = {"group": grp, "name": base, "original": original,
+                  "type": "object", "description": description,
+                  "enum_values": [],
+                  "object_properties": parse_object_spec(enum_raw),
+                  "array_items": {"kind": "string", "properties": []}}
+        return apply_special_cases(base, parsed)
     # Unknown types fall back to string (minimal, never crash the import).
     return {"group": grp, "name": base, "original": original,
             "type": "string", "description": description,

@@ -10,6 +10,8 @@ export type AttributeObjectProperty = {
   name: string;
   type: AttributeObjectPropertyType;
   null_allowed: boolean;
+  enum?: string[];
+  description?: string;
 };
 
 export type AttributeArrayKind = "string" | "number" | "object";

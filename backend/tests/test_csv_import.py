@@ -50,8 +50,10 @@ def test_enum_strips_null_token():
 
 def test_object_parse_sub_fields_all_nullable():
     props = parse_object_spec('{"score": number, "reason": string}')
-    assert props == [{"name": "score", "type": "number", "null_allowed": True},
-                    {"name": "reason", "type": "string", "null_allowed": True}]
+    assert props == [{"name": "score", "type": "number", "null_allowed": True,
+                      "enum": [], "description": ""},
+                    {"name": "reason", "type": "string", "null_allowed": True,
+                     "enum": [], "description": ""}]
 
 
 def test_array_of_objects_parse_enum_like_to_string():
@@ -60,12 +62,45 @@ def test_array_of_objects_parse_enum_like_to_string():
         '"asked_by": "client" | "advisor" | "both"}]')
     assert cfg["kind"] == "object"
     assert cfg["properties"] == [
-        {"name": "query", "type": "string", "null_allowed": True},
-        {"name": "status", "type": "string", "null_allowed": True},
-        {"name": "asked_by", "type": "string", "null_allowed": True},
+        {"name": "query", "type": "string", "null_allowed": True,
+         "enum": [], "description": ""},
+        {"name": "status", "type": "string", "null_allowed": True,
+         "enum": [], "description": ""},
+        {"name": "asked_by", "type": "string", "null_allowed": True,
+         "enum": [], "description": ""},
     ]
     assert parse_array_spec("[string]") == {"kind": "string", "properties": []}
     assert parse_array_spec("[number]") == {"kind": "number", "properties": []}
+
+
+def test_name_subfield_renamed_to_description():
+    cfg = parse_array_spec('[{"name": string, "value": number}]')
+    assert cfg["kind"] == "object"
+    assert cfg["properties"][0]["name"] == "description"
+    assert cfg["properties"][0]["enum"] == []
+    props = parse_object_spec('{"name": string, "value": number}')
+    assert props[0]["name"] == "description"
+
+
+def test_total_override_constrains_description():
+    from app.modules.attributes.csv_import import TOTAL_ENUM
+    parsed = parse_row("Assets", "Total", "array", "Totals.",
+                       '[{"description": string, "value": number}]')
+    assert parsed["name"] == "total"
+    props = parsed["array_items"]["properties"]
+    desc_prop = next(p for p in props if p["name"] == "description")
+    assert desc_prop["enum"] == TOTAL_ENUM == ["India", "Foreign", "Overall"]
+    assert "India" in desc_prop["description"] and "Foreign" in desc_prop["description"]
+
+
+def test_rent_override_sets_help_text():
+    parsed = parse_row("Expenses", "Rent", "array", "Rents.",
+                       '[{"name": string, "value": number}]')
+    assert parsed["name"] == "rent"
+    props = parsed["array_items"]["properties"]
+    desc_prop = next(p for p in props if p["name"] == "description")
+    assert desc_prop["enum"] == []
+    assert "property" in desc_prop["description"].lower()
 
 
 def test_parse_row_preserves_original_and_group():
@@ -98,9 +133,12 @@ def test_import_csv_sample_upsert_and_schema(client, db, tmp_path):
     assert rows["huf_test"]["enum_values"] == ["Has an HUF", "Recommended"]
     assert rows["huf_test"]["group"] == "Insurance"
     assert rows["score_test"]["object_properties"] == [
-        {"name": "score", "type": "number", "null_allowed": True},
-        {"name": "reason", "type": "string", "null_allowed": True}]
+        {"name": "score", "type": "number", "null_allowed": True,
+         "enum": [], "description": ""},
+        {"name": "reason", "type": "string", "null_allowed": True,
+         "enum": [], "description": ""}]
     assert rows["stocks_test"]["array_items"]["kind"] == "object"
+    assert rows["stocks_test"]["array_items"]["properties"][0]["name"] == "description"
     assert rows["card_name_s"]["array_items"] == {"kind": "string", "properties": []}
     assert "[Original: Card Name(s)]" in rows["card_name_s"]["description"]
 

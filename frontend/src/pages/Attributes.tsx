@@ -21,6 +21,8 @@ export type AttributeObjectProperty = {
   name: string;
   type: "string" | "number" | "boolean" | "array";
   null_allowed: boolean;
+  enum?: string[];
+  description?: string;
 };
 
 export type LabAttribute = {
@@ -229,7 +231,9 @@ function EnumValuesEditor({
 }
 
 /** Ordered sub-fields for type=="object" (dict): name + limited type + null flag.
- * Plus-to-add; no new row while the last name is empty; exact-match dedupe. */
+ * Plus-to-add; no new row while the last name is empty; exact-match dedupe.
+ * Each row also carries optional `enum` (pipe-separated allowed values) and
+ * `description` help-text (emitted as JSON-schema description). */
 function ObjectPropertiesEditor({
   properties,
   onChange,
@@ -238,7 +242,7 @@ function ObjectPropertiesEditor({
   onChange: (v: AttributeObjectProperty[]) => void;
 }): React.JSX.Element {
   const display: AttributeObjectProperty[] =
-    properties.length > 0 ? properties : [{ name: "", type: "string", null_allowed: true }];
+    properties.length > 0 ? properties : [{ name: "", type: "string", null_allowed: true, enum: [], description: "" }];
   const trimmed = display.map((p) => p.name.trim()).filter((n) => n !== "");
   const counts = new Map<string, number>();
   for (const n of trimmed) counts.set(n, (counts.get(n) ?? 0) + 1);
@@ -264,7 +268,7 @@ function ObjectPropertiesEditor({
   function addRow() {
     const last = display[display.length - 1] ?? { name: "" };
     if (last.name.trim() === "") return;
-    onChange([...display, { name: "", type: "string", null_allowed: true }]);
+    onChange([...display, { name: "", type: "string", null_allowed: true, enum: [], description: "" }]);
   }
 
   const lastEmpty = ((display[display.length - 1] ?? { name: "" }).name ?? "").trim() === "";
@@ -282,44 +286,69 @@ function ObjectPropertiesEditor({
           <span />
         </div>
         {display.map((p, i) => (
-          <div key={i} className="grid grid-cols-[minmax(0,1fr)_128px_96px_36px] items-center gap-2">
-            <input
-              value={p.name}
-              onChange={(e) => setRow(i, { ...p, name: e.target.value })}
-              spellCheck={false}
-              placeholder={`Property ${i + 1}`}
-              aria-label={`Property name ${i + 1}`}
-              className={cn(fieldInput, "mt-0 font-mono text-xs", isDupeRow(p.name) && "border-[#ef4444]")}
-            />
-            <select
-              value={p.type}
-              onChange={(e) =>
-                setRow(i, { ...p, type: e.target.value as AttributeObjectProperty["type"] })
-              }
-              aria-label={`Property type ${i + 1}`}
-              className={cn(fieldInput, "mt-0 font-mono text-xs")}
-            >
-              {SUB_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <input
-              type="checkbox"
-              checked={p.null_allowed}
-              onChange={(e) => setRow(i, { ...p, null_allowed: e.target.checked })}
-              aria-label={`Null allowed for property ${i + 1}`}
-              className="mx-auto h-5 w-5 shrink-0 accent-[#0d5c4a] dark:accent-[#2fdebf]"
-            />
-            <button
-              type="button"
-              onClick={() => removeRow(i)}
-              aria-label={`Remove property ${i + 1}`}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] hover:text-[#b91c1c] dark:text-[#C3C2B7] dark:hover:bg-white/10"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
+          <div key={i} className="grid gap-1.5">
+            <div className="grid grid-cols-[minmax(0,1fr)_128px_96px_36px] items-center gap-2">
+              <input
+                value={p.name}
+                onChange={(e) => setRow(i, { ...p, name: e.target.value })}
+                spellCheck={false}
+                placeholder={`Property ${i + 1}`}
+                aria-label={`Property name ${i + 1}`}
+                className={cn(fieldInput, "mt-0 font-mono text-xs", isDupeRow(p.name) && "border-[#ef4444]")}
+              />
+              <select
+                value={p.type}
+                onChange={(e) =>
+                  setRow(i, { ...p, type: e.target.value as AttributeObjectProperty["type"] })
+                }
+                aria-label={`Property type ${i + 1}`}
+                className={cn(fieldInput, "mt-0 font-mono text-xs")}
+              >
+                {SUB_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="checkbox"
+                checked={p.null_allowed}
+                onChange={(e) => setRow(i, { ...p, null_allowed: e.target.checked })}
+                aria-label={`Null allowed for property ${i + 1}`}
+                className="mx-auto h-5 w-5 shrink-0 accent-[#0d5c4a] dark:accent-[#2fdebf]"
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label={`Remove property ${i + 1}`}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#4a5058] hover:bg-[#e8fbf6] hover:text-[#b91c1c] dark:text-[#C3C2B7] dark:hover:bg-white/10"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              <input
+                value={(p.enum ?? []).join(" | ")}
+                onChange={(e) =>
+                  setRow(i, {
+                    ...p,
+                    enum: e.target.value.split("|").map((s) => s.trim()).filter((s) => s !== ""),
+                  })
+                }
+                spellCheck={false}
+                placeholder="Allowed values, separated by | (optional)"
+                aria-label={`Allowed values for property ${i + 1}`}
+                className={cn(fieldInput, "mt-0 font-mono text-xs")}
+              />
+              <input
+                value={p.description ?? ""}
+                onChange={(e) => setRow(i, { ...p, description: e.target.value })}
+                spellCheck={false}
+                placeholder="Field help text (optional)"
+                aria-label={`Help text for property ${i + 1}`}
+                className={cn(fieldInput, "mt-0 font-mono text-xs")}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -391,6 +420,7 @@ export default function Attributes() {
   });
   const [editing, setEditing] = useState<(typeof EMPTY & { id?: string }) | null>(null);
   const [groupFilter, setGroupFilter] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
 
   const groupOptions = React.useMemo(() => {
     const seen = new Map<string, number>();
@@ -403,22 +433,39 @@ export default function Attributes() {
       .map(([g, n]) => ({ value: g, label: g, sub: `${n} attribute${n === 1 ? "" : "s"}` }));
   }, [data]);
 
-  const visible = groupFilter.length === 0
-    ? data
-    : data.filter((r) => groupFilter.includes((r.group ?? "").trim()));
+  const visible = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return data.filter((r) => {
+      if (groupFilter.length > 0 && !groupFilter.includes((r.group ?? "").trim())) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        (r.name ?? "").toLowerCase().includes(q) ||
+        (r.description ?? "").toLowerCase().includes(q) ||
+        (r.group ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [data, groupFilter, search]);
 
   const save = useMutation({
     mutationFn: async (v: typeof EMPTY & { id?: string }) => {
       const raw = v.enum_values ?? [];
       const cleaned = raw.map((s) => s.trim()).filter((s) => s !== "");
+      const cleanProp = (p: AttributeObjectProperty): AttributeObjectProperty => ({
+        ...p,
+        name: p.name.trim(),
+        enum: (p.enum ?? []).map((s) => s.trim()).filter((s) => s !== ""),
+        description: (p.description ?? "").trim(),
+      });
       const rawProps = v.object_properties ?? [];
       const cleanedProps = rawProps
-        .map((p) => ({ ...p, name: p.name.trim() }))
+        .map(cleanProp)
         .filter((p) => p.name !== "");
       const rawItems = v.array_items ?? EMPTY_ARRAY_ITEMS;
       const cleanedItems: AttributeArrayItems =
         v.type === "array" && rawItems.kind === "object"
-          ? { kind: "object", properties: (rawItems.properties ?? []).map((p) => ({ ...p, name: p.name.trim() })).filter((p) => p.name !== "") }
+          ? { kind: "object", properties: (rawItems.properties ?? []).map(cleanProp).filter((p) => p.name !== "") }
           : v.type === "array" && rawItems.kind === "number"
             ? { kind: "number", properties: [] }
             : { kind: "string", properties: [] };
@@ -510,13 +557,18 @@ export default function Attributes() {
   }
 
   function openEdit(r: LabAttribute) {
+    const normProp = (p: AttributeObjectProperty): AttributeObjectProperty => ({
+      ...p,
+      enum: [...(p.enum ?? [])],
+      description: p.description ?? "",
+    });
     setEditing({
       ...r,
       group: r.group ?? "",
       enum_values: [...(r.enum_values ?? [])],
-      object_properties: (r.object_properties ?? []).map((p) => ({ ...p })),
+      object_properties: (r.object_properties ?? []).map(normProp),
       array_items: r.array_items?.kind === "object"
-        ? { kind: "object", properties: (r.array_items.properties ?? []).map((p) => ({ ...p })) }
+        ? { kind: "object", properties: (r.array_items.properties ?? []).map(normProp) }
         : r.array_items?.kind === "number"
           ? { kind: "number", properties: [] }
           : { kind: "string", properties: [] },
@@ -529,6 +581,14 @@ export default function Attributes() {
         title="Attributes"
         actions={
           <div className="flex items-center gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search attributes…"
+              aria-label="Search attributes"
+              spellCheck={false}
+              className="h-11 w-56 rounded-xl border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1 dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC] dark:placeholder:text-[#898781] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]"
+            />
             {groupOptions.length > 0 && (
               <div className="w-56">
                 <MultiSelectFilter
@@ -560,7 +620,7 @@ export default function Attributes() {
       ) : visible.length === 0 ? (
         <Card>
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-            No attributes in the selected groups — clear the group filter to see all.
+            No attributes match — clear the search or group filter to see all.
           </p>
         </Card>
       ) : (

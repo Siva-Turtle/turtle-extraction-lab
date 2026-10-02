@@ -209,12 +209,13 @@ def test_result_contract_text():
         'inferred = value concluded from the input but not stated verbatim '
         '(evidence is the supporting passage); normalized = value standardized from a stated form '
         'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n'
-        '| Type | Meaning |\n'
+        '| Confidence Type | Meaning |\n'
         '|---|---|\n'
         '| `quoted` | Value is explicitly stated in the transcript |\n'
         '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
         '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
-        '| `not_found` | No sufficient evidence exists |'
+        '| `not_found` | No sufficient evidence exists |\n'
+        '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |'
     )
     assert "…" not in runs_router.RESULT_CONTRACT
     assert "(quoted|inferred|normalized)" in runs_router.RESULT_CONTRACT
@@ -230,6 +231,7 @@ def test_result_contract_text():
         "| `normalized` | Value is explicitly stated but transformed into your canonical representation |",
         "| `inferred` | Value was not directly stated; model derived it from evidence |",
         "| `not_found` | No sufficient evidence exists |",
+        "| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |",
     ):
         assert row in runs_router.RESULT_CONTRACT
 

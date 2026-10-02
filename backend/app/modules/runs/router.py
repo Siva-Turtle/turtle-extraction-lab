@@ -21,12 +21,13 @@ RESULT_CONTRACT = (
     'inferred = value concluded from the input but not stated verbatim '
     '(evidence is the supporting passage); normalized = value standardized from a stated form '
     'such as phone digits, date formats, or casing (evidence is the original stated form).\n\n'
-    '| Type | Meaning |\n'
+    '| Confidence Type | Meaning |\n'
     '|---|---|\n'
     '| `quoted` | Value is explicitly stated in the transcript |\n'
     '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
     '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
-    '| `not_found` | No sufficient evidence exists |'
+    '| `not_found` | No sufficient evidence exists |\n'
+    '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |'
 )
 
 
@@ -62,27 +63,47 @@ def _object_properties(a: Attribute) -> list[dict]:
         else:
             props.append({"name": getattr(p, "name", ""),
                           "type": getattr(p, "type", "string"),
-                          "null_allowed": getattr(p, "null_allowed", True)})
+                          "null_allowed": getattr(p, "null_allowed", True),
+                          "enum": list(getattr(p, "enum", []) or []),
+                          "description": getattr(p, "description", "") or ""})
     return props
 
 
-def _sub_schema(sub_type: str, null_allowed: bool) -> dict:
+def _sub_schema(sub_type: str, null_allowed: bool,
+                enum: list[str] | None = None,
+                description: str | None = None) -> dict:
     """Map one object sub-field to its JSON-schema fragment (items always string)."""
     if sub_type == "array":
-        return {"type": (["array", "null"] if null_allowed else "array"),
-                "items": {"type": "string"}}
-    if sub_type == "number":
-        return {"type": (["number", "null"] if null_allowed else "number")}
-    if sub_type == "boolean":
-        return {"type": (["boolean", "null"] if null_allowed else "boolean")}
-    return {"type": (["string", "null"] if null_allowed else "string")}
+        out: dict = {"type": (["array", "null"] if null_allowed else "array"),
+                     "items": {"type": "string"}}
+    elif sub_type == "number":
+        out = {"type": (["number", "null"] if null_allowed else "number")}
+    elif sub_type == "boolean":
+        out = {"type": (["boolean", "null"] if null_allowed else "boolean")}
+    else:
+        out = {"type": (["string", "null"] if null_allowed else "string")}
+    if enum:
+        out["enum"] = list(enum)
+    if description:
+        out["description"] = description
+    return out
 
 
 def _snapshot_props(a: Attribute) -> list[dict]:
-    return [{"name": str(p.get("name", "")),
-             "type": p.get("type", "string"),
-             "null_allowed": bool(p.get("null_allowed", True))}
-            for p in _object_properties(a)]
+    out: list[dict] = []
+    for p in _object_properties(a):
+        enum_vals = p.get("enum", []) or []
+        if not isinstance(enum_vals, list):
+            enum_vals = []
+        desc = p.get("description", "") or ""
+        if not isinstance(desc, str):
+            desc = ""
+        out.append({"name": str(p.get("name", "")),
+                    "type": p.get("type", "string"),
+                    "null_allowed": bool(p.get("null_allowed", True)),
+                    "enum": list(enum_vals),
+                    "description": desc})
+    return out
 
 
 def _array_items_cfg(a: Attribute) -> dict:
@@ -99,9 +120,17 @@ def _array_items_cfg(a: Attribute) -> dict:
     for p in (raw.get("properties", []) or []):
         if not isinstance(p, dict):
             continue
+        enum_vals = p.get("enum", []) or []
+        if not isinstance(enum_vals, list):
+            enum_vals = []
+        desc = p.get("description", "") or ""
+        if not isinstance(desc, str):
+            desc = ""
         props.append({"name": str(p.get("name", "")),
                       "type": p.get("type", "string"),
-                      "null_allowed": bool(p.get("null_allowed", True))})
+                      "null_allowed": bool(p.get("null_allowed", True)),
+                      "enum": list(enum_vals),
+                      "description": desc})
     return {"kind": kind, "properties": props}
 
 
@@ -120,7 +149,9 @@ def _array_item_schema(a: Attribute) -> dict:
         sub_required: list[str] = []
         for p in cfg.get("properties", []):
             sub_props[str(p.get("name", ""))] = _sub_schema(
-                str(p.get("type", "string")), bool(p.get("null_allowed", True)))
+                str(p.get("type", "string")), bool(p.get("null_allowed", True)),
+                p.get("enum", []) or None,
+                p.get("description", "") or None)
             sub_required.append(str(p.get("name", "")))
         return {"type": "object", "properties": sub_props,
                 "required": sub_required, "additionalProperties": False}
@@ -154,7 +185,9 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
         sub_required: list[str] = []
         for p in _object_properties(a):
             sub_props[str(p.get("name", ""))] = _sub_schema(
-                str(p.get("type", "string")), bool(p.get("null_allowed", True)))
+                str(p.get("type", "string")), bool(p.get("null_allowed", True)),
+                p.get("enum", []) or None,
+                p.get("description", "") or None)
             sub_required.append(str(p.get("name", "")))
         value_schema = {"type": ["object", "null"], "properties": sub_props,
                         "required": sub_required,
