@@ -41,7 +41,14 @@ export type ModelReasoning = {
   mandatory?: boolean | null;
 };
 
-export type ModelInfo = { id: string; name: string; reasoning?: ModelReasoning | null };
+export type ModelPricing = { prompt: number | null; completion: number | null };
+
+export type ModelInfo = {
+  id: string;
+  name: string;
+  reasoning?: ModelReasoning | null;
+  pricing?: ModelPricing | null;
+};
 
 export type AgentKind = "extraction" | "identifier";
 

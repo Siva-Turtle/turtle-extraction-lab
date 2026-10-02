@@ -10,7 +10,7 @@ export type ModelOption = { id: string; name: string; reasoning?: ModelReasoning
 
 const FAV_MODELS_KEY = "lab:favourite-models";
 
-function loadFavouriteModels(): string[] {
+export function loadFavouriteModels(): string[] {
   try {
     const raw = localStorage.getItem(FAV_MODELS_KEY);
     if (!raw) return [];
@@ -25,15 +25,23 @@ function loadFavouriteModels(): string[] {
 /**
  * Searchable model picker: type to filter, arrows + Enter to pick,
  * free text always allowed (custom model ids). Mirrors the v2 field style.
+ *
+ * `mode="single"` (default) is a controlled input: typing calls
+ * `onChange(text)`. `mode="add"` keeps its own input text: picking an
+ * option calls `onChange(id)` then clears the input (for slot pickers).
  */
 export function ModelCombobox({
-  value,
+  value = "",
   onChange,
   onLiveChange,
+  mode = "single",
+  disabled,
 }: {
-  value: string;
+  value?: string;
   onChange: (v: string) => void;
   onLiveChange?: (live: boolean) => void;
+  mode?: "single" | "add";
+  disabled?: boolean;
 }): React.JSX.Element {
   const { data } = useQuery({
     queryKey: ["models"],
@@ -50,6 +58,9 @@ export function ModelCombobox({
   const rootRef = React.useRef<HTMLDivElement>(null);
   const [favourites, setFavourites] = React.useState<string[]>(loadFavouriteModels);
   const favSet = React.useMemo(() => new Set(favourites), [favourites]);
+  // "add" mode owns its input text so picking can clear it after onChange.
+  const [draft, setDraft] = React.useState("");
+  const text = mode === "add" ? draft : value;
 
   React.useEffect(() => {
     try {
@@ -63,7 +74,7 @@ export function ModelCombobox({
     setFavourites((prev) => (prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]));
   }
 
-  const q = value.trim().toLowerCase();
+  const q = text.trim().toLowerCase();
   const filtered = q
     ? options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q))
     : options;
@@ -75,8 +86,8 @@ export function ModelCombobox({
       return a.id.localeCompare(b.id);
     })
     .slice(0, 50);
-  const exact = options.some((o) => o.id === value.trim());
-  const showCustom = value.trim() !== "" && !exact;
+  const exact = options.some((o) => o.id === text.trim());
+  const showCustom = text.trim() !== "" && !exact;
 
   React.useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -86,14 +97,16 @@ export function ModelCombobox({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  React.useEffect(() => setHighlight(0), [value]);
+  React.useEffect(() => setHighlight(0), [text]);
 
   function pick(v: string) {
     onChange(v);
+    if (mode === "add") setDraft("");
     setOpen(false);
   }
 
   function onKey(e: React.KeyboardEvent) {
+    if (disabled) return;
     if (e.key === "Escape") {
       setOpen(false);
       return;
@@ -112,7 +125,7 @@ export function ModelCombobox({
     } else if (e.key === "Enter" && open) {
       e.preventDefault();
       if (highlight < rows.length) pick(rows[highlight].id);
-      else if (showCustom) pick(value.trim());
+      else if (showCustom) pick(text.trim());
     }
   }
 
@@ -121,12 +134,16 @@ export function ModelCombobox({
   return (
     <div ref={rootRef} className="relative mt-1.5">
       <input
-        value={value}
+        value={text}
+        disabled={disabled}
         onChange={(e) => {
-          onChange(e.target.value);
+          if (mode === "add") setDraft(e.target.value);
+          else onChange(e.target.value);
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          if (!disabled) setOpen(true);
+        }}
         onKeyDown={onKey}
         role="combobox"
         aria-expanded={open}
@@ -151,7 +168,7 @@ export function ModelCombobox({
           {rows.map((o, i) => {
             const isFav = favSet.has(o.id);
             return (
-              <li key={o.id} role="option" aria-selected={value.trim() === o.id}>
+              <li key={o.id} role="option" aria-selected={mode === "single" && text.trim() === o.id}>
                 <div
                   onMouseEnter={() => setHighlight(i)}
                   className={cn(
@@ -174,7 +191,7 @@ export function ModelCombobox({
                         <span className="block truncate text-xs text-[#4a5058] dark:text-[#C3C2B7]">{o.name}</span>
                       )}
                     </span>
-                    {value.trim() === o.id && (
+                    {mode === "single" && text.trim() === o.id && (
                       <Check className="h-4 w-4 shrink-0 text-[#0d5c4a] dark:text-[#2fdebf]" aria-hidden="true" />
                     )}
                   </button>
@@ -205,7 +222,7 @@ export function ModelCombobox({
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pick(value.trim())}
+                onClick={() => pick(text.trim())}
                 onMouseEnter={() => setHighlight(customIndex)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]",
@@ -213,7 +230,7 @@ export function ModelCombobox({
                 )}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-xs">Use “{value.trim()}”</span>
+                  <span className="block truncate font-mono text-xs">Use “{text.trim()}”</span>
                   <span className="block text-xs text-[#4a5058] dark:text-[#C3C2B7]">custom model id</span>
                 </span>
               </button>

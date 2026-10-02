@@ -1,27 +1,21 @@
 import * as React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Eye, Play } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, ChevronDown, Eye, Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
-import { api, meetingTypeOf, REASONING_EFFORTS } from "../lib/api";
-import type { ModelInfo, ModelReasoning } from "../lib/api";
-import { selectedAgentsOf, serverDetail } from "../lib/format";
+import { api, meetingTypeOf } from "../lib/api";
+import type { ModelInfo } from "../lib/api";
+import { fmtCostBoth, serverDetail, shortModel } from "../lib/format";
+import type { ColumnStatus, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
-import { ModelCombobox, MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
-import { ThumbButtons } from "../components/ui/ThumbButtons";
+import { MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
+import { ModelSlotsPicker } from "../components/run/ModelSlotsPicker";
+import { SingleModelTable } from "../components/compare/SingleModelTable";
+import { useMultiRun } from "../lib/useMultiRun";
 import type { Agent } from "./Agents";
-
-type AttrResult = {
-  value?: string | number | boolean | null;
-  confidence?: number;
-  confidence_type?: string;
-  evidence?: string;
-};
-
-type RunOutputs = Record<string, Record<string, AttrResult> & { _error?: string }>;
 
 type MeetingClient = { id: string; name: string };
 type MeetingSummary = {
@@ -335,69 +329,116 @@ function AgentsMultiSelect({
   );
 }
 
-function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: string; attrName: string }) {
-  const qc = useQueryClient();
-  const [rating, setRating] = React.useState<"up" | "down" | null>(null);
-  const [remarks, setRemarks] = React.useState("");
-  const [done, setDone] = React.useState(false);
+const SLOTS_KEY = "lab:last-model-slots";
 
-  const save = useMutation({
-    mutationFn: async () =>
-      (await api.post(`/runs/${runId}/feedback`, {
-        agent_name: agentName,
-        attribute_name: attrName,
-        rating,
-        remarks,
-      })).data,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["logs"] });
-      setDone(true);
-      toast.success("Feedback saved to the run log");
-    },
-    onError: () => toast.error("Could not save feedback"),
-  });
+function isSlotLike(v: unknown): v is ModelSlot {
+  if (!v || typeof v !== "object") return false;
+  const s = v as Record<string, unknown>;
+  return typeof s.model === "string" && typeof s.effort === "string";
+}
 
-  if (done) {
-    return (
-      <p className="mt-3">
-        <Badge tone={rating === "up" ? "success" : "danger"}>rated {rating === "up" ? "👍" : "👎"} · saved</Badge>
-      </p>
-    );
+function loadSlots(): ModelSlot[] {
+  try {
+    const raw = localStorage.getItem(SLOTS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isSlotLike).map((s) => ({ model: s.model, effort: s.effort }));
+  } catch {
+    return [];
   }
+}
 
-  function handleThumb(next: "up" | "down" | null) {
-    if (next === null) return;
-    setRating(next);
-  }
+function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
+  if (status === "done") return <Badge tone="success">done</Badge>;
+  if (status === "partial") return <Badge tone="warning">partial</Badge>;
+  if (status === "error") return <Badge tone="danger">error</Badge>;
+  return <Badge tone="info">running</Badge>;
+}
 
+/** Live elapsed-seconds counter for a running column. */
+function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | null {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  if (!startedAt) return null;
+  return <span>{Math.max(0, Math.round((now - startedAt) / 1000))}s</span>;
+}
+
+/** One per-model result block in picker order: header + SingleModelTable when it has a log. */
+function ColumnBlock({
+  column,
+  onRetry,
+}: {
+  column: CompareColumn;
+  onRetry: (key: string) => void;
+}): React.JSX.Element {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e5e7eb] pt-3 dark:border-white/10">
-      <ThumbButtons value={rating} onChange={handleThumb} />
-      <input
-        value={remarks}
-        onChange={(e) => setRemarks(e.target.value)}
-        placeholder="Remarks for this attribute…"
-        aria-label="Remarks"
-        className="h-9 min-w-40 flex-1 rounded-full border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
-      />
-      <Button variant="secondary" size="sm" loading={save.isPending} onClick={() => (rating ? save.mutate() : toast.error("Pick 👍 or 👎 first"))}>
-        Save rating
-      </Button>
+    <div className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+      <div className="flex flex-wrap items-center gap-2">
+        <CardTitle title={column.model}>{shortModel(column.model)}</CardTitle>
+        <Badge tone="neutral">{column.effort || "default"}</Badge>
+        <StatusBadge status={column.status} />
+        {column.status === "running" && (
+          <span className="inline-flex items-center gap-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Elapsed startedAt={column.startedAt} />
+          </span>
+        )}
+        {column.log && (
+          <span
+            className="font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+            title="Total run cost (USD + INR)"
+          >
+            {fmtCostBoth(column.log.usage?.cost_usd)}
+          </span>
+        )}
+        {column.status === "error" && (
+          <Button variant="secondary" size="sm" onClick={() => onRetry(column.key)}>
+            Retry
+          </Button>
+        )}
+      </div>
+      {column.status === "running" && !column.log && (
+        <p className="mt-2 inline-flex items-center gap-2 font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Running…
+        </p>
+      )}
+      {column.status === "error" && !column.log && column.error && (
+        <p role="alert" className="mt-2 break-words font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
+          {column.error}
+        </p>
+      )}
+      {column.log && (
+        <div className="mt-3">
+          <SingleModelTable log={column.log} />
+        </div>
+      )}
     </div>
   );
 }
 
 export default function TestLab() {
-  const [model, setModel] = React.useState("");
-  const [reasoningEffort, setReasoningEffort] = React.useState("");
+  const [slots, setSlots] = React.useState<ModelSlot[]>(loadSlots);
   const [selected, setSelected] = React.useState<string[]>([]);
-  const [runId, setRunId] = React.useState<string | null>(null);
-  const [outputs, setOutputs] = React.useState<RunOutputs | null>(null);
   const [clientId, setClientId] = React.useState("");
   const [selectedMeetingTypes, setSelectedMeetingTypes] = React.useState<string[]>([]);
   const [meetingDate, setMeetingDate] = React.useState("");
   const [meetingId, setMeetingId] = React.useState("");
   const [previewOpen, setPreviewOpen] = React.useState(false);
+
+  const multi = useMultiRun();
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(SLOTS_KEY, JSON.stringify(slots));
+    } catch {
+      // ignore persistence failures (private mode, quota)
+    }
+  }, [slots]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -414,63 +455,6 @@ export default function TestLab() {
     queryFn: async () => (await api.get("/models")).data as { live: boolean; models: ModelInfo[] },
     staleTime: 5 * 60 * 1000,
   });
-
-  // Per-model reasoning options (OpenRouter docs: GET /models entries MAY
-  // carry `reasoning`; supported_efforts is descending, null = all gateway
-  // efforts accepted, omitted = no effort selection exposed).
-  const modelId = model.trim();
-  const entry = modelsMeta?.models.find((m) => m.id === modelId);
-  const live = modelsMeta?.live ?? false;
-  const info: ModelReasoning | null = entry?.reasoning ?? null;
-  const supported: string[] | null = Array.isArray(info?.supported_efforts)
-    ? (info.supported_efforts as unknown[]).filter(
-        (v): v is string => typeof v === "string" && v.trim() !== "",
-      )
-    : null;
-  const mandatory = info?.mandatory === true;
-  const effortOptions = (supported ?? [...REASONING_EFFORTS])
-    .filter((v) => !(mandatory && v === "none"))
-    .map((v) => ({ value: v, label: v }));
-  const reasoningDisabled = modelId === "" || (live && !!entry && !info);
-  const reasoningPlaceholder =
-    modelId === ""
-      ? "Select a model first"
-      : reasoningDisabled
-        ? "No reasoning options for this model"
-        : "Default (no effort)";
-
-  // Clears an effort picked before the live model list arrived, if the loaded list disallows it.
-  React.useEffect(() => {
-    if (reasoningEffort !== "" && (reasoningDisabled || !effortOptions.some((o) => o.value === reasoningEffort))) setReasoningEffort("");
-  }, [reasoningEffort, reasoningDisabled, effortOptions]);
-
-  function handleModelChange(v: string) {
-    setModel(v);
-    const id = v.trim();
-    if (id === "") {
-      setReasoningEffort("");
-      return;
-    }
-    if (!modelsMeta?.live) return;
-    const e = modelsMeta.models.find((m) => m.id === id);
-    if (!e) return; // custom id unknown -> keep
-    if (!e.reasoning) {
-      setReasoningEffort("");
-      return;
-    }
-    const sup: string[] = Array.isArray(e.reasoning.supported_efforts)
-      ? (e.reasoning.supported_efforts as unknown[]).filter(
-          (x): x is string => typeof x === "string" && x.trim() !== "",
-        )
-      : [...REASONING_EFFORTS];
-    const m = e.reasoning.mandatory === true;
-    if (
-      reasoningEffort !== "" &&
-      !(sup.includes(reasoningEffort) && !(m && reasoningEffort === "none"))
-    ) {
-      setReasoningEffort("");
-    }
-  }
 
   const clientsQuery = useQuery({
     queryKey: ["meeting-clients"],
@@ -555,40 +539,37 @@ export default function TestLab() {
     setPreviewOpen(false);
   }
 
-  const run = useMutation({
-    mutationFn: async () => {
-      // Denormalized meeting snapshot for the run log (plain strings only):
-      // client name from the picker, meeting type derived from the picked
-      // instance's full title (falls back to the type filter), meeting title
-      // always the raw full instance title (unchanged backend contract).
-      const clientName =
-        (clientsQuery.data ?? []).find((c) => c.id === clientId)?.name ?? "";
-      const picked = (meetingsQuery.data?.meetings ?? []).find((m) => m.id === meetingId);
-      const instanceTitle = (picked?.title ?? transcriptQuery.data?.title ?? "").trim();
-      return (await api.post("/runs", {
-        input_type: "transcription",
-        meeting_id: meetingId,
-        agent_ids: selected,
-        model,
-        reasoning_effort: reasoningEffort,
-        client: clientName,
-        meeting_type: meetingTypeOf(instanceTitle) || selectedMeetingTypes[0] || "",
-        meeting_title: instanceTitle,
-      })).data as { id: string; outputs: RunOutputs };
-    },
-    onSuccess: (res) => {
-      setRunId(res.id);
-      setOutputs(res.outputs);
-      toast.success("Run complete — rate each attribute below");
-    },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Run failed"),
-  });
+  // Same denormalized meeting snapshot the single-run payload built, minus
+  // model / reasoning_effort (those come from each slot in useMultiRun).
+  function buildBasePayload(): Record<string, unknown> {
+    const clientName =
+      (clientsQuery.data ?? []).find((c) => c.id === clientId)?.name ?? "";
+    const picked = (meetingsQuery.data?.meetings ?? []).find((m) => m.id === meetingId);
+    const instanceTitle = (picked?.title ?? transcriptQuery.data?.title ?? "").trim();
+    return {
+      input_type: "transcription",
+      meeting_id: meetingId,
+      agent_ids: selected,
+      client: clientName,
+      meeting_type: meetingTypeOf(instanceTitle) || selectedMeetingTypes[0] || "",
+      meeting_title: instanceTitle,
+    };
+  }
+
+  function handleRun() {
+    const why = canRun();
+    if (why) {
+      toast.error(why);
+      return;
+    }
+    multi.start(slots, buildBasePayload());
+  }
 
   function canRun() {
     if (!meetingId) return "Select a meeting first";
     if (transcriptQuery.isFetching || transcriptQuery.isLoading) return "Transcript still loading…";
     if (!transcriptQuery.data?.transcription?.trim()) return "Transcript still loading…";
-    if (!model.trim()) return "Enter an OpenRouter model id";
+    if (slots.length === 0) return "Add a model first";
     if (selected.length === 0) return "Select at least one agent";
     return null;
   }
@@ -645,22 +626,14 @@ export default function TestLab() {
                 className={cn(fieldInput, "h-11 opacity-70")}
               />
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <div className="flex flex-wrap items-center gap-2">
                 <KeyStatusBadge />
               </div>
-              <ModelCombobox value={model} onChange={handleModelChange} />
-            </div>
-            <div>
-              <SingleSelectFilter
-                value={reasoningEffort}
-                onChange={setReasoningEffort}
-                options={effortOptions}
-                placeholder={reasoningPlaceholder}
-                ariaLabel="Reasoning effort"
-                filterPlaceholder="Search efforts…"
-                emptyText="No matches."
-                disabled={reasoningDisabled}
+              <ModelSlotsPicker
+                slots={slots}
+                onChange={setSlots}
+                models={modelsMeta?.models ?? []}
               />
             </div>
           </div>
@@ -752,15 +725,8 @@ export default function TestLab() {
             >
               <Eye className="h-4 w-4" aria-hidden="true" />
             </Button>
-            <Button
-              loading={run.isPending}
-              onClick={() => {
-                const why = canRun();
-                if (why) toast.error(why);
-                else run.mutate();
-              }}
-            >
-              <Play className="h-4 w-4" aria-hidden="true" /> Run
+            <Button loading={multi.running} onClick={handleRun}>
+              <Play className="h-4 w-4" aria-hidden="true" /> {slots.length > 1 ? `Run ${slots.length} models` : "Run"}
             </Button>
           </div>
         </div>
@@ -795,87 +761,16 @@ export default function TestLab() {
         </Modal>
       )}
 
-      {outputs && runId && (
+      {multi.columns.length > 0 && (
         <Card>
           <div className="mb-3 flex items-center gap-2">
             <CardTitle>Results</CardTitle>
-            <Badge tone="neutral">run {runId.slice(0, 8)}</Badge>
+            {multi.groupId && <Badge tone="neutral">group {multi.groupId.slice(0, 8)}</Badge>}
           </div>
           <div className="grid gap-3">
-            {Object.entries(outputs).map(([agentId, out]) => {
-              const agent = agents.find((a) => a.id === agentId);
-              if (out._error) {
-                return (
-                  <div key={agentId} className="rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10">
-                    <CardTitle>{agent?.name ?? agentId}</CardTitle>
-                    <p className="mt-1 font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">Agent failed: {out._error}</p>
-                  </div>
-                );
-              }
-              const entries = (Object.entries(out) as [string, AttrResult][]).filter(([k]) => k !== "_error");
-              const selected = selectedAgentsOf(out);
-              if (selected !== null) {
-                return (
-                  <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
-                    <CardTitle>{agent?.name ?? agentId}</CardTitle>
-                    <div className="mt-2 grid gap-2">
-                      {selected.length === 0 ? (
-                        <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
-                      ) : (
-                        <div className="flex flex-wrap gap-1.5">
-                          {selected.map((name) => (
-                            <Badge key={name} tone="brand">
-                              {name}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {/* Identifier selection is rated as a whole under attribute name "selected_agents". */}
-                    <RatingBox runId={runId} agentName={agent?.name ?? agentId} attrName="selected_agents" />
-                  </div>
-                );
-              }
-              return (
-                <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
-                  <CardTitle>{agent?.name ?? agentId}</CardTitle>
-                  <div className="mt-2 grid gap-2">
-                    {entries.map(([attr, r]) => (
-                      <div key={attr} className="rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">{attr}</span>
-                          <Badge tone="brand">{r.confidence_type ?? "?"}</Badge>
-                          <span className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                            {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
-                          </span>
-                        </div>
-                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb] dark:bg-white/10">
-                          <div
-                            className="h-1.5 rounded-full bg-[#2fdebf]"
-                            style={{ width: `${Math.round((r.confidence ?? 0) * 100)}%` }}
-                          />
-                        </div>
-                        <p className="mt-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
-                          <span className="font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
-                            Value ·{" "}
-                          </span>
-                          {String(r.value ?? "—")}
-                        </p>
-                        {r.evidence && (
-                          <p className="mt-1 border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
-                            “{r.evidence}”
-                          </p>
-                        )}
-                        <RatingBox runId={runId} agentName={agent?.name ?? agentId} attrName={attr} />
-                      </div>
-                    ))}
-                    {entries.length === 0 && (
-                      <p className="font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {multi.columns.map((column) => (
+              <ColumnBlock key={column.key} column={column} onRetry={multi.retry} />
+            ))}
           </div>
         </Card>
       )}

@@ -50,10 +50,8 @@ export type LogRow = {
   // Denormalized snapshot ("" on old rows).
   reasoning_effort?: string;
   created_at: string;
-  // Multi-model compare (optional until the backend ships them).
-  run_group_id?: string;
-  overall_rating?: "" | "up" | "down";
-  overall_remarks?: string;
+  // Multi-model compare: the backend always ships a string ("" on old rows).
+  run_group_id: string;
 };
 
 export type ModelSlot = { model: string; effort: string };
