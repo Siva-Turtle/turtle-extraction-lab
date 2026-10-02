@@ -4,7 +4,7 @@ import copy
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.openrouter import build_chat_payload, complete_json, complete_json_payload, get_model_pricing
+from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, complete_json, complete_json_payload, get_model_pricing
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
 from app.modules.meetings.router import get_scrubbed_transcript
@@ -341,6 +341,9 @@ def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
 @router.post("")
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     meeting_id = (payload.meeting_id or "").strip()
+    effort = (payload.reasoning_effort or "").strip()
+    if effort and effort not in REASONING_EFFORTS:
+        raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
     task_title = ""
     if meeting_id:
         # meeting_id wins: server re-fetches the transcript and scrubs it —
@@ -368,6 +371,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     requests: dict = {}
     total_in = 0
     total_out = 0
+    total_in_reasoning = 0
     for agent in agents:
         attrs = _attrs_for_agent(db, agent.id)
         snapshots[agent.id] = {
@@ -384,6 +388,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
+        reasoning_tokens = 0
         user_content = input_data
         if is_identifier(agent):
             # Router path: candidate roster (name + description + examples),
@@ -393,12 +398,14 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             schema: dict | None = build_identifier_schema()
             payload_body = build_chat_payload(
                 model=payload.model, system=system_content, user=user_content,
-                json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME)
+                json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
+                reasoning_effort=effort)
         else:
             system_content = _agent_system_content(agent, attrs)
             schema = build_extraction_schema(attrs)
             payload_body = build_chat_payload(
-                model=payload.model, system=system_content, user=user_content, json_schema=schema)
+                model=payload.model, system=system_content, user=user_content, json_schema=schema,
+                reasoning_effort=effort)
         requests[agent.id] = copy.deepcopy(payload_body)
         try:
             parsed, usage = await complete_json_payload(payload_body)
@@ -407,24 +414,29 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                 prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
                 completion_tokens = int(usage.get("completion_tokens", 0) or 0)
                 total_tokens = int(usage.get("total_tokens", 0) or 0)
+                reasoning_tokens = int(usage.get("reasoning_tokens", 0) or 0)
             except Exception:
-                prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
+                prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = 0, 0, 0, 0
             if prompt_tokens < 0:
                 prompt_tokens = 0
             if completion_tokens < 0:
                 completion_tokens = 0
             if total_tokens < 0:
                 total_tokens = 0
+            if reasoning_tokens < 0:
+                reasoning_tokens = 0
         except Exception as exc:
             outputs[agent.id] = {"_error": str(exc)}
-            prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
+            prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = 0, 0, 0, 0
         duration_ms = (perf_counter() - agent_start) * 1000.0
         total_in += prompt_tokens
         total_out += completion_tokens
+        total_in_reasoning += reasoning_tokens
         per_agent[agent.id] = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "cost_usd": None,
             "input_cost_usd": None,
             "output_cost_usd": None,
@@ -465,6 +477,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         "prompt_tokens": total_in,
         "completion_tokens": total_out,
         "total_tokens": total_in + total_out,
+        "reasoning_tokens": total_in_reasoning,
         "cost_usd": total_cost,
         "input_cost_usd": total_input_cost,
         "output_cost_usd": total_output_cost,
@@ -487,7 +500,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.add(RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
                   usage=usage, filters=filters, requests=requests,
-                  client=client, meeting_type=meeting_type, meeting_title=meeting_title))
+                  client=client, meeting_type=meeting_type, meeting_title=meeting_title,
+                  reasoning_effort=effort))
     db.commit()
     return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests}
 

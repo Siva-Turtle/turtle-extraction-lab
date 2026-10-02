@@ -2,7 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
-import { api, meetingTypeOf } from "../lib/api";
+import { api, meetingTypeOf, REASONING_EFFORTS } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -430,6 +430,7 @@ function RatingBox({ runId, agentName, attrName }: { runId: string; agentName: s
 
 export default function TestLab() {
   const [model, setModel] = React.useState("");
+  const [reasoningEffort, setReasoningEffort] = React.useState("");
   const [selected, setSelected] = React.useState<string[]>([]);
   const [runId, setRunId] = React.useState<string | null>(null);
   const [outputs, setOutputs] = React.useState<RunOutputs | null>(null);
@@ -547,6 +548,7 @@ export default function TestLab() {
         meeting_id: meetingId,
         agent_ids: selected,
         model,
+        reasoning_effort: reasoningEffort,
         client: clientName,
         meeting_type: meetingTypeOf(instanceTitle) || selectedMeetingTypes[0] || "",
         meeting_title: instanceTitle,
@@ -613,7 +615,7 @@ export default function TestLab() {
 
       <Card>
         <div className="grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <span className={fieldLabel}>Input type</span>
               <input
@@ -629,6 +631,21 @@ export default function TestLab() {
                 <KeyStatusBadge />
               </div>
               <ModelCombobox value={model} onChange={setModel} />
+            </div>
+            <div>
+              <span className={fieldLabel}>Reasoning effort</span>
+              <SingleSelectFilter
+                value={reasoningEffort}
+                onChange={setReasoningEffort}
+                options={REASONING_EFFORTS.map((v) => ({
+                  value: v,
+                  label: v,
+                }))}
+                placeholder="Default (no effort)"
+                ariaLabel="Reasoning effort"
+                filterPlaceholder="Search efforts…"
+                emptyText="No matches."
+              />
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">

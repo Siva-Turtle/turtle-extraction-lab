@@ -19,6 +19,7 @@ type AgentUsage = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  reasoning_tokens: number;
   cost_usd: number | null;
   input_cost_usd?: number | null;
   output_cost_usd?: number | null;
@@ -55,6 +56,8 @@ type LogRow = {
   client?: string;
   meeting_type?: string;
   meeting_title?: string;
+  // Denormalized snapshot ("" on old rows).
+  reasoning_effort?: string;
   created_at: string;
 };
 
@@ -227,6 +230,7 @@ export default function Logs() {
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [selectedMeetingTypes, setSelectedMeetingTypes] = useState<string[]>([]);
+  const [selectedEfforts, setSelectedEfforts] = useState<string[]>([]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -248,19 +252,20 @@ export default function Logs() {
 
   const hasServerFilters =
     selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0 ||
-    selectedClients.length > 0;
+    selectedClients.length > 0 || selectedEfforts.length > 0;
 
   const params: LogsQueryParams = {};
   if (selectedModels.length > 0) params.models = selectedModels;
   if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
   if (selectedDates.length > 0) params.dates = selectedDates;
   if (selectedClients.length > 0) params.clients = selectedClients;
+  if (selectedEfforts.length > 0) params.reasoning_efforts = selectedEfforts;
 
   // Server-filtered list (AND across groups); reused only while filters are set.
   // Meeting-type filtering stays client-side on the derived type (no backend change).
   const { data: serverLogs, isLoading: serverLoading } = useQuery({
     queryKey: ["logs", selectedModels, selectedAgents, selectedDates,
-      selectedClients],
+      selectedClients, selectedEfforts],
     queryFn: async () =>
       (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
     enabled: hasServerFilters,
@@ -326,6 +331,10 @@ export default function Logs() {
   const inputTypeOptions = React.useMemo(
     () => INPUT_FILTERS.map((v) => ({ value: v, label: v })),
     [],
+  );
+  const effortOptions = React.useMemo(
+    () => distinctLogOptions(allLogs, (l) => l.reasoning_effort),
+    [allLogs],
   );
 
   const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
@@ -422,6 +431,18 @@ export default function Logs() {
               emptyText="No matches."
             />
           </div>
+          <div>
+            <span className={fieldLabel}>Reasoning effort</span>
+            <MultiSelectFilter
+              options={effortOptions}
+              selected={selectedEfforts}
+              onChange={setSelectedEfforts}
+              placeholder="All efforts"
+              ariaLabel="Filter by reasoning effort"
+              filterPlaceholder="Search efforts…"
+              emptyText={effortOptions.length === 0 ? "No efforts yet." : "No matches."}
+            />
+          </div>
         </div>
       </Card>
 
@@ -443,11 +464,12 @@ export default function Logs() {
         </Card>
       ) : (
         <Card padded={false} className="overflow-x-auto">
-          <table className="w-full min-w-[840px] text-left text-sm">
+          <table className="w-full min-w-[960px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
                 <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">Model</th>
+                <th className="px-4 py-3">Effort</th>
                 <th className="px-4 py-3">Input</th>
                 <th className="px-4 py-3">Agents</th>
                 <th className="px-4 py-3">Ratings</th>
@@ -471,6 +493,9 @@ export default function Logs() {
                     </td>
                     <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
                       {l.model}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      {(l.reasoning_effort ?? "").trim() || "—"}
                     </td>
                     <td className="px-4 py-3">
                       <Badge tone="brand">{l.input_type}</Badge>
@@ -824,8 +849,10 @@ function AnalyticsPanel({
 }) {
   const stats: [string, string][] = [
     ["Model", usage?.model ?? log.model ?? "—"],
+    ["Reasoning effort", (log.reasoning_effort ?? "").trim() || "—"],
     ["Input tokens", fmtTokens(usage?.prompt_tokens)],
     ["Output tokens", fmtTokens(usage?.completion_tokens)],
+    ["Thought tokens", fmtTokens(usage?.reasoning_tokens)],
     ["Total tokens", fmtTokens(usage?.total_tokens)],
     // Backend ships the input/output cost split (null when pricing unknown).
     ["Input cost", fmtCostBoth(usage?.input_cost_usd)],
@@ -869,6 +896,7 @@ function AnalyticsPanel({
                   <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2 text-right">In</th>
                   <th className="px-3 py-2 text-right">Out</th>
+                  <th className="px-3 py-2 text-right">Thought</th>
                   <th className="px-3 py-2 text-right">In-cost</th>
                   <th className="px-3 py-2 text-right">Out-cost</th>
                   <th className="px-3 py-2 text-right">Cost</th>
@@ -887,6 +915,7 @@ function AnalyticsPanel({
                     <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.reasoning_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>

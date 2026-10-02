@@ -107,4 +107,6 @@ class RunLog(Base):
     client: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     meeting_type: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     meeting_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    # Denormalized snapshot of the OpenRouter reasoning effort ("" on old rows).
+    reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

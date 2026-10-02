@@ -28,7 +28,10 @@ export type LogsQueryParams = {
   clients?: string[];
   meeting_types?: string[];
   meeting_titles?: string[];
+  reasoning_efforts?: string[];
 };
+
+export const REASONING_EFFORTS = ["max", "xhigh", "high", "medium", "low", "minimal", "none"] as const;
 
 export type AgentKind = "extraction" | "identifier";
 

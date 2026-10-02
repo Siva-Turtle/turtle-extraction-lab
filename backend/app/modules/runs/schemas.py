@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.openrouter import REASONING_EFFORTS
+
 
 class AttributeResult(BaseModel):
     value: str | float | int | bool | None = None
@@ -25,11 +27,22 @@ class RunCreate(BaseModel):
     client: str = ""
     meeting_type: str = ""
     meeting_title: str = ""
+    # OpenRouter reasoning effort ("" = not sent, model default).
+    reasoning_effort: str = ""
 
     @field_validator("filters", mode="before")
     @classmethod
     def _coerce_filters(cls, v):
         return v if isinstance(v, dict) else {}
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _coerce_reasoning_effort(cls, v):
+        s = v.strip() if isinstance(v, str) else ""
+        if s and s not in REASONING_EFFORTS:
+            raise ValueError(
+                "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        return s
 
 
 class RunOut(BaseModel):

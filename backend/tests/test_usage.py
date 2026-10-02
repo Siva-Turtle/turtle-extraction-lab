@@ -67,7 +67,8 @@ def test_complete_json_usage_full(monkeypatch):
     monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
     parsed, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert parsed == {"a": 1}
-    assert usage == {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46}
+    assert usage == {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46,
+                     "reasoning_tokens": 0}
 
 
 def test_complete_json_usage_missing_is_zeros(monkeypatch):
@@ -75,7 +76,8 @@ def test_complete_json_usage_missing_is_zeros(monkeypatch):
     monkeypatch.setattr(openrouter.httpx, "AsyncClient",
                         _fake_client_factory(_chat_payload(json.dumps({"a": 1}))))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
-    assert usage == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    assert usage == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                     "reasoning_tokens": 0}
 
 
 def test_complete_json_usage_partial_is_zeros(monkeypatch):
@@ -83,7 +85,8 @@ def test_complete_json_usage_partial_is_zeros(monkeypatch):
     payload = _chat_payload(json.dumps({"a": 1}), {"prompt_tokens": 5})
     monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
-    assert usage == {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 0}
+    assert usage == {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 0,
+                     "reasoning_tokens": 0}
 
 
 def test_complete_json_response_format_modes(monkeypatch):

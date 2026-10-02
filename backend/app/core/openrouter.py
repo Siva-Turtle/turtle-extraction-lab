@@ -19,6 +19,9 @@ CURATED_MODELS = [
     {"id": "qwen/qwen-2.5-72b-instruct", "name": "Qwen 2.5 72B"},
 ]
 
+# OpenRouter reasoning effort levels (highest-first, matching OpenRouter docs).
+REASONING_EFFORTS = ("max", "xhigh", "high", "medium", "low", "minimal", "none")
+
 
 def is_configured() -> bool:
     return bool(settings.openrouter_api_key)
@@ -27,6 +30,7 @@ def is_configured() -> bool:
 def build_chat_payload(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
     schema_name: str = "meeting_extraction",
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Build the EXACT JSON body POSTed to OpenRouter chat-completions.
 
@@ -36,7 +40,9 @@ def build_chat_payload(
     given, the envelope is a strict ``schema_name`` json_schema
     response_format (``meeting_extraction`` for attribute extraction,
     ``agent_selection`` for the identifier meta-agent), else the legacy
-    ``{"type": "json_object"}`` mode.
+    ``{"type": "json_object"}`` mode. When ``reasoning_effort`` is a
+    non-blank string, ``{"reasoning": {"effort": value}}`` is added;
+    None/blank leaves the payload byte-identical (no ``reasoning`` key).
     """
     if json_schema is None:
         response_format: dict = {"type": "json_object"}
@@ -45,7 +51,7 @@ def build_chat_payload(
             "type": "json_schema",
             "json_schema": {"name": schema_name, "strict": True, "schema": json_schema},
         }
-    return {
+    payload = {
         "model": model,
         "response_format": response_format,
         "messages": [
@@ -53,14 +59,18 @@ def build_chat_payload(
             {"role": "user", "content": user},
         ],
     }
+    effort = reasoning_effort.strip() if isinstance(reasoning_effort, str) else ""
+    if effort:
+        payload["reasoning"] = {"effort": effort}
+    return payload
 
 
 async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
     """POST a prebuilt payload and return (parsed_json, usage).
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
-    "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
-    zeros and never raise.
+    "total_tokens": int, "reasoning_tokens": int}; missing/partial OpenRouter
+    ``usage`` blocks become zeros and never raise.
     """
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -98,6 +108,7 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
 
 async def complete_json(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[dict, dict]:
     """Call OpenRouter and return (parsed_json, usage).
 
@@ -105,8 +116,8 @@ async def complete_json(
     existing call sites/tests keep working.
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
-    "total_tokens": int}; missing/partial OpenRouter ``usage`` blocks become
-    zeros and never raise.
+    "total_tokens": int, "reasoning_tokens": int}; missing/partial OpenRouter
+    ``usage`` blocks become zeros and never raise.
 
     ``json_schema`` is the inner OpenAPI-compatible object schema
     (``{"type": "object", "properties": {...}, ...}``). When given, the call
@@ -114,7 +125,8 @@ async def complete_json(
     to the legacy ``{"type": "json_object"}`` mode.
     """
     return await complete_json_payload(
-        build_chat_payload(model=model, system=system, user=user, json_schema=json_schema)
+        build_chat_payload(model=model, system=system, user=user, json_schema=json_schema,
+                           reasoning_effort=reasoning_effort)
     )
 
 
@@ -129,11 +141,28 @@ def _extract_usage(usage: object) -> dict:
             return 0
 
     if not isinstance(usage, dict):
-        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                "reasoning_tokens": 0}
     prompt = _safe_int(usage.get("prompt_tokens"))
     completion = _safe_int(usage.get("completion_tokens"))
     total = _safe_int(usage.get("total_tokens"))
-    return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total}
+    details = usage.get("completion_tokens_details")
+    reasoning: int | None = None
+    if isinstance(details, dict) and "reasoning_tokens" in details:
+        try:
+            n = int(details.get("reasoning_tokens"))  # type: ignore[arg-type]
+            if n >= 0:
+                reasoning = n
+        except Exception:
+            reasoning = None
+    if reasoning is None:
+        try:
+            n = int(usage.get("reasoning_tokens"))  # type: ignore[arg-type]
+            reasoning = n if n >= 0 else 0
+        except Exception:
+            reasoning = 0
+    return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total,
+            "reasoning_tokens": reasoning}
 
 
 # --- Model pricing (USD per token), 24h in-process cache -------------------
