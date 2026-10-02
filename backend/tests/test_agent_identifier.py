@@ -148,6 +148,50 @@ def test_identifier_run_path_uses_selection_envelope(client, monkeypatch):
     assert snap["attributes"] == []
 
 
+def test_identifier_run_path_exact_logged_response(client, monkeypatch):
+    """Repro: live log row stored {"selected_agents": [5 names incl. "Contact Facts"]}."""
+    logged = {"selected_agents": ["basic_info", "behavioral", "goal",
+                                  "tax_and_insurance", "Contact Facts"]}
+
+    async def _capture(payload):
+        return (dict(logged),
+                {"prompt_tokens": 9736, "completion_tokens": 48, "total_tokens": 9784})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+
+    ident = _make_agent(client, "agent_identifier", description="Router.",
+                        kind="identifier")["id"]
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": "hello",
+        "agent_ids": [ident], "model": "m"}).json()
+    # Verbatim passthrough — names with spaces/caps preserved, no extraction wrap.
+    assert body["outputs"][ident] == logged
+    assert body["outputs"][ident]["selected_agents"] == [
+        "basic_info", "behavioral", "goal", "tax_and_insurance", "Contact Facts"]
+
+
+def test_identifier_run_path_empty_list(client, monkeypatch):
+    async def _capture(payload):
+        return ({"selected_agents": []},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+
+    ident = _make_agent(client, "agent_identifier", kind="identifier")["id"]
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": "hello",
+        "agent_ids": [ident], "model": "m"}).json()
+    assert body["outputs"][ident] == {"selected_agents": []}
+
+
 def test_identifier_candidates_exclude_identifier_kind(client, db):
     _make_agent(client, "plain_one", description="P1")
     _make_agent(client, "agent_identifier", kind="identifier")

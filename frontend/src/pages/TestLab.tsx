@@ -21,6 +21,17 @@ type AttrResult = {
 
 type RunOutputs = Record<string, Record<string, AttrResult> & { _error?: string }>;
 
+/** Identifier-kind output shape: {selected_agents: string[]}. Null when not identifier. */
+function selectedAgentsOf(out: unknown): string[] | null {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return null;
+  const v = (out as Record<string, unknown>).selected_agents;
+  if (!Array.isArray(v)) return null;
+  return v
+    .filter((x): x is string => typeof x === "string")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
 type MeetingClient = { id: string; name: string };
 type MeetingSummary = {
   id: string;
@@ -743,6 +754,27 @@ export default function TestLab() {
                 );
               }
               const entries = (Object.entries(out) as [string, AttrResult][]).filter(([k]) => k !== "_error");
+              const selected = selectedAgentsOf(out);
+              if (selected !== null) {
+                return (
+                  <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+                    <CardTitle>{agent?.name ?? agentId}</CardTitle>
+                    <div className="mt-2 grid gap-2">
+                      {selected.length === 0 ? (
+                        <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selected.map((name) => (
+                            <Badge key={name} tone="brand">
+                              {name}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={agentId} className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
                   <CardTitle>{agent?.name ?? agentId}</CardTitle>
