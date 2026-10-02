@@ -691,13 +691,11 @@ export default function TestLab() {
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className={fieldLabel}>OpenRouter model</span>
                 <KeyStatusBadge />
               </div>
               <ModelCombobox value={model} onChange={handleModelChange} />
             </div>
             <div>
-              <span className={fieldLabel}>Reasoning effort</span>
               <SingleSelectFilter
                 value={reasoningEffort}
                 onChange={setReasoningEffort}
@@ -712,7 +710,6 @@ export default function TestLab() {
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <span className={fieldLabel}>Client</span>
               <SingleSelectFilter
                 value={clientId}
                 onChange={handleClientChange}
@@ -731,7 +728,6 @@ export default function TestLab() {
               />
             </div>
             <div>
-              <span className={fieldLabel}>Meeting type</span>
               <MultiSelectFilter
                 options={typeOptions}
                 selected={selectedMeetingTypes}
@@ -769,7 +765,6 @@ export default function TestLab() {
             </p>
           )}
           <div>
-            <span className={fieldLabel}>Meeting</span>
             <FilterCombobox
               value={meetingId}
               onChange={handleMeetingChange}
@@ -786,7 +781,6 @@ export default function TestLab() {
             />
           </div>
           <div className={fieldLabel}>
-            Agents to run
             <div className="mt-1.5">
               <AgentsMultiSelect agents={enabledAgents} selected={selected} onChange={setSelected} />
             </div>

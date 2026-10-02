@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useState } from "react";
-import { BarChart3, Braces, Copy, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { BarChart3, Braces, ChevronLeft, Copy, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
@@ -11,8 +11,6 @@ import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
 import { MultiSelectFilter } from "../components/ui/Combobox";
 import type { ModelOption } from "../components/ui/Combobox";
-import { Drawer } from "../components/ui/Drawer";
-import { fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 
 type AgentUsage = {
@@ -45,7 +43,7 @@ type LogRow = {
   input_type: string;
   input_data: string;
   model: string;
-  agent_snapshot: Record<string, { name: string; attributes: SnapshotAttr[] }>;
+  agent_snapshot: Record<string, { name: string }>;
   attribute_snapshot?: Record<string, unknown>;
   outputs: Record<string, unknown>;
   requests?: Record<string, unknown>;
@@ -67,38 +65,6 @@ type PrettyAttr = {
   confidence_type?: unknown;
   evidence?: unknown;
 };
-
-/**
- * Frozen attribute definitions ship in two shapes: old
- * {name,type,description,json_schema} and new {name,type,description,enum_values}.
- * Everything but name is optional so neither shape can crash the renderer.
- */
-type SnapshotAttr = {
-  name: string;
-  type?: unknown;
-  description?: unknown;
-  json_schema?: unknown;
-  enum_values?: unknown;
-};
-
-/** Enum chips whenever enum_values is present (new shape); [] otherwise. Never throws. */
-function enumChipsOf(a: unknown): string[] {
-  if (!a || typeof a !== "object") return [];
-  const v = (a as { enum_values?: unknown }).enum_values;
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === "string" && x.trim() !== "");
-}
-
-/** Snapshot attribute definitions for one agent; [] when missing or malformed. Never throws. */
-function snapshotAttrs(log: LogRow, agentId: string): SnapshotAttr[] {
-  const attrs = (log.agent_snapshot?.[agentId] as { attributes?: unknown } | undefined)
-    ?.attributes;
-  if (!Array.isArray(attrs)) return [];
-  return attrs.filter(
-    (a): a is SnapshotAttr =>
-      !!a && typeof a === "object" && typeof (a as { name?: unknown }).name === "string",
-  );
-}
 
 type DrawerTab = "pretty" | "raw" | "analytics";
 
@@ -207,6 +173,52 @@ function prettyEntries(out: unknown): [string, PrettyAttr][] {
   return (Object.entries(out as Record<string, unknown>) as [string, unknown][])
     .filter(([k]) => k !== "_error")
     .map(([k, v]) => [k, (v && typeof v === "object" ? v : {}) as PrettyAttr]);
+}
+
+/** Display name for an agent id; falls back to the id when the snapshot is missing/malformed. */
+function agentDisplayName(log: LogRow, agentId: string): string {
+  const snap = log.agent_snapshot?.[agentId];
+  if (snap && typeof snap === "object" && typeof snap.name === "string" && snap.name.trim() !== "") {
+    return snap.name;
+  }
+  return agentId;
+}
+
+/** Saved feedback for one agent/attribute; null when missing or malformed. Never throws. */
+function savedFeedback(
+  log: LogRow,
+  agentName: string,
+  attr: string,
+): { rating: string; remarks: string } | null {
+  try {
+    const fb = log.feedback;
+    if (!fb || typeof fb !== "object") return null;
+    const byAgent = (fb as Record<string, unknown>)[agentName];
+    if (!byAgent || typeof byAgent !== "object") return null;
+    const entry = (byAgent as Record<string, unknown>)[attr];
+    if (!entry || typeof entry !== "object") return null;
+    const r = (entry as { rating?: unknown }).rating;
+    const m = (entry as { remarks?: unknown }).remarks;
+    return {
+      rating: typeof r === "string" ? r : "",
+      remarks: typeof m === "string" ? m : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Value cell text: "—" for null/undefined, compact JSON for objects, String() otherwise. */
+function formatValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
 }
 
 const sectionLabel = "font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]";
@@ -359,243 +371,238 @@ export default function Logs() {
     <div className="grid gap-4">
       <PageHeader title="Run logs" />
 
-      <Card>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <span className={fieldLabel}>Model</span>
-            <MultiSelectFilter
-              options={modelOptions}
-              selected={selectedModels}
-              onChange={setSelectedModels}
-              placeholder="All models"
-              ariaLabel="Filter by model"
-              filterPlaceholder="Search models…"
-              emptyText={modelOptions.length === 0 ? "No models yet." : "No matches."}
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Agent</span>
-            <MultiSelectFilter
-              options={agentOptions}
-              selected={selectedAgents}
-              onChange={setSelectedAgents}
-              placeholder="All agents"
-              ariaLabel="Filter by agent"
-              filterPlaceholder="Search agents…"
-              emptyText={agents.length === 0 ? "No agents yet." : "No matches."}
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Date</span>
-            <MultiSelectFilter
-              options={dateOptions}
-              selected={selectedDates}
-              onChange={setSelectedDates}
-              placeholder="All dates"
-              ariaLabel="Filter by date"
-              filterPlaceholder="Search dates…"
-              emptyText={dateOptions.length === 0 ? "No dates yet." : "No matches."}
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Client</span>
-            <MultiSelectFilter
-              options={clientOptions}
-              selected={selectedClients}
-              onChange={setSelectedClients}
-              placeholder="All clients"
-              ariaLabel="Filter by client"
-              filterPlaceholder="Search clients…"
-              emptyText={clientOptions.length === 0 ? "No clients yet." : "No matches."}
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Meeting type</span>
-            <MultiSelectFilter
-              options={meetingTypeOptions}
-              selected={selectedMeetingTypes}
-              onChange={setSelectedMeetingTypes}
-              placeholder="All meeting types"
-              ariaLabel="Filter by meeting type"
-              filterPlaceholder="Search meeting types…"
-              emptyText={meetingTypeOptions.length === 0 ? "No meeting types yet." : "No matches."}
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Input type</span>
-            <MultiSelectFilter
-              options={inputTypeOptions}
-              selected={selectedInputTypes}
-              onChange={setSelectedInputTypes}
-              placeholder="All input types"
-              ariaLabel="Filter by input type"
-              filterPlaceholder="Search input types…"
-              emptyText="No matches."
-            />
-          </div>
-          <div>
-            <span className={fieldLabel}>Reasoning effort</span>
-            <MultiSelectFilter
-              options={reasoningEffortOptions}
-              selected={selectedEfforts}
-              onChange={setSelectedEfforts}
-              placeholder="All efforts"
-              ariaLabel="Filter by reasoning effort"
-              filterPlaceholder="Search efforts…"
-              emptyText="No matches."
-            />
-          </div>
-        </div>
-      </Card>
-
-      {isLoading ? (
-        <Card>
-          <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
-        </Card>
-      ) : totalCount === 0 ? (
-        <Card>
-          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-            No runs logged yet — run something from the Test Lab.
-          </p>
-        </Card>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-            No logs match these filters.
-          </p>
-        </Card>
+      {active ? (
+        <LogDetail log={active} tab={tab} onTab={setTab} onBack={() => setActiveId(null)} />
       ) : (
-        <Card padded={false} className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Model</th>
-                <th className="px-4 py-3">Effort</th>
-                <th className="px-4 py-3">Input</th>
-                <th className="px-4 py-3">Agents</th>
-                <th className="px-4 py-3">Ratings</th>
-                <th className="px-4 py-3">Cost</th>
-                <th className="px-4 py-3">Tokens</th>
-                <th className="px-4 py-3">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((l) => {
-                const fbCount = ratingsCount(l);
-                const usage = getUsage(l);
-                return (
-                  <tr
-                    key={l.id}
-                    onClick={() => openLog(l.id)}
-                    className="cursor-pointer border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5"
-                  >
-                    <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {fmt(l.created_at)}
-                    </td>
-                    <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
-                      {l.model}
-                    </td>
-                    <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={(l.reasoning_effort ?? "").trim() || "—"}>
-                      {(l.reasoning_effort ?? "").trim() || "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge tone="brand">{l.input_type}</Badge>
-                    </td>
-                    <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {Object.keys(l.agent_snapshot ?? {}).length}
-                    </td>
-                    <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {fbCount}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {usage ? fmtCostBoth(usage.cost_usd) : "—"}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {usage ? fmtTokens(usage.total_tokens) : "—"}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      {usage ? fmtMs(usage.duration_ms) : "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
-      )}
+        <>
+          <Card>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <MultiSelectFilter
+                  options={modelOptions}
+                  selected={selectedModels}
+                  onChange={setSelectedModels}
+                  placeholder="All models"
+                  ariaLabel="Filter by model"
+                  filterPlaceholder="Search models…"
+                  emptyText={modelOptions.length === 0 ? "No models yet." : "No matches."}
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={agentOptions}
+                  selected={selectedAgents}
+                  onChange={setSelectedAgents}
+                  placeholder="All agents"
+                  ariaLabel="Filter by agent"
+                  filterPlaceholder="Search agents…"
+                  emptyText={agents.length === 0 ? "No agents yet." : "No matches."}
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={dateOptions}
+                  selected={selectedDates}
+                  onChange={setSelectedDates}
+                  placeholder="All dates"
+                  ariaLabel="Filter by date"
+                  filterPlaceholder="Search dates…"
+                  emptyText={dateOptions.length === 0 ? "No dates yet." : "No matches."}
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={clientOptions}
+                  selected={selectedClients}
+                  onChange={setSelectedClients}
+                  placeholder="All clients"
+                  ariaLabel="Filter by client"
+                  filterPlaceholder="Search clients…"
+                  emptyText={clientOptions.length === 0 ? "No clients yet." : "No matches."}
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={meetingTypeOptions}
+                  selected={selectedMeetingTypes}
+                  onChange={setSelectedMeetingTypes}
+                  placeholder="All meeting types"
+                  ariaLabel="Filter by meeting type"
+                  filterPlaceholder="Search meeting types…"
+                  emptyText={meetingTypeOptions.length === 0 ? "No meeting types yet." : "No matches."}
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={inputTypeOptions}
+                  selected={selectedInputTypes}
+                  onChange={setSelectedInputTypes}
+                  placeholder="All input types"
+                  ariaLabel="Filter by input type"
+                  filterPlaceholder="Search input types…"
+                  emptyText="No matches."
+                />
+              </div>
+              <div>
+                <MultiSelectFilter
+                  options={reasoningEffortOptions}
+                  selected={selectedEfforts}
+                  onChange={setSelectedEfforts}
+                  placeholder="All efforts"
+                  ariaLabel="Filter by reasoning effort"
+                  filterPlaceholder="Search efforts…"
+                  emptyText="No matches."
+                />
+              </div>
+            </div>
+          </Card>
 
-      {active && (
-        <LogDrawer log={active} tab={tab} onTab={setTab} onClose={() => setActiveId(null)} />
+          {isLoading ? (
+            <Card>
+              <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
+            </Card>
+          ) : totalCount === 0 ? (
+            <Card>
+              <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+                No runs logged yet — run something from the Test Lab.
+              </p>
+            </Card>
+          ) : filtered.length === 0 ? (
+            <Card>
+              <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+                No logs match these filters.
+              </p>
+            </Card>
+          ) : (
+            <Card padded={false} className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Model</th>
+                    <th className="px-4 py-3">Effort</th>
+                    <th className="px-4 py-3">Input</th>
+                    <th className="px-4 py-3">Agents</th>
+                    <th className="px-4 py-3">Ratings</th>
+                    <th className="px-4 py-3">Cost</th>
+                    <th className="px-4 py-3">Tokens</th>
+                    <th className="px-4 py-3">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((l) => {
+                    const fbCount = ratingsCount(l);
+                    const usage = getUsage(l);
+                    return (
+                      <tr
+                        key={l.id}
+                        onClick={() => openLog(l.id)}
+                        className="cursor-pointer border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5"
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {fmt(l.created_at)}
+                        </td>
+                        <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
+                          {l.model}
+                        </td>
+                        <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={(l.reasoning_effort ?? "").trim() || "—"}>
+                          {(l.reasoning_effort ?? "").trim() || "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge tone="brand">{l.input_type}</Badge>
+                        </td>
+                        <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {Object.keys(l.agent_snapshot ?? {}).length}
+                        </td>
+                        <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {fbCount}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {usage ? fmtCostBoth(usage.cost_usd) : "—"}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {usage ? fmtTokens(usage.total_tokens) : "—"}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {usage ? fmtMs(usage.duration_ms) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function LogDrawer({
+function LogDetail({
   log,
   tab,
   onTab,
-  onClose,
+  onBack,
 }: {
   log: LogRow;
   tab: DrawerTab;
   onTab: (t: DrawerTab) => void;
-  onClose: () => void;
+  onBack: () => void;
 }) {
   const fbCount = ratingsCount(log);
   const usage = getUsage(log);
   const chips = filterChips(log.filters);
 
   return (
-    <Drawer
-      onClose={onClose}
-      title={
-        <div className="grid min-w-0 max-w-full gap-1">
-          <p className="font-heading text-base font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-            Run {log.run_id.slice(0, 8)}
-          </p>
-          <p className="max-w-full break-all font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
-          <p className="font-heading text-xs text-[#8a8f98]">{fmt(log.created_at)}</p>
-        </div>
-      }
-    >
-      <div className="grid min-w-0 max-w-full gap-4 animate-[turtle-fade-in_150ms_ease-out]">
-        <div
-          role="tablist"
-          aria-label="Log detail views"
-          className="flex items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
-        >
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            const selected = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={selected}
-                onClick={() => onTab(t.id)}
-                className={cn(
-                  "flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
-                  selected
-                    ? "bg-white text-[#1d1d1d] shadow-[0_1px_4px_rgba(29,29,29,0.12)] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
-                    : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {tab === "pretty" && <PrettyPanel log={log} fbCount={fbCount} />}
-        {tab === "raw" && <RawPanel log={log} />}
-        {tab === "analytics" && (
-          <AnalyticsPanel log={log} usage={usage} chips={chips} fbCount={fbCount} />
-        )}
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="secondary" size="sm" onClick={onBack} aria-label="Back to logs">
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          Back to logs
+        </Button>
       </div>
-    </Drawer>
+      <div className="grid min-w-0 max-w-full gap-1">
+        <p className="font-heading text-base font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
+          Run {log.run_id.slice(0, 8)}
+        </p>
+        <p className="max-w-full break-all font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">{log.model}</p>
+        <p className="font-heading text-xs text-[#8a8f98]">{fmt(log.created_at)}</p>
+      </div>
+      <div
+        role="tablist"
+        aria-label="Log detail views"
+        className="flex items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
+      >
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const selected = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={selected}
+              onClick={() => onTab(t.id)}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
+                selected
+                  ? "bg-white text-[#1d1d1d] shadow-[0_1px_4px_rgba(29,29,29,0.12)] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                  : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "pretty" && <PrettyPanel log={log} />}
+      {tab === "raw" && <RawPanel log={log} />}
+      {tab === "analytics" && (
+        <AnalyticsPanel log={log} usage={usage} chips={chips} fbCount={fbCount} />
+      )}
+    </div>
   );
 }
 
@@ -666,58 +673,65 @@ function RawPanel({ log }: { log: LogRow }) {
   );
 }
 
-function FeedbackEditor({
+function IdentifierFeedback({
   log,
-  agent,
-  attr,
-  rating: initialRating,
-  remarks: initialRemarks,
-  onDone,
+  agentName,
+  saved,
 }: {
   log: LogRow;
-  agent: string;
-  attr: string;
-  rating: string;
-  remarks: string;
-  onDone: () => void;
+  agentName: string;
+  saved: { rating: string; remarks: string } | null;
 }) {
   const qc = useQueryClient();
   const [rating, setRating] = React.useState<"up" | "down" | null>(
-    initialRating === "up" ? "up" : initialRating === "down" ? "down" : null,
+    saved?.rating === "up" ? "up" : saved?.rating === "down" ? "down" : null,
   );
-  const [remarks, setRemarks] = React.useState(initialRemarks ?? "");
+  const [remarksText, setRemarksText] = React.useState(
+    typeof saved?.remarks === "string" ? saved.remarks : "",
+  );
+  const [editing, setEditing] = React.useState(false);
 
   const save = useMutation({
-    mutationFn: async () =>
+    mutationFn: async (vars: { rating: "up" | "down" | null; remarks: string }) =>
       (
         await api.post(`/runs/${log.run_id}/feedback`, {
-          agent_name: agent,
-          attribute_name: attr,
-          rating,
-          remarks,
+          agent_name: agentName,
+          attribute_name: "selected_agents",
+          rating: vars.rating,
+          remarks: vars.remarks,
         })
       ).data,
     onSuccess: () => {
-      // ["logs"] covers ["logs", ...]; ["logs-all"] is a distinct key so it
-      // needs its own invalidation for the drawer (reads via allLogs.find).
       qc.invalidateQueries({ queryKey: ["logs"] });
       qc.invalidateQueries({ queryKey: ["logs-all"] });
       toast.success("Rating updated");
-      onDone();
     },
     onError: () => toast.error("Could not save rating"),
   });
 
+  function handleThumb(next: "up" | "down") {
+    setRating(next);
+    save.mutate({ rating: next, remarks: remarksText });
+  }
+
+  function handleRemarksSave() {
+    if (!rating) {
+      toast.error("Pick 👍 or 👎 first");
+      return;
+    }
+    save.mutate({ rating, remarks: remarksText }, { onSuccess: () => setEditing(false) });
+  }
+
   return (
-    <div className="flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white p-2 dark:border-white/10 dark:bg-white/5">
+    <div className="mt-2 flex max-w-full flex-wrap items-center gap-2">
       <button
         type="button"
-        onClick={() => setRating("up")}
+        onClick={() => handleThumb("up")}
         title="Thumbs up"
         aria-pressed={rating === "up"}
         aria-label="Thumbs up"
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          "flex h-8 w-8 items-center justify-center rounded-full border transition-colors",
           rating === "up"
             ? "border-[#22c55e] bg-[#e9f9ef] text-[#15803d]"
             : "border-[#e5e7eb] text-[#4a5058] hover:border-[#22c55e] dark:border-white/10 dark:text-[#C3C2B7]",
@@ -727,12 +741,12 @@ function FeedbackEditor({
       </button>
       <button
         type="button"
-        onClick={() => setRating("down")}
+        onClick={() => handleThumb("down")}
         title="Thumbs down"
         aria-pressed={rating === "down"}
         aria-label="Thumbs down"
         className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          "flex h-8 w-8 items-center justify-center rounded-full border transition-colors",
           rating === "down"
             ? "border-[#ef4444] bg-[#fdecec] text-[#b91c1c]"
             : "border-[#e5e7eb] text-[#4a5058] hover:border-[#ef4444] dark:border-white/10 dark:text-[#C3C2B7]",
@@ -740,53 +754,221 @@ function FeedbackEditor({
       >
         <ThumbsDown className="h-4 w-4" aria-hidden="true" />
       </button>
-      <input
-        value={remarks}
-        onChange={(e) => setRemarks(e.target.value)}
-        placeholder="Remarks…"
-        aria-label="Remarks"
-        className="h-9 min-w-40 flex-1 rounded-full border border-[#e5e7eb] bg-white px-3 font-sans text-sm text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
-      />
-      <Button
-        variant="secondary"
-        size="sm"
-        loading={save.isPending}
-        onClick={() => (rating ? save.mutate() : toast.error("Pick 👍 or 👎 first"))}
+      <span
+        className={cn(
+          "min-w-0 max-w-60 flex-1 truncate font-sans text-xs",
+          remarksText ? "text-[#1d1d1d] dark:text-[#F0EFEC]" : "text-[#8a8f98]",
+        )}
+        title={remarksText || undefined}
       >
-        Save
-      </Button>
+        {remarksText || "—"}
+      </span>
       <button
         type="button"
-        onClick={onDone}
-        className="px-1 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+        onClick={() => setEditing((e) => !e)}
+        aria-label={`Edit remarks for ${agentName} / selected_agents`}
+        className="flex h-6 w-6 items-center justify-center rounded-full text-[#4a5058] transition-colors hover:bg-[#f1f2f3] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
       >
-        Cancel
+        <Pencil className="h-3 w-3" aria-hidden="true" />
       </button>
+      {editing && (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <input
+            value={remarksText}
+            onChange={(e) => setRemarksText(e.target.value)}
+            placeholder="Remarks…"
+            aria-label="Remarks"
+            className="h-8 min-w-40 flex-1 rounded-lg border border-[#e5e7eb] bg-white px-2 font-sans text-xs text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
+          />
+          <Button variant="secondary" size="sm" loading={save.isPending} onClick={handleRemarksSave}>
+            Save
+          </Button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="px-1 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
+function AttrRow({
+  log,
+  agentName,
+  attr,
+  r,
+  saved,
+  sn,
+}: {
+  log: LogRow;
+  agentName: string;
+  attr: string;
+  r: PrettyAttr;
+  saved: { rating: string; remarks: string } | null;
+  sn: number;
+}) {
+  const qc = useQueryClient();
+  const [rating, setRating] = React.useState<"up" | "down" | null>(
+    saved?.rating === "up" ? "up" : saved?.rating === "down" ? "down" : null,
+  );
+  const [remarksText, setRemarksText] = React.useState(
+    typeof saved?.remarks === "string" ? saved.remarks : "",
+  );
+  const [editingRemarks, setEditingRemarks] = React.useState(false);
+
+  const save = useMutation({
+    mutationFn: async (vars: { rating: "up" | "down" | null; remarks: string }) =>
+      (
+        await api.post(`/runs/${log.run_id}/feedback`, {
+          agent_name: agentName,
+          attribute_name: attr,
+          rating: vars.rating,
+          remarks: vars.remarks,
+        })
+      ).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["logs"] });
+      qc.invalidateQueries({ queryKey: ["logs-all"] });
+      toast.success("Rating updated");
+    },
+    onError: () => toast.error("Could not save rating"),
+  });
+
+  function handleThumb(next: "up" | "down") {
+    setRating(next);
+    save.mutate({ rating: next, remarks: remarksText });
+  }
+
+  function handleRemarksSave() {
+    if (!rating) {
+      toast.error("Pick 👍 or 👎 first");
+      return;
+    }
+    save.mutate({ rating, remarks: remarksText }, { onSuccess: () => setEditingRemarks(false) });
+  }
+
+  const valueText = formatValue(r.value);
+  const evidenceText = typeof r.evidence === "string" ? r.evidence : "";
+
+  return (
+    <tr className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]">
+      <td className="whitespace-nowrap px-3 py-2 font-mono text-[#4a5058] dark:text-[#C3C2B7]">
+        {sn}
+      </td>
+      <td className="max-w-48 break-words px-3 py-2 font-heading font-bold">{attr}</td>
+      <td className="max-w-64 break-words px-3 py-2" title={valueText}>
+        {valueText}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2 font-mono">
+        {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <Badge tone="brand">{String(r.confidence_type ?? "?")}</Badge>
+      </td>
+      <td className="max-w-64 break-words px-3 py-2">
+        {evidenceText !== "" ? (
+          <span
+            className="break-words italic text-[#4a5058] dark:text-[#C3C2B7]"
+            title={evidenceText}
+          >
+            “{evidenceText}”
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => handleThumb("up")}
+            title="Thumbs up"
+            aria-pressed={rating === "up"}
+            aria-label="Thumbs up"
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full border transition-colors",
+              rating === "up"
+                ? "border-[#22c55e] bg-[#e9f9ef] text-[#15803d]"
+                : "border-[#e5e7eb] text-[#4a5058] hover:border-[#22c55e] dark:border-white/10 dark:text-[#C3C2B7]",
+            )}
+          >
+            <ThumbsUp className="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleThumb("down")}
+            title="Thumbs down"
+            aria-pressed={rating === "down"}
+            aria-label="Thumbs down"
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full border transition-colors",
+              rating === "down"
+                ? "border-[#ef4444] bg-[#fdecec] text-[#b91c1c]"
+                : "border-[#e5e7eb] text-[#4a5058] hover:border-[#ef4444] dark:border-white/10 dark:text-[#C3C2B7]",
+            )}
+          >
+            <ThumbsDown className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </td>
+      <td className="min-w-40 max-w-64 px-3 py-2">
+        <div className="flex items-start gap-1.5">
+          <span
+            className={cn(
+              "block min-w-0 max-w-40 flex-1 truncate",
+              remarksText ? "" : "text-[#8a8f98]",
+            )}
+            title={remarksText || undefined}
+          >
+            {remarksText || "—"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setEditingRemarks((e) => !e)}
+            aria-label={`Edit remarks for ${agentName} / ${attr}`}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#4a5058] transition-colors hover:bg-[#f1f2f3] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
+          >
+            <Pencil className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </div>
+        {editingRemarks && (
+          <div className="mt-1.5 grid gap-1.5">
+            <input
+              value={remarksText}
+              onChange={(e) => setRemarksText(e.target.value)}
+              placeholder="Remarks…"
+              aria-label="Remarks"
+              className="h-8 w-full min-w-0 rounded-lg border border-[#e5e7eb] bg-white px-2 font-sans text-xs text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
+            />
+            <div className="flex gap-1.5">
+              <Button variant="secondary" size="sm" loading={save.isPending} onClick={handleRemarksSave}>
+                Save
+              </Button>
+              <button
+                type="button"
+                onClick={() => setEditingRemarks(false)}
+                className="px-1 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function PrettyPanel({ log }: { log: LogRow }) {
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
     ["Meeting type", logMeetingType(log) || "Unknown"],
   ];
-  // Flattened feedback rows; defensive against missing/malformed feedback.
-  const feedback = log.feedback ?? {};
-  const fbList: { agent: string; attr: string; rating: string; remarks: string }[] = [];
-  for (const [agent, attrs] of Object.entries(feedback)) {
-    const m = (attrs ?? {}) as Record<string, { rating?: unknown; remarks?: unknown }>;
-    for (const [attr, f] of Object.entries(m)) {
-      fbList.push({
-        agent,
-        attr,
-        rating: typeof f?.rating === "string" ? f.rating : "",
-        remarks: typeof f?.remarks === "string" ? f.remarks : "",
-      });
-    }
-  }
-  const [editingKey, setEditingKey] = React.useState<string | null>(null);
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div className="min-w-0 max-w-full">
@@ -822,7 +1004,7 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
       </div>
       <div className="grid min-w-0 max-w-full gap-3">
         {Object.entries(log.outputs ?? {}).map(([agentId, out]) => {
-          const agentName = log.agent_snapshot?.[agentId]?.name ?? agentId;
+          const agentName = agentDisplayName(log, agentId);
           if (out && typeof out === "object" && "_error" in (out as Record<string, unknown>)) {
             const err = (out as Record<string, unknown>)._error;
             return (
@@ -838,32 +1020,11 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
             );
           }
           const selected = selectedAgentsOf(out);
-          const snapAttrs = snapshotAttrs(log, agentId);
-          const snapshotBlock =
-            snapAttrs.length > 0 ? (
-              <div className="mt-2 min-w-0 max-w-full">
-                <p className={sectionLabel}>Attributes (snapshot)</p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {snapAttrs.map((sa, i) => (
-                    <span
-                      key={`${sa.name}-${i}`}
-                      title={typeof sa.description === "string" ? sa.description : undefined}
-                      className="inline-flex max-w-full items-center gap-1.5 break-words rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
-                    >
-                      {sa.name} · {String(sa.type ?? "?")}
-                      {enumChipsOf(sa).map((c) => (
-                        <Badge key={c} tone="neutral">{c}</Badge>
-                      ))}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null;
           if (selected !== null) {
+            const saved = savedFeedback(log, agentName, "selected_agents");
             return (
               <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
                 <CardTitle>{agentName}</CardTitle>
-                {snapshotBlock}
                 <div className="mt-2 grid min-w-0 max-w-full gap-2">
                   {selected.length === 0 ? (
                     <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
@@ -877,6 +1038,7 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
                     </div>
                   )}
                 </div>
+                <IdentifierFeedback log={log} agentName={agentName} saved={saved} />
               </div>
             );
           }
@@ -884,92 +1046,42 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
           return (
             <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
               <CardTitle>{agentName}</CardTitle>
-              {snapshotBlock}
-              <div className="mt-2 grid min-w-0 max-w-full gap-2">
-                {entries.map(([attr, r]) => (
-                  <div key={attr} className="min-w-0 max-w-full rounded-xl bg-[#f1f2f3] p-3 dark:bg-white/5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="break-words font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-                        {attr}
-                      </span>
-                      <Badge tone="brand">{String(r.confidence_type ?? "?")}</Badge>
-                      <span className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                        {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
-                      </span>
-                    </div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#e5e7eb] dark:bg-white/10">
-                      <div
-                        className="h-1.5 rounded-full bg-[#2fdebf]"
-                        style={{
-                          width: `${typeof r.confidence === "number" ? Math.round(r.confidence * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                    <p className="mt-2 break-words font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
-                      <span
-                        className={cn(sectionLabel, "inline")}
-                        style={{ fontSize: "inherit" }}
-                      >
-                        Value ·{" "}
-                      </span>
-                      {String(r.value ?? "—")}
-                    </p>
-                    {typeof r.evidence === "string" && r.evidence !== "" && (
-                      <p className="mt-1 break-words border-l-2 border-[#2fdebf] pl-2 font-sans text-sm italic text-[#4a5058] dark:text-[#C3C2B7]">
-                        “{r.evidence}”
-                      </p>
-                    )}
-                  </div>
-                ))}
-                {entries.length === 0 && (
-                  <p className="font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
-                )}
-              </div>
+              {entries.length === 0 ? (
+                <p className="mt-2 font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
+              ) : (
+                <div className="mt-1.5 overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
+                  <table className="w-full min-w-[960px] font-sans text-xs">
+                    <thead>
+                      <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
+                        <th className="px-3 py-2">SN</th>
+                        <th className="px-3 py-2">Attribute</th>
+                        <th className="px-3 py-2">Value</th>
+                        <th className="px-3 py-2">Conf.</th>
+                        <th className="px-3 py-2">Conf. type</th>
+                        <th className="px-3 py-2">Evidence</th>
+                        <th className="px-3 py-2">Feedback</th>
+                        <th className="px-3 py-2">Remark</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entries.map(([attr, r], idx) => (
+                        <AttrRow
+                          key={attr}
+                          log={log}
+                          agentName={agentName}
+                          attr={attr}
+                          r={r}
+                          saved={savedFeedback(log, agentName, attr)}
+                          sn={idx + 1}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           );
         })}
-      </div>
-      <div>
-        <h3 className={sectionLabel}>Feedback</h3>
-        {fbCount === 0 ? (
-          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">No ratings yet.</p>
-        ) : (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {fbList.map(({ agent, attr, rating, remarks }) => {
-              const key = `${agent}\u0000${attr}`;
-              if (editingKey === key) {
-                return (
-                  <FeedbackEditor
-                    key={key}
-                    log={log}
-                    agent={agent}
-                    attr={attr}
-                    rating={rating}
-                    remarks={remarks}
-                    onDone={() => setEditingKey(null)}
-                  />
-                );
-              }
-              return (
-                <span
-                  key={key}
-                  title={remarks || undefined}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold text-[#1d1d1d] dark:bg-white/10 dark:text-[#F0EFEC]"
-                >
-                  {agent} / {attr} {rating === "up" ? "👍" : "👎"}
-                  <button
-                    type="button"
-                    onClick={() => setEditingKey(key)}
-                    aria-label={`Edit rating for ${agent} / ${attr}`}
-                    className="flex h-5 w-5 items-center justify-center rounded-full text-[#4a5058] transition-colors hover:bg-white hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
-                  >
-                    <Pencil className="h-3 w-3" aria-hidden="true" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        )}
       </div>
     </div>
   );
