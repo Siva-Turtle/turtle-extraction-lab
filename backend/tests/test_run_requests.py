@@ -176,3 +176,69 @@ def test_legacy_rows_default_empty_requests(client, db):
     assert len(logs) == 1
     assert logs[0]["requests"] == {}
     assert client.get(f"/api/v1/logs/{logs[0]['id']}").json()["requests"] == {}
+
+
+def test_complete_json_403_preserves_provider_body(monkeypatch):
+    """Regression: OpenRouter's JSON error body must survive (it names the
+    real 403 cause: permissions, guardrail, moderation, model access)."""
+    import httpx
+    import pytest as _pytest
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    seen: dict = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            seen["headers"] = headers
+            seen["url"] = url
+            req = httpx.Request("POST", url)
+            return httpx.Response(
+                403,
+                json={"error": {"code": 403,
+                                "message": "Only management keys can perform this operation"}},
+                request=req,
+            )
+
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _FakeClient)
+    # Required headers are sent (HTTP-Referer/X-Title are optional, not required).
+    with _pytest.raises(RuntimeError) as ei:
+        asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
+    msg = str(ei.value)
+    assert "403" in msg
+    assert "Only management keys can perform this operation" in msg
+    assert seen["headers"]["Authorization"] == "Bearer test-key"
+    assert seen["headers"]["Content-Type"] == "application/json"
+    assert "Bearer" not in msg  # never leak the key into the error text
+
+
+def test_run_error_stores_provider_body(client, monkeypatch):
+    """End-to-end: a provider error with a body lands verbatim in outputs._error."""
+    aid = _make_agent(client)
+
+    async def _boom_with_body(payload):
+        raise RuntimeError(
+            "OpenRouter error 403: "
+            '{"error": {"code": 403, "message": "Request blocked: guardrail"}}'
+        )
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _boom_with_body)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "m"}).json()
+    assert "Request blocked" in body["outputs"][aid]["_error"]
+    logs = client.get("/api/v1/logs").json()
+    assert "Request blocked" in logs[0]["outputs"][aid]["_error"]

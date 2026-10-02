@@ -73,7 +73,21 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
             },
             json=payload,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Preserve OpenRouter's JSON error body ({"error": {"code", "message"}})
+            # which names the real cause (invalid key, credits, guardrail,
+            # moderation, model access). httpx's default message drops it.
+            try:
+                detail = (resp.text or "").strip()
+            except Exception:
+                detail = ""
+            if detail:
+                raise RuntimeError(
+                    f"OpenRouter error {resp.status_code}: {detail[:2000]}"
+                ) from exc
+            raise
         data = resp.json()
     import json as _json
 
