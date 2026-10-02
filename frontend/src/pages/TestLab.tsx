@@ -1,11 +1,12 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Check, ChevronDown, Eye, Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, serverDetail, shortModel } from "../lib/format";
-import type { ColumnStatus, CompareColumn, ModelSlot } from "../lib/logTypes";
+import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -13,6 +14,7 @@ import { Card, CardTitle } from "../components/ui/Card";
 import { MultiSelectFilter, SingleSelectFilter } from "../components/ui/Combobox";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
 import { ModelSlotsPicker } from "../components/run/ModelSlotsPicker";
+import { ComparisonMatrix } from "../components/compare/ComparisonMatrix";
 import { SingleModelTable } from "../components/compare/SingleModelTable";
 import { useMultiRun } from "../lib/useMultiRun";
 import type { Agent } from "./Agents";
@@ -356,6 +358,61 @@ function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
   return <Badge tone="info">running</Badge>;
 }
 
+/**
+ * Compare agents for the matrix: from the first finished column's
+ * `log.agent_snapshot` (real shape: per agent id {name, kind, attributes
+ * [{name, type, description, group}]}); before anything finishes, from the
+ * selected agents with empty attributes so section headers + skeletons show.
+ */
+function buildCompareAgents(
+  columns: CompareColumn[],
+  selectedIds: string[],
+  allAgents: { id: string; name: string; kind: string }[],
+): CompareAgent[] {
+  const first = columns.find(
+    (c) => c.log && (c.status === "done" || c.status === "partial"),
+  );
+  const snap = first?.log?.agent_snapshot;
+  if (snap && typeof snap === "object") {
+    const out: CompareAgent[] = [];
+    for (const [agentId, raw] of Object.entries(snap)) {
+      const s = (raw ?? {}) as {
+        name?: unknown;
+        kind?: unknown;
+        attributes?: unknown;
+      };
+      const name = typeof s.name === "string" && s.name.trim() !== "" ? s.name : agentId;
+      const kind = typeof s.kind === "string" && s.kind.trim() !== "" ? s.kind : "extraction";
+      const attrs: CompareAgent["attributes"] = [];
+      if (Array.isArray(s.attributes)) {
+        for (const a of s.attributes) {
+          if (!a || typeof a !== "object") continue;
+          const rec = a as Record<string, unknown>;
+          const n = typeof rec.name === "string" ? rec.name : "";
+          if (n.trim() === "") continue;
+          attrs.push({
+            name: n,
+            type: typeof rec.type === "string" ? rec.type : "",
+            description: typeof rec.description === "string" ? rec.description : "",
+            group: typeof rec.group === "string" ? rec.group : "",
+          });
+        }
+      }
+      out.push({ id: agentId, name, kind, attributes: attrs });
+    }
+    if (out.length > 0) return out;
+  }
+  return selectedIds.map((id) => {
+    const found = allAgents.find((a) => a.id === id);
+    return {
+      id,
+      name: found?.name ?? id,
+      kind: found?.kind ?? "extraction",
+      attributes: [],
+    };
+  });
+}
+
 /** Live elapsed-seconds counter for a running column. */
 function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | null {
   const [now, setNow] = React.useState(() => Date.now());
@@ -612,6 +669,11 @@ export default function TestLab() {
   const dateDisabled = false;
   const meetingDisabled = meetingsQuery.isLoading || meetingsDetail !== null;
 
+  const compareAgents = React.useMemo(
+    () => buildCompareAgents(multi.columns, selected, agents),
+    [multi.columns, selected, agents],
+  );
+
   return (
     <div className="grid gap-4">
       <Card>
@@ -766,12 +828,27 @@ export default function TestLab() {
           <div className="mb-3 flex items-center gap-2">
             <CardTitle>Results</CardTitle>
             {multi.groupId && <Badge tone="neutral">group {multi.groupId.slice(0, 8)}</Badge>}
+            <Link
+              to="/logs"
+              className="ml-auto font-heading text-xs font-bold text-[#0d5c4a] hover:underline dark:text-[#2fdebf]"
+            >
+              Open in Logs
+            </Link>
           </div>
-          <div className="grid gap-3">
-            {multi.columns.map((column) => (
-              <ColumnBlock key={column.key} column={column} onRetry={multi.retry} />
-            ))}
-          </div>
+          {multi.columns.length > 1 ? (
+            <ComparisonMatrix
+              columns={multi.columns}
+              agents={compareAgents}
+              editable
+              onRetry={multi.retry}
+            />
+          ) : (
+            <div className="grid gap-3">
+              {multi.columns.map((column) => (
+                <ColumnBlock key={column.key} column={column} onRetry={multi.retry} />
+              ))}
+            </div>
+          )}
         </Card>
       )}
     </div>
