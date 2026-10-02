@@ -881,6 +881,8 @@ export default function TestLab() {
                         </div>
                       )}
                     </div>
+                    {/* Identifier selection is rated as a whole under attribute name "selected_agents". */}
+                    <RatingBox runId={runId} agentName={agent?.name ?? agentId} attrName="selected_agents" />
                   </div>
                 );
               }

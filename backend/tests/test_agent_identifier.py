@@ -197,3 +197,35 @@ def test_identifier_candidates_exclude_identifier_kind(client, db):
     _make_agent(client, "agent_identifier", kind="identifier")
     rows = identifier_candidates_with_examples(db)
     assert [n for n, _, _ in rows] == ["plain_one"]
+
+
+def test_identifier_selection_feedback_saved_to_log(client, monkeypatch):
+    async def _capture(payload):
+        return ({"selected_agents": ["kc_and_feedback"]},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+
+    ident = _make_agent(client, "agent_identifier", description="Router.",
+                        kind="identifier")
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": "hello",
+        "agent_ids": [ident["id"]], "model": "m"}).json()
+    rid = body["id"]
+
+    fb = client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": ident["name"], "attribute_name": "selected_agents",
+        "rating": "up", "remarks": "good routing"}).json()
+    assert fb == {"ok": True}
+    logs = client.get("/api/v1/logs").json()
+    assert logs[0]["feedback"] == {
+        ident["name"]: {"selected_agents": {"rating": "up", "remarks": "good routing"}}}
+    got = client.get(f"/api/v1/runs/{rid}/feedback").json()
+    assert len(got) == 1
+    assert (got[0]["agent_name"], got[0]["attribute_name"],
+            got[0]["rating"], got[0]["remarks"]) == (
+        ident["name"], "selected_agents", "up", "good routing")
