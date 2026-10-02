@@ -29,6 +29,21 @@ class RunCreate(BaseModel):
     meeting_title: str = ""
     # OpenRouter reasoning effort ("" = not sent, model default).
     reasoning_effort: str = ""
+    # Multi-model compare group key: "" (single) or 32 lowercase hex chars.
+    run_group_id: str = ""
+
+    @field_validator("run_group_id", mode="before")
+    @classmethod
+    def _coerce_run_group_id(cls, v):
+        import re
+        if not isinstance(v, str):
+            return ""
+        s = v.strip()
+        if not s:
+            return ""
+        if not re.fullmatch(r"[0-9a-f]{32}", s):
+            raise ValueError("run_group_id must be 32 lowercase hex chars")
+        return s
 
     @field_validator("filters", mode="before")
     @classmethod
@@ -61,10 +76,43 @@ class RunDetail(RunOut):
 class FeedbackCreate(BaseModel):
     agent_name: str = ""
     attribute_name: str = ""
-    rating: str  # up | down
+    rating: str  # up | down | "" ("" = clear)
+    remarks: str | None = None
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _check_rating(cls, v):
+        s = v.strip() if isinstance(v, str) else v
+        if s not in ("up", "down", ""):
+            raise ValueError("rating must be up|down|''")
+        return s
+
+
+class FeedbackOut(BaseModel):
+    id: str
+    run_id: str
+    agent_name: str = ""
+    attribute_name: str = ""
+    rating: str
     remarks: str = ""
 
 
-class FeedbackOut(FeedbackCreate):
-    id: str
+class BatchFeedbackItem(BaseModel):
     run_id: str
+    agent_name: str = ""
+    attribute_name: str = ""
+    rating: str  # up | down | "" ("" = clear)
+    remarks: str | None = None
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _check_rating(cls, v):
+        s = v.strip() if isinstance(v, str) else v
+        if s not in ("up", "down", ""):
+            raise ValueError("rating must be up|down|''")
+        return s
+
+
+class BatchFeedbackIn(BaseModel):
+    items: list[BatchFeedbackItem] = Field(default_factory=list)
+    only_unrated: bool = False

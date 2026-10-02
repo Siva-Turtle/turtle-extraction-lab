@@ -189,6 +189,27 @@ def _parse_price(v: object) -> float | None:
         return None
 
 
+def _model_entry(m: dict) -> dict:
+    """Normalize one OpenRouter /models entry to the API shape.
+
+    Returns {"id", "name", "reasoning", "pricing"} where pricing is
+    {"prompt": float|None, "completion": float|None} (USD per token).
+    """
+    pricing_raw = m.get("pricing") if isinstance(m.get("pricing"), dict) else {}
+    return {
+        "id": m.get("id", ""),
+        "name": m.get("name") or m.get("id", ""),
+        # Per-model reasoning options (OpenRouter docs: per-model
+        # reasoning options; supported_efforts descending, null = all
+        # gateway efforts accepted, omitted = no effort selection).
+        "reasoning": m.get("reasoning") if isinstance(m.get("reasoning"), dict) else None,
+        "pricing": {
+            "prompt": _parse_price(pricing_raw.get("prompt")),
+            "completion": _parse_price(pricing_raw.get("completion")),
+        },
+    }
+
+
 async def get_model_pricing(model: str) -> tuple[float | None, float | None]:
     """Return (prompt_price, completion_price) USD per token, or (None, None).
 
@@ -229,13 +250,15 @@ async def get_model_pricing(model: str) -> tuple[float | None, float | None]:
 async def fetch_models() -> tuple[list[dict], bool]:
     """Return (models, live). Live list from OpenRouter, else curated fallback.
 
-    Each live entry is {"id", "name", "reasoning"} where reasoning passes
-    through the per-model `reasoning` object when it is a dict, else None.
+    Each live entry is {"id", "name", "reasoning", "pricing"} where reasoning
+    passes through the per-model `reasoning` object when it is a dict, else
+    None, and pricing is {"prompt", "completion"} USD per token. Fallback
+    entries carry pricing None.
     Per OpenRouter docs: supported_efforts is descending (null = all gateway
     efforts accepted); omitted reasoning = no effort selection exposed.
     """
     if not is_configured():
-        return CURATED_MODELS, False
+        return [{**m, "pricing": None} for m in CURATED_MODELS], False
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
@@ -245,16 +268,20 @@ async def fetch_models() -> tuple[list[dict], bool]:
             resp.raise_for_status()
             items = resp.json().get("data", [])
         models = [
-            {
-                "id": m.get("id", ""),
-                "name": m.get("name") or m.get("id", ""),
-                # Per-model reasoning options (OpenRouter docs: per-model
-                # reasoning options; supported_efforts descending, null = all
-                # gateway efforts accepted, omitted = no effort selection).
-                "reasoning": m.get("reasoning") if isinstance(m.get("reasoning"), dict) else None,
-            }
-            for m in items if m.get("id")]
+            _model_entry(m)
+            for m in items if isinstance(m, dict) and m.get("id")]
         models.sort(key=lambda m: m["id"])
+        try:
+            global _pricing_cache, _pricing_expires_at
+            import time as _time
+            fresh: dict[str, tuple[float | None, float | None]] = {}
+            for entry in models:
+                pricing = entry.get("pricing") or {}
+                fresh[entry["id"]] = (pricing.get("prompt"), pricing.get("completion"))
+            _pricing_cache = fresh
+            _pricing_expires_at = _time.time() + _PRICING_TTL_S
+        except Exception:
+            pass
         return models, True
     except Exception:
-        return CURATED_MODELS, False
+        return [{**m, "pricing": None} for m in CURATED_MODELS], False

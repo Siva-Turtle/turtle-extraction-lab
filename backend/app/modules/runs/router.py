@@ -7,8 +7,11 @@ from sqlalchemy.orm import Session
 from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, complete_json, complete_json_payload, get_model_pricing
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
+from app.modules.logs.router import _out
 from app.modules.meetings.router import get_scrubbed_transcript
-from app.modules.runs.schemas import FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut
+from app.modules.runs.schemas import (
+    BatchFeedbackIn, FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut,
+)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -497,13 +500,16 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(run)
     # Denormalized log row — snapshots only, no FK to agents/attributes.
-    db.add(RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
+    log = RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
                   usage=usage, filters=filters, requests=requests,
                   client=client, meeting_type=meeting_type, meeting_title=meeting_title,
-                  reasoning_effort=effort))
+                  reasoning_effort=effort, run_group_id=payload.run_group_id or "")
+    db.add(log)
     db.commit()
-    return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests}
+    db.refresh(log)
+    return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests,
+            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out(log)}
 
 
 @router.get("", response_model=list[RunOut])
@@ -511,6 +517,88 @@ def list_runs(db: Session = Depends(get_db)):
     rows = db.query(Run).order_by(Run.created_at.desc()).limit(100).all()
     return [RunOut(id=r.id, input_type=r.input_type, model=r.model,
                    agent_ids=r.agent_ids or [], created_at=r.created_at) for r in rows]
+
+
+def _cell_existing(fb: dict, agent_key: str, attr_key: str) -> dict:
+    """Existing feedback cell as a plain dict ({} when absent/malformed)."""
+    try:
+        agent_map = fb.get(agent_key, {})
+        if not isinstance(agent_map, dict):
+            return {}
+        cell = agent_map.get(attr_key, {})
+        return dict(cell) if isinstance(cell, dict) else {}
+    except Exception:
+        return {}
+
+
+def _apply_feedback_cell(
+    fb: dict, agent_name: str, attribute_name: str,
+    rating: str, remarks: str | None,
+) -> tuple[str, str]:
+    """Mutate denormalized ``fb`` like add_feedback; return (history_rating, history_remarks).
+
+    - rating "" removes the cell (drops the agent key when empty) and the
+      history row is written with rating "clear".
+    - remarks None keeps the cell's existing remarks ("" when absent);
+      a string replaces them.
+    """
+    agent_key = agent_name or "agent"
+    attr_key = attribute_name or "attribute"
+    existing = _cell_existing(fb, agent_key, attr_key)
+    existing_remarks = existing.get("remarks", "")
+    if not isinstance(existing_remarks, str):
+        existing_remarks = ""
+    new_remarks = existing_remarks if remarks is None else (remarks or "")
+    if rating == "":
+        agent_map = fb.get(agent_key)
+        if isinstance(agent_map, dict) and attr_key in agent_map:
+            del agent_map[attr_key]
+            if not agent_map:
+                del fb[agent_key]
+        return ("clear", new_remarks)
+    fb.setdefault(agent_key, {})[attr_key] = {"rating": rating, "remarks": new_remarks}
+    return (rating, new_remarks)
+
+
+def _cell_is_rated(fb: dict, agent_name: str, attribute_name: str) -> bool:
+    cell = _cell_existing(fb, agent_name or "agent", attribute_name or "attribute")
+    rating = cell.get("rating", "")
+    return isinstance(rating, str) and bool(rating.strip())
+
+
+@router.post("/feedback-batch")
+def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
+    # Validate everything before mutating: unknown run_id -> 404, nothing applied.
+    logs_by_run: dict[str, RunLog] = {}
+    for item in payload.items:
+        run = db.query(Run).filter(Run.id == item.run_id).first()
+        if not run:
+            raise HTTPException(404, "run not found")
+        log = db.query(RunLog).filter(RunLog.run_id == item.run_id).first()
+        if not log:
+            raise HTTPException(404, "run not found")
+        logs_by_run[item.run_id] = log
+    from sqlalchemy.orm.attributes import flag_modified
+    applied = 0
+    skipped = 0
+    for item in payload.items:
+        log = logs_by_run[item.run_id]
+        fb = dict(log.feedback or {}) if isinstance(log.feedback, dict) else {}
+        # Rebuild nested dicts so mutation is visible even without flag_modified.
+        fb = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb.items()}
+        if payload.only_unrated and _cell_is_rated(fb, item.agent_name, item.attribute_name):
+            skipped += 1
+            continue
+        history_rating, history_remarks = _apply_feedback_cell(
+            fb, item.agent_name, item.attribute_name, item.rating, item.remarks)
+        log.feedback = fb
+        flag_modified(log, "feedback")
+        db.add(Feedback(run_id=item.run_id, agent_name=item.agent_name,
+                        attribute_name=item.attribute_name,
+                        rating=history_rating, remarks=history_remarks))
+        applied += 1
+    db.commit()
+    return {"ok": True, "applied": applied, "skipped": skipped}
 
 
 @router.get("/{run_id}", response_model=RunDetail)
@@ -528,19 +616,25 @@ def add_feedback(run_id: str, payload: FeedbackCreate, db: Session = Depends(get
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(404, "run not found")
-    if payload.rating not in ("up", "down"):
-        raise HTTPException(422, "rating must be up|down")
-    db.add(Feedback(run_id=run_id, agent_name=payload.agent_name, attribute_name=payload.attribute_name,
-                    rating=payload.rating, remarks=payload.remarks))
+    if payload.rating not in ("up", "down", ""):
+        raise HTTPException(422, "rating must be up|down|''")
     log = db.query(RunLog).filter(RunLog.run_id == run_id).first()
     if log:
-        fb = dict(log.feedback or {})
-        fb.setdefault(payload.agent_name or "agent", {}).update(
-            {payload.attribute_name or "attribute": {"rating": payload.rating, "remarks": payload.remarks}})
+        fb = dict(log.feedback or {}) if isinstance(log.feedback, dict) else {}
+        fb = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb.items()}
+        history_rating, history_remarks = _apply_feedback_cell(
+            fb, payload.agent_name, payload.attribute_name, payload.rating, payload.remarks)
         log.feedback = fb
         # Re-assign so SQLAlchemy flags the JSON column dirty on every backend.
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(log, "feedback")
+    else:
+        existing_remarks = ""
+        new_remarks = existing_remarks if payload.remarks is None else (payload.remarks or "")
+        history_rating = "clear" if payload.rating == "" else payload.rating
+        history_remarks = new_remarks
+    db.add(Feedback(run_id=run_id, agent_name=payload.agent_name, attribute_name=payload.attribute_name,
+                    rating=history_rating, remarks=history_remarks))
     db.commit()
     return {"ok": True}
 

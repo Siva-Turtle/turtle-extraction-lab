@@ -397,3 +397,123 @@ def test_build_extraction_schema_object_subtype_mapping():
                                    "vip": {"type": "boolean"}}
     assert value["required"] == ["nickname", "tags", "vip"]
     assert value["additionalProperties"] is False
+
+
+def test_run_group_id_round_trip(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    gid = "c" * 32
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model",
+        "run_group_id": gid}).json()
+    assert body["run_group_id"] == gid
+    assert body["log"]["run_group_id"] == gid
+    assert body["log_id"] == body["log"]["id"]
+
+    logs = client.get("/api/v1/logs").json()
+    assert len(logs) == 1
+    assert logs[0]["id"] == body["log_id"]
+    assert logs[0]["run_group_id"] == gid
+
+    # Non-str coerces to ""; bad shapes -> 422.
+    bad = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "x",
+        "agent_ids": [aid], "model": "test-model",
+        "run_group_id": "not-hex"})
+    assert bad.status_code == 422
+    assert client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "x",
+        "agent_ids": [aid], "model": "test-model",
+        "run_group_id": "ABC"}).status_code == 422
+
+
+def test_run_response_log_id_matches_newest_log(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    first = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()
+    second = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()
+    assert first["log_id"] != second["log_id"]
+    logs = client.get("/api/v1/logs").json()
+    assert len(logs) == 2
+    # Logs are newest-first, so the second run's log is on top.
+    assert logs[0]["id"] == second["log_id"]
+    assert second["log"]["id"] == second["log_id"]
+
+
+def test_feedback_clear_removes_key(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    rid = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()["id"]
+
+    assert client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": "A", "attribute_name": "email",
+        "rating": "up", "remarks": "keep me"}).json() == {"ok": True}
+    # remarks None keeps existing text.
+    assert client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": "A", "attribute_name": "email",
+        "rating": "down"}).json() == {"ok": True}
+    logs = client.get("/api/v1/logs").json()
+    assert logs[0]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "keep me"}}}
+
+    # Clear removes the cell (and the agent key when empty), history keeps "clear".
+    assert client.post(f"/api/v1/runs/{rid}/feedback", json={
+        "agent_name": "A", "attribute_name": "email", "rating": ""}).json() == {"ok": True}
+    logs = client.get("/api/v1/logs").json()
+    assert logs[0]["feedback"] == {}
+    got = client.get(f"/api/v1/runs/{rid}/feedback").json()
+    assert [(f["rating"], f["remarks"]) for f in got] == [
+        ("up", "keep me"), ("down", "keep me"), ("clear", "keep me")]
+
+    # Invalid ratings still 422.
+    assert client.post(f"/api/v1/runs/{rid}/feedback",
+                       json={"rating": "meh"}).status_code == 422
+
+
+def test_feedback_batch_and_only_unrated(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    mk = lambda: client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()["id"]
+    r1, r2 = mk(), mk()
+
+    body = client.post("/api/v1/runs/feedback-batch", json={
+        "items": [
+            {"run_id": r1, "agent_name": "A", "attribute_name": "email",
+             "rating": "up", "remarks": "one"},
+            {"run_id": r2, "agent_name": "A", "attribute_name": "email",
+             "rating": "down", "remarks": "two"},
+        ]}).json()
+    assert body == {"ok": True, "applied": 2, "skipped": 0}
+    logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
+    assert logs[r1]["feedback"] == {"A": {"email": {"rating": "up", "remarks": "one"}}}
+    assert logs[r2]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "two"}}}
+
+    # only_unrated skips already-rated cells.
+    body = client.post("/api/v1/runs/feedback-batch", json={
+        "items": [
+            {"run_id": r1, "agent_name": "A", "attribute_name": "email",
+             "rating": "down", "remarks": "changed"},
+            {"run_id": r2, "agent_name": "A", "attribute_name": "other",
+             "rating": "up", "remarks": "new"},
+        ], "only_unrated": True}).json()
+    assert body == {"ok": True, "applied": 1, "skipped": 1}
+    logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
+    assert logs[r1]["feedback"]["A"]["email"]["rating"] == "up"
+    assert logs[r2]["feedback"]["A"]["other"] == {"rating": "up", "remarks": "new"}
+
+    # Unknown run -> 404 and nothing applied.
+    before = client.get("/api/v1/logs").json()
+    resp = client.post("/api/v1/runs/feedback-batch", json={
+        "items": [
+            {"run_id": r1, "agent_name": "A", "attribute_name": "email",
+             "rating": "down", "remarks": "x"},
+            {"run_id": "missing", "agent_name": "A", "attribute_name": "email",
+             "rating": "up"},
+        ]})
+    assert resp.status_code == 404
+    after = client.get("/api/v1/logs").json()
+    assert before == after

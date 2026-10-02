@@ -109,4 +109,6 @@ class RunLog(Base):
     meeting_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     # Denormalized snapshot of the OpenRouter reasoning effort ("" on old rows).
     reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    # Multi-model compare group key ("" on old rows = own id is the group).
+    run_group_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

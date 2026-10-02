@@ -194,3 +194,50 @@ def test_logs_legacy_row_without_meeting_kwargs(client, db):
     assert logs[0]["meeting_title"] == ""
     # Legacy "" rows never match a named filter, but unfiltered lists keep them.
     assert client.get("/api/v1/logs", params={"clients": "Acme"}).json() == []
+
+
+def _run_with_group(client, group_id="", model="m"):
+    body = {"input_type": "transcription", "input_data": "hello",
+            "agent_ids": [], "model": model}
+    if group_id:
+        body["run_group_id"] = group_id
+    return client.post("/api/v1/runs", json=body).json()
+
+
+def test_logs_group_fields_default_empty(client):
+    _run(client)
+    logs = client.get("/api/v1/logs").json()
+    assert len(logs) == 1
+    assert logs[0]["run_group_id"] == ""
+    detail = client.get(f"/api/v1/logs/{logs[0]['id']}").json()
+    assert detail["run_group_id"] == ""
+
+
+def test_logs_filter_by_run_group_ids(client):
+    g1 = "a" * 32
+    g2 = "b" * 32
+    _run_with_group(client, group_id=g1, model="m1")
+    _run_with_group(client, group_id=g1, model="m2")
+    _run_with_group(client, group_id=g2, model="m3")
+
+    only = client.get("/api/v1/logs", params={"run_group_ids": g1}).json()
+    assert len(only) == 2
+    assert {r["model"] for r in only} == {"m1", "m2"}
+    assert all(r["run_group_id"] == g1 for r in only)
+
+    both = client.get(
+        "/api/v1/logs", params=[("run_group_ids", g1), ("run_group_ids", g2)]).json()
+    assert len(both) == 3
+    assert client.get("/api/v1/logs", params={"run_group_ids": "nope"}).json() == []
+    # axios-style bracket encoding is accepted too
+    bracket = client.get(f"/api/v1/logs?run_group_ids[]={g1}").json()
+    assert len(bracket) == 2
+
+    # Old row with blank group is found by its own id.
+    _run(client, model="legacy-m")
+    logs = client.get("/api/v1/logs").json()
+    legacy = [l for l in logs if l["model"] == "legacy-m"][0]
+    assert legacy["run_group_id"] == ""
+    found = client.get(
+        "/api/v1/logs", params={"run_group_ids": legacy["id"]}).json()
+    assert len(found) == 1 and found[0]["id"] == legacy["id"]

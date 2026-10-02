@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.db.models import RunLog
@@ -59,6 +60,7 @@ def _out(r: RunLog) -> dict:
             "meeting_type": getattr(r, "meeting_type", None) or "",
             "meeting_title": getattr(r, "meeting_title", None) or "",
             "reasoning_effort": getattr(r, "reasoning_effort", None) or "",
+            "run_group_id": getattr(r, "run_group_id", None) or "",
             "created_at": r.created_at}
 
 
@@ -73,6 +75,7 @@ def list_logs(
     meeting_types: list[str] | None = Query(default=None),
     meeting_titles: list[str] | None = Query(default=None),
     reasoning_efforts: list[str] | None = Query(default=None),
+    run_group_ids: list[str] | None = Query(default=None),
 ):
     # Accept both `models=a&models=b` and axios-style `models[]=a&models[]=b`.
     qp = request.query_params
@@ -102,6 +105,10 @@ def list_logs(
         reasoning_efforts, qp.getlist("reasoning_efforts[]"),
         qp.getlist("reasoning_effort"), qp.getlist("reasoning_effort[]"),
     )
+    wanted_groups = _as_list(
+        run_group_ids, qp.getlist("run_group_ids[]"),
+        qp.getlist("run_group_id"), qp.getlist("run_group_id[]"),
+    )
     model_set = set(wanted_models)
     agent_set = set(wanted_agents)
     date_set = set(wanted_dates)
@@ -110,7 +117,11 @@ def list_logs(
     title_set = set(wanted_titles)
     effort_set = set(wanted_efforts)
 
-    rows = db.query(RunLog).order_by(RunLog.created_at.desc()).limit(500).all()
+    q = db.query(RunLog)
+    if wanted_groups:
+        ids = list(dict.fromkeys(wanted_groups))
+        q = q.filter(or_(RunLog.run_group_id.in_(ids), RunLog.id.in_(ids)))
+    rows = q.order_by(RunLog.created_at.desc()).limit(500).all()
     if model_set:
         rows = [r for r in rows if (r.model or "") in model_set]
     if agent_set:
@@ -129,7 +140,7 @@ def list_logs(
         rows = [r for r in rows if (getattr(r, "meeting_title", None) or "") in title_set]
     if effort_set:
         rows = [r for r in rows if (getattr(r, "reasoning_effort", None) or "") in effort_set]
-    return [_out(r) for r in rows[:100]]
+    return [_out(r) for r in rows[:300]]
 
 
 @router.get("/{log_id}")

@@ -76,3 +76,25 @@ def test_fetch_models_reasoning_passthrough(monkeypatch):
     assert models[0]["name"] == "a-model"
     assert models[2]["reasoning"] is None
     assert models[2]["name"] == "c-model"
+
+
+def test_model_entry_pricing_parsing():
+    assert orouter._model_entry({
+        "id": "m", "name": "M",
+        "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+    })["pricing"] == {"prompt": 0.000001, "completion": 0.000002}
+    # Missing pricing block -> Nones; malformed strings -> None, never raises.
+    assert orouter._model_entry({"id": "m"})["pricing"] == {
+        "prompt": None, "completion": None}
+    assert orouter._model_entry({
+        "id": "m", "pricing": {"prompt": "oops", "completion": None},
+    })["pricing"] == {"prompt": None, "completion": None}
+    # Fallback entries carry pricing None.
+    old = settings.openrouter_api_key
+    try:
+        settings.openrouter_api_key = ""
+        fb_models, fb_live = asyncio.run(orouter.fetch_models())
+        assert fb_live is False
+        assert all(m["pricing"] is None for m in fb_models)
+    finally:
+        settings.openrouter_api_key = old
