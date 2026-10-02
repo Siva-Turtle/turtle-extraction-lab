@@ -5,14 +5,19 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
-import { fmt, fmtCostBoth, fmtMs, fmtTokens } from "../lib/format";
-import type { LogFilters, LogRow, RunUsage } from "../lib/logTypes";
+import { fmt, fmtCostBoth, fmtMs, fmtTokens, serverDetail, shortModel } from "../lib/format";
+import type { AgentUsage, LogFilters, LogRow, RunUsage } from "../lib/logTypes";
+import { buildRows, columnStats } from "../lib/compare";
+import { agentsFromLog, columnsFromLogs } from "../lib/compareData";
+import { groupLogs } from "../lib/logGroups";
+import type { LogGroup } from "../lib/logGroups";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { MultiSelectFilter } from "../components/ui/Combobox";
 import type { ModelOption } from "../components/ui/Combobox";
+import { ComparisonMatrix } from "../components/compare/ComparisonMatrix";
 import { SingleModelTable } from "../components/compare/SingleModelTable";
 
 type DrawerTab = "pretty" | "raw" | "analytics";
@@ -76,6 +81,44 @@ function ratingsCount(l: LogRow): number {
   return Object.values(l.feedback ?? {}).reduce((n, m) => n + Object.keys(m ?? {}).length, 0);
 }
 
+/** One member row's total cost display ("—" when pricing unknown). */
+function rowCostText(r: LogRow): string {
+  const c = r.usage?.cost_usd;
+  return typeof c === "number" && Number.isFinite(c) ? fmtCostBoth(c) : "—";
+}
+
+/** Sum of finite numbers, or null when none qualify. */
+function sumOrNull(vals: (number | null | undefined)[]): number | null {
+  let s = 0;
+  let has = false;
+  for (const v of vals) {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      s += v;
+      has = true;
+    }
+  }
+  return has ? s : null;
+}
+
+/** Max of finite numbers, or null when none qualify. */
+function maxOrNull(vals: (number | null | undefined)[]): number | null {
+  let m: number | null = null;
+  for (const v of vals) {
+    if (typeof v === "number" && Number.isFinite(v)) m = m === null ? v : Math.max(m, v);
+  }
+  return m;
+}
+
+/** Earliest-first sort for group members (invalid timestamps sink last). */
+function byCreatedAtAsc(a: LogRow, b: LogRow): number {
+  const ta = new Date(a.created_at).getTime();
+  const tb = new Date(b.created_at).getTime();
+  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+  if (Number.isNaN(ta)) return 1;
+  if (Number.isNaN(tb)) return -1;
+  return ta - tb;
+}
+
 const sectionLabel = "font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]";
 const codeBlock =
   "mt-1.5 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-xl bg-[#f1f2f3] p-3 font-mono text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]";
@@ -89,7 +132,7 @@ const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
 const INPUT_FILTERS = ["transcription", "messages", "mail"];
 
 export default function Logs() {
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>("pretty");
   const [selectedInputTypes, setSelectedInputTypes] = useState<string[]>([]);
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
@@ -198,13 +241,6 @@ export default function Logs() {
     [],
   );
 
-  const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
-
-  function openLog(id: string) {
-    setTab("pretty");
-    setActiveId(id);
-  }
-
   const typeFiltered =
     selectedMeetingTypes.length > 0
       ? base.filter((l) => selectedMeetingTypes.includes(logMeetingType(l)))
@@ -214,10 +250,28 @@ export default function Logs() {
       ? typeFiltered.filter((l) => selectedInputTypes.includes(l.input_type))
       : typeFiltered;
 
+  // One table row per run group (old rows without a group id = one-row groups).
+  const groups: LogGroup[] = React.useMemo(() => groupLogs(filtered), [filtered]);
+
+  const activeGroup = activeGroupKey
+    ? (groups.find((g) => g.key === activeGroupKey) ?? null)
+    : null;
+
+  function openGroup(key: string) {
+    setTab("pretty");
+    setActiveGroupKey(key);
+  }
+
   return (
     <div className="grid gap-4">
-      {active ? (
-        <LogDetail log={active} tab={tab} onTab={setTab} onBack={() => setActiveId(null)} />
+      {activeGroupKey ? (
+        <LogDetail
+          groupKey={activeGroupKey}
+          listRowCount={activeGroup ? activeGroup.rows.length : null}
+          tab={tab}
+          onTab={setTab}
+          onBack={() => setActiveGroupKey(null)}
+        />
       ) : (
         <>
           <Card>
@@ -301,7 +355,7 @@ export default function Logs() {
                 No runs logged yet — run something from the Test Lab.
               </p>
             </Card>
-          ) : filtered.length === 0 ? (
+          ) : groups.length === 0 ? (
             <Card>
               <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
                 No logs match these filters.
@@ -317,6 +371,7 @@ export default function Logs() {
                     <th className="px-4 py-3">Effort</th>
                     <th className="px-4 py-3">Input</th>
                     <th className="px-4 py-3">Agents</th>
+                    <th className="px-4 py-3">Agree</th>
                     <th className="px-4 py-3">Ratings</th>
                     <th className="px-4 py-3">Cost</th>
                     <th className="px-4 py-3">Tokens</th>
@@ -324,41 +379,68 @@ export default function Logs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((l) => {
-                    const fbCount = ratingsCount(l);
-                    const usage = getUsage(l);
+                  {groups.map((g) => {
+                    const first = g.rows[0] as LogRow;
+                    const single = g.rows.length === 1;
+                    const usage = single ? getUsage(first) : null;
+                    const costUsd = single ? usage?.cost_usd : g.totalCostUsd;
+                    const tokens = single ? usage?.total_tokens : g.totalTokens;
+                    const ms = single ? usage?.duration_ms : g.maxDurationMs;
                     return (
                       <tr
-                        key={l.id}
-                        onClick={() => openLog(l.id)}
+                        key={g.key}
+                        onClick={() => openGroup(g.key)}
                         className="cursor-pointer border-b border-[#e5e7eb] last:border-0 hover:bg-[#e8fbf6]/50 dark:border-white/10 dark:hover:bg-white/5"
                       >
                         <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {fmt(l.created_at)}
+                          {fmt(g.createdAt)}
                         </td>
-                        <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
-                          {l.model}
-                        </td>
-                        <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={(l.reasoning_effort ?? "").trim() || "—"}>
-                          {(l.reasoning_effort ?? "").trim() || "—"}
+                        {single ? (
+                          <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={first.model}>
+                            {first.model}
+                          </td>
+                        ) : (
+                          <td
+                            className="px-4 py-3"
+                            title={g.rows.map((r) => `${r.model} — ${rowCostText(r)}`).join("\n")}
+                          >
+                            <span className="inline-flex max-w-56 flex-wrap items-center gap-1">
+                              {g.rows.slice(0, 3).map((r) => (
+                                <span key={r.id} title={r.model}>
+                                  <Badge tone="neutral">{shortModel(r.model)}</Badge>
+                                </span>
+                              ))}
+                              {g.rows.length > 3 && (
+                                <span className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                                  +{g.rows.length - 3}
+                                </span>
+                              )}
+                            </span>
+                          </td>
+                        )}
+                        <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={g.effortLabel}>
+                          {g.effortLabel}
                         </td>
                         <td className="px-4 py-3">
-                          <Badge tone="brand">{l.input_type}</Badge>
+                          <Badge tone="brand">{first.input_type}</Badge>
                         </td>
                         <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {Object.keys(l.agent_snapshot ?? {}).length}
+                          {Object.keys(first.agent_snapshot ?? {}).length}
                         </td>
-                        <td className="px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {fbCount}
+                        <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          {g.agreePct === null ? "—" : `${Math.round(g.agreePct)}%`}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                          👍{g.up} 👎{g.down}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {usage ? fmtCostBoth(usage.cost_usd) : "—"}
+                          {fmtCostBoth(costUsd)}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {usage ? fmtTokens(usage.total_tokens) : "—"}
+                          {fmtTokens(tokens)}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          {usage ? fmtMs(usage.duration_ms) : "—"}
+                          {fmtMs(ms)}
                         </td>
                       </tr>
                     );
@@ -374,19 +456,37 @@ export default function Logs() {
 }
 
 function LogDetail({
-  log,
+  groupKey,
+  listRowCount,
   tab,
   onTab,
   onBack,
 }: {
-  log: LogRow;
+  groupKey: string;
+  /** Member rows the list group held (a filter may hide some); null when unknown. */
+  listRowCount: number | null;
   tab: DrawerTab;
   onTab: (t: DrawerTab) => void;
   onBack: () => void;
 }) {
-  const fbCount = ratingsCount(log);
-  const usage = getUsage(log);
-  const chips = filterChips(log.filters);
+  // Full group fetch (no list filters): matches run_group_id OR id.
+  const groupQuery = useQuery({
+    queryKey: ["log-group", groupKey],
+    queryFn: async () =>
+      (
+        await api.get("/logs", {
+          params: { run_group_ids: groupKey },
+          paramsSerializer: { indexes: null },
+        })
+      ).data as LogRow[],
+    staleTime: 30 * 1000,
+  });
+
+  const rows = React.useMemo(
+    () => [...(groupQuery.data ?? [])].sort(byCreatedAtAsc),
+    [groupQuery.data],
+  );
+  const loading = groupQuery.isLoading || (groupQuery.isFetching && rows.length === 0);
 
   return (
     <div className="grid gap-4">
@@ -424,16 +524,44 @@ function LogDetail({
         })}
       </div>
 
-      {tab === "pretty" && <PrettyPanel log={log} />}
-      {tab === "raw" && <RawPanel log={log} />}
-      {tab === "analytics" && (
-        <AnalyticsPanel log={log} usage={usage} chips={chips} fbCount={fbCount} />
+      {loading ? (
+        <Card>
+          <p className="font-heading text-sm text-[#8a8f98]">Loading…</p>
+        </Card>
+      ) : groupQuery.isError ? (
+        <Card>
+          <p role="alert" className="font-heading text-sm text-[#b91c1c] dark:text-[#f87171]">
+            {serverDetail(groupQuery.error)}
+          </p>
+          <div className="mt-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={groupQuery.isFetching}
+              onClick={() => void groupQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        </Card>
+      ) : rows.length === 0 ? (
+        <Card>
+          <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+            No logs found for this run.
+          </p>
+        </Card>
+      ) : (
+        <>
+          {tab === "pretty" && <PrettyPanel rows={rows} listRowCount={listRowCount} />}
+          {tab === "raw" && <RawPanel rows={rows} />}
+          {tab === "analytics" && <AnalyticsPanel rows={rows} groupKey={groupKey} />}
+        </>
       )}
     </div>
   );
 }
 
-function RawPanel({ log }: { log: LogRow }) {
+function RawSingle({ log }: { log: LogRow }) {
   const req = log.requests;
   const hasReq =
     !!req && typeof req === "object" && Object.keys(req as Record<string, unknown>).length > 0;
@@ -500,8 +628,58 @@ function RawPanel({ log }: { log: LogRow }) {
   );
 }
 
-function PrettyPanel({ log }: { log: LogRow }) {
-  const [inputOpen, setInputOpen] = React.useState(false);
+function RawPanel({ rows }: { rows: LogRow[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  if (rows.length <= 1) return <RawSingle log={rows[0] as LogRow} />;
+  const selected = rows.find((r) => r.id === selectedId) ?? (rows[0] as LogRow);
+  return (
+    <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div
+        role="tablist"
+        aria-label="Model"
+        className="flex flex-wrap items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
+      >
+        {rows.map((r) => {
+          const isSel = r.id === selected.id;
+          const effort = (r.reasoning_effort ?? "").trim() || "default";
+          return (
+            <button
+              key={r.id}
+              role="tab"
+              aria-selected={isSel}
+              title={r.model}
+              onClick={() => setSelectedId(r.id)}
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
+                isSel
+                  ? "bg-white text-[#1d1d1d] shadow-[0_1px_4px_rgba(29,29,29,0.12)] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
+                  : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
+              )}
+            >
+              <span className="max-w-40 truncate font-mono">{shortModel(r.model)}</span>
+              <span className="font-sans font-normal">· {effort}</span>
+            </button>
+          );
+        })}
+      </div>
+      <RawSingle key={selected.id} log={selected} />
+    </div>
+  );
+}
+
+function PrettyPanel({
+  rows,
+  listRowCount,
+}: {
+  rows: LogRow[];
+  listRowCount: number | null;
+}) {
+  const log = rows[0] as LogRow;
+  const [inputOpen, setInputOpen] = useState(false);
+  const columns = React.useMemo(() => columnsFromLogs(rows), [rows]);
+  const agents = React.useMemo(() => agentsFromLog(log), [log, rows]);
+  const multi = rows.length > 1;
+  const showAllNote = listRowCount !== null && rows.length > listRowCount;
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
@@ -555,12 +733,67 @@ function PrettyPanel({ log }: { log: LogRow }) {
         </div>
         {inputOpen && <pre className={cn(codeBlock, "max-h-40 font-sans")}>{log.input_data}</pre>}
       </div>
-      <SingleModelTable log={log} />
+      {multi && showAllNote && (
+        <p className="font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+          Showing all {rows.length} models of this run
+        </p>
+      )}
+      {multi ? (
+        <ComparisonMatrix columns={columns} agents={agents} editable />
+      ) : (
+        <SingleModelTable log={log} />
+      )}
     </div>
   );
 }
 
-function AnalyticsPanel({
+function PerAgentTable({
+  entries,
+}: {
+  entries: { key: string; agentName: string; model: string; u: AgentUsage }[];
+}) {
+  return (
+    <div className="mt-1.5 max-w-full overflow-x-hidden rounded-xl border border-[#e5e7eb] dark:border-white/10">
+      <table className="w-full max-w-full font-sans text-xs">
+        <thead>
+          <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
+            <th className="px-3 py-2">Agent</th>
+            <th className="px-3 py-2">Model</th>
+            <th className="px-3 py-2 text-right">In</th>
+            <th className="px-3 py-2 text-right">Out</th>
+            <th className="px-3 py-2 text-right">Thought</th>
+            <th className="px-3 py-2 text-right">In-cost</th>
+            <th className="px-3 py-2 text-right">Out-cost</th>
+            <th className="px-3 py-2 text-right">Cost</th>
+            <th className="px-3 py-2 text-right">Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map(({ key, agentName, model, u }) => (
+            <tr
+              key={key}
+              className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
+            >
+              <td className="max-w-40 break-words px-3 py-2 font-heading font-bold">
+                {agentName}
+              </td>
+              <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{model}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens((u as unknown as { reasoning_tokens?: unknown }).reasoning_tokens)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AnalyticsSingle({
   log,
   usage,
   chips,
@@ -586,7 +819,14 @@ function AnalyticsPanel({
     ["Agents run", String(Object.keys(log.agent_snapshot ?? {}).length)],
     ["Ratings count", String(fbCount)],
   ];
-  const perAgent = usage?.per_agent ? Object.entries(usage.per_agent) : [];
+  const perAgent = usage?.per_agent
+    ? Object.entries(usage.per_agent).map(([aid, u]) => ({
+        key: aid,
+        agentName: log.agent_snapshot?.[aid]?.name ?? aid,
+        model: u.model ?? "—",
+        u,
+      }))
+    : [];
 
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
@@ -612,43 +852,7 @@ function AnalyticsPanel({
         {perAgent.length === 0 ? (
           <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
         ) : (
-          <div className="mt-1.5 max-w-full overflow-x-hidden rounded-xl border border-[#e5e7eb] dark:border-white/10">
-            <table className="w-full max-w-full font-sans text-xs">
-              <thead>
-                <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
-                  <th className="px-3 py-2">Agent</th>
-                  <th className="px-3 py-2">Model</th>
-                  <th className="px-3 py-2 text-right">In</th>
-                  <th className="px-3 py-2 text-right">Out</th>
-                  <th className="px-3 py-2 text-right">Thought</th>
-                  <th className="px-3 py-2 text-right">In-cost</th>
-                  <th className="px-3 py-2 text-right">Out-cost</th>
-                  <th className="px-3 py-2 text-right">Cost</th>
-                  <th className="px-3 py-2 text-right">Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {perAgent.map(([aid, u]) => (
-                  <tr
-                    key={aid}
-                    className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
-                  >
-                    <td className="max-w-40 break-words px-3 py-2 font-heading font-bold">
-                      {log.agent_snapshot?.[aid]?.name ?? aid}
-                    </td>
-                    <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens((u as any).reasoning_tokens)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PerAgentTable entries={perAgent} />
         )}
       </div>
 
@@ -672,6 +876,172 @@ function AnalyticsPanel({
         <pre className={codeBlock}>
           {JSON.stringify(
             { log_id: log.id, run_id: log.run_id, created_at: log.created_at },
+            null,
+            2,
+          )}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }) {
+  const log = rows[0] as LogRow;
+  const columns = React.useMemo(() => columnsFromLogs(rows), [rows]);
+  const agents = React.useMemo(() => agentsFromLog(log), [log, rows]);
+  const built = React.useMemo(() => buildRows(agents, columns), [agents, columns]);
+
+  if (rows.length === 1) {
+    const usage = getUsage(log);
+    const chips = filterChips(log.filters);
+    const fbCount = ratingsCount(log);
+    return <AnalyticsSingle log={log} usage={usage} chips={chips} fbCount={fbCount} />;
+  }
+
+  const usages = rows.map((r) => getUsage(r));
+  const stats: [string, string][] = [
+    ["Models", `${rows.length} models`],
+    [
+      "Reasoning effort",
+      (() => {
+        const efforts = new Set(rows.map((r) => (r.reasoning_effort ?? "").trim()));
+        if (efforts.size !== 1) return "mixed";
+        return [...efforts][0] || "Default";
+      })(),
+    ],
+    ["Input tokens", fmtTokens(sumOrNull(usages.map((u) => u?.prompt_tokens)))],
+    ["Output tokens", fmtTokens(sumOrNull(usages.map((u) => u?.completion_tokens)))],
+    ["Thought tokens", fmtTokens(sumOrNull(usages.map((u) => u?.reasoning_tokens)))],
+    ["Total tokens", fmtTokens(sumOrNull(usages.map((u) => u?.total_tokens)))],
+    ["Input cost", fmtCostBoth(sumOrNull(usages.map((u) => u?.input_cost_usd)))],
+    ["Output cost", fmtCostBoth(sumOrNull(usages.map((u) => u?.output_cost_usd)))],
+    ["Total cost", fmtCostBoth(sumOrNull(usages.map((u) => u?.cost_usd)))],
+    ["Time taken", fmtMs(maxOrNull(usages.map((u) => u?.duration_ms)))],
+    ["Agents run", String(Object.keys(log.agent_snapshot ?? {}).length)],
+    ["Ratings count", String(rows.reduce((n, r) => n + ratingsCount(r), 0))],
+  ];
+  const perAgent: { key: string; agentName: string; model: string; u: AgentUsage }[] = [];
+  for (const r of rows) {
+    const pa = r.usage?.per_agent;
+    if (!pa || typeof pa !== "object") continue;
+    for (const [aid, u] of Object.entries(pa)) {
+      perAgent.push({
+        key: `${r.id}|${aid}`,
+        agentName: r.agent_snapshot?.[aid]?.name ?? aid,
+        model: u.model ?? "—",
+        u,
+      });
+    }
+  }
+  const chips = filterChips(log.filters);
+
+  return (
+    <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
+      <div className="min-w-0 max-w-full">
+        <h3 className={sectionLabel}>Usage stats</h3>
+        <div className="mt-1.5 grid min-w-0 max-w-full grid-cols-2 sm:grid-cols-4 gap-2">
+          {stats.map(([label, value]) => (
+            <div
+              key={label}
+              className="min-w-0 max-w-full rounded-xl border border-[#e5e7eb] p-3 dark:border-white/10"
+            >
+              <p className={sectionLabel}>{label}</p>
+              <p className="mt-1 max-w-full break-all font-mono text-sm text-[#1d1d1d] dark:text-[#F0EFEC]" title={value}>
+                {value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-w-0 max-w-full">
+        <h3 className={sectionLabel}>Model comparison</h3>
+        <div className="mt-1.5 max-w-full overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
+          <table className="w-full min-w-[1100px] font-sans text-xs">
+            <thead>
+              <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
+                <th className="px-3 py-2">Model</th>
+                <th className="px-3 py-2">Effort</th>
+                <th className="px-3 py-2 text-right">In</th>
+                <th className="px-3 py-2 text-right">Out</th>
+                <th className="px-3 py-2 text-right">Thought</th>
+                <th className="px-3 py-2 text-right">In-cost</th>
+                <th className="px-3 py-2 text-right">Out-cost</th>
+                <th className="px-3 py-2 text-right">Cost</th>
+                <th className="px-3 py-2 text-right">Time</th>
+                <th className="px-3 py-2 text-right">Agree %</th>
+                <th className="px-3 py-2 text-right">👍</th>
+                <th className="px-3 py-2 text-right">👎</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((col) => {
+                const l = col.log as LogRow;
+                const u = getUsage(l);
+                const s = columnStats(built, col.key);
+                return (
+                  <tr
+                    key={col.key}
+                    className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
+                  >
+                    <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]" title={l.model}>
+                      {shortModel(l.model)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {(l.reasoning_effort ?? "").trim() || "Default"}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.prompt_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.completion_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.reasoning_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u?.input_cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u?.output_cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u?.cost_usd)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u?.duration_ms)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{`${s.agreePct.toFixed(0)}%`}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{s.up}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{s.down}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="min-w-0 max-w-full">
+        <h3 className={sectionLabel}>Per-agent usage</h3>
+        {perAgent.length === 0 ? (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
+        ) : (
+          <PerAgentTable entries={perAgent} />
+        )}
+      </div>
+
+      <div>
+        <h3 className={sectionLabel}>Applied filters</h3>
+        {chips.length === 0 ? (
+          <p className="mt-1.5 font-heading text-xs text-[#8a8f98]">—</p>
+        ) : (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {chips.map((c) => (
+              <Badge key={c} tone="neutral">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className={sectionLabel}>Run info</h3>
+        <pre className={codeBlock}>
+          {JSON.stringify(
+            {
+              run_group_id: groupKey,
+              log_ids: rows.map((r) => r.id),
+              run_ids: rows.map((r) => r.run_id),
+              created_at: log.created_at,
+            },
             null,
             2,
           )}

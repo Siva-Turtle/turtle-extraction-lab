@@ -89,6 +89,7 @@ function IdentifierFeedback({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["logs"] });
       qc.invalidateQueries({ queryKey: ["logs-all"] });
+      qc.invalidateQueries({ queryKey: ["log-group"] });
       toast.success("Rating updated");
     },
     onError: () => toast.error("Could not save rating"),
@@ -190,6 +191,7 @@ function AttrRow({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["logs"] });
       qc.invalidateQueries({ queryKey: ["logs-all"] });
+      qc.invalidateQueries({ queryKey: ["log-group"] });
       toast.success("Rating updated");
     },
     onError: () => toast.error("Could not save rating"),

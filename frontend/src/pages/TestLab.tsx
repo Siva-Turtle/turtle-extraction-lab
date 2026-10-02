@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, serverDetail, shortModel } from "../lib/format";
+import { agentsFromLog } from "../lib/compareData";
 import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
@@ -360,9 +361,9 @@ function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
 
 /**
  * Compare agents for the matrix: from the first finished column's
- * `log.agent_snapshot` (real shape: per agent id {name, kind, attributes
- * [{name, type, description, group}]}); before anything finishes, from the
- * selected agents with empty attributes so section headers + skeletons show.
+ * `log.agent_snapshot` via the shared agentsFromLog helper; before anything
+ * finishes, from the selected agents with empty attributes so section
+ * headers + skeletons show.
  */
 function buildCompareAgents(
   columns: CompareColumn[],
@@ -372,34 +373,8 @@ function buildCompareAgents(
   const first = columns.find(
     (c) => c.log && (c.status === "done" || c.status === "partial"),
   );
-  const snap = first?.log?.agent_snapshot;
-  if (snap && typeof snap === "object") {
-    const out: CompareAgent[] = [];
-    for (const [agentId, raw] of Object.entries(snap)) {
-      const s = (raw ?? {}) as {
-        name?: unknown;
-        kind?: unknown;
-        attributes?: unknown;
-      };
-      const name = typeof s.name === "string" && s.name.trim() !== "" ? s.name : agentId;
-      const kind = typeof s.kind === "string" && s.kind.trim() !== "" ? s.kind : "extraction";
-      const attrs: CompareAgent["attributes"] = [];
-      if (Array.isArray(s.attributes)) {
-        for (const a of s.attributes) {
-          if (!a || typeof a !== "object") continue;
-          const rec = a as Record<string, unknown>;
-          const n = typeof rec.name === "string" ? rec.name : "";
-          if (n.trim() === "") continue;
-          attrs.push({
-            name: n,
-            type: typeof rec.type === "string" ? rec.type : "",
-            description: typeof rec.description === "string" ? rec.description : "",
-            group: typeof rec.group === "string" ? rec.group : "",
-          });
-        }
-      }
-      out.push({ id: agentId, name, kind, attributes: attrs });
-    }
+  if (first?.log) {
+    const out = agentsFromLog(first.log);
     if (out.length > 0) return out;
   }
   return selectedIds.map((id) => {
