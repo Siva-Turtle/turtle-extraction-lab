@@ -41,3 +41,17 @@ export type Agent = {
   input_types: string[];
   is_enabled: boolean;
 };
+
+/**
+ * Meeting Type derived from a meeting title.
+ * Titles look like "<Client name> and Turtle | <Meeting Type>" — the type is
+ * the text after the FIRST "|", trimmed. No "|" falls back to the full
+ * trimmed title (bare-type titles, legacy "<>" titles); blank stays blank.
+ */
+export function meetingTypeOf(title: string | null | undefined): string {
+  const s = (title ?? "").trim();
+  if (!s) return "";
+  const i = s.indexOf("|");
+  if (i === -1) return s;
+  return s.slice(i + 1).trim();
+}

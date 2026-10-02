@@ -3,7 +3,7 @@ import { useState } from "react";
 import { BarChart3, Braces, Check, ChevronDown, Copy, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "../lib/api";
+import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
@@ -133,6 +133,15 @@ function distinctLogOptions(logs: LogRow[], pick: (l: LogRow) => string | undefi
   return [...set]
     .sort((a, b) => a.localeCompare(b))
     .map((v) => ({ value: v, label: v }));
+}
+
+/**
+ * Derived Meeting Type for a log row: the helper over the full snapshot
+ * title, falling back to the stored meeting_type when the title is blank
+ * (old rows). "" means unknown.
+ */
+function logMeetingType(l: LogRow): string {
+  return meetingTypeOf(l.meeting_title) || meetingTypeOf(l.meeting_type);
 }
 
 function fmtTokens(n: unknown): string {
@@ -293,7 +302,7 @@ export default function Logs() {
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
-  const [selectedMeetingTitles, setSelectedMeetingTitles] = useState<string[]>([]);
+  const [selectedMeetingTypes, setSelectedMeetingTypes] = useState<string[]>([]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -315,19 +324,19 @@ export default function Logs() {
 
   const hasServerFilters =
     selectedModels.length > 0 || selectedAgents.length > 0 || selectedDates.length > 0 ||
-    selectedClients.length > 0 || selectedMeetingTitles.length > 0;
+    selectedClients.length > 0;
 
   const params: LogsQueryParams = {};
   if (selectedModels.length > 0) params.models = selectedModels;
   if (selectedAgents.length > 0) params.agent_ids = selectedAgents;
   if (selectedDates.length > 0) params.dates = selectedDates;
   if (selectedClients.length > 0) params.clients = selectedClients;
-  if (selectedMeetingTitles.length > 0) params.meeting_titles = selectedMeetingTitles;
 
   // Server-filtered list (AND across groups); reused only while filters are set.
+  // Meeting-type filtering stays client-side on the derived type (no backend change).
   const { data: serverLogs, isLoading: serverLoading } = useQuery({
     queryKey: ["logs", selectedModels, selectedAgents, selectedDates,
-      selectedClients, selectedMeetingTitles],
+      selectedClients],
     queryFn: async () =>
       (await api.get("/logs", { params, paramsSerializer: { indexes: null } })).data as LogRow[],
     enabled: hasServerFilters,
@@ -383,8 +392,10 @@ export default function Logs() {
     () => distinctLogOptions(allLogs, (l) => l.client),
     [allLogs],
   );
-  const meetingTitleOptions = React.useMemo(
-    () => distinctLogOptions(allLogs, (l) => l.meeting_title),
+  // Distinct non-blank derived meeting types from the unfiltered list
+  // (stable while filtering, same as Date options); "" means unknown, skipped.
+  const meetingTypeOptions = React.useMemo(
+    () => distinctLogOptions(allLogs, logMeetingType),
     [allLogs],
   );
 
@@ -395,7 +406,11 @@ export default function Logs() {
     setActiveId(id);
   }
 
-  const filtered = inputFilter ? base.filter((l) => l.input_type === inputFilter) : base;
+  const typeFiltered =
+    selectedMeetingTypes.length > 0
+      ? base.filter((l) => selectedMeetingTypes.includes(logMeetingType(l)))
+      : base;
+  const filtered = inputFilter ? typeFiltered.filter((l) => l.input_type === inputFilter) : typeFiltered;
 
   return (
     <div className="grid gap-4">
@@ -452,15 +467,15 @@ export default function Logs() {
             />
           </div>
           <div>
-            <span className={fieldLabel}>Meeting title</span>
+            <span className={fieldLabel}>Meeting type</span>
             <MultiSelectFilter
-              options={meetingTitleOptions}
-              selected={selectedMeetingTitles}
-              onChange={setSelectedMeetingTitles}
-              placeholder="All meeting titles"
-              ariaLabel="Filter by meeting title"
-              filterPlaceholder="Search meeting titles…"
-              emptyText={meetingTitleOptions.length === 0 ? "No meeting titles yet." : "No matches."}
+              options={meetingTypeOptions}
+              selected={selectedMeetingTypes}
+              onChange={setSelectedMeetingTypes}
+              placeholder="All meeting types"
+              ariaLabel="Filter by meeting type"
+              filterPlaceholder="Search meeting types…"
+              emptyText={meetingTypeOptions.length === 0 ? "No meeting types yet." : "No matches."}
             />
           </div>
           <div>
@@ -688,7 +703,7 @@ function PrettyPanel({ log, fbCount }: { log: LogRow; fbCount: number }) {
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
     ["Client", (log.client ?? "").trim() || "Unknown"],
-    ["Meeting title", (log.meeting_title ?? "").trim() || "Unknown"],
+    ["Meeting type", logMeetingType(log) || "Unknown"],
   ];
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">

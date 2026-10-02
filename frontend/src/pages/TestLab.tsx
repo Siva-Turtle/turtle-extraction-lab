@@ -2,12 +2,12 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Eye, Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "../lib/api";
+import { api, meetingTypeOf } from "../lib/api";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardTitle } from "../components/ui/Card";
-import { ModelCombobox } from "../components/ui/Combobox";
+import { ModelCombobox, MultiSelectFilter } from "../components/ui/Combobox";
 import { Modal, fieldInput, fieldLabel } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import type { Agent } from "./Agents";
@@ -434,7 +434,7 @@ export default function TestLab() {
   const [runId, setRunId] = React.useState<string | null>(null);
   const [outputs, setOutputs] = React.useState<RunOutputs | null>(null);
   const [clientId, setClientId] = React.useState("");
-  const [meetingTitle, setMeetingTitle] = React.useState("");
+  const [selectedMeetingTypes, setSelectedMeetingTypes] = React.useState<string[]>([]);
   const [meetingDate, setMeetingDate] = React.useState("");
   const [meetingId, setMeetingId] = React.useState("");
   const [previewOpen, setPreviewOpen] = React.useState(false);
@@ -468,11 +468,12 @@ export default function TestLab() {
   });
 
   const meetingsQuery = useQuery({
-    queryKey: ["meetings", clientId, meetingTitle, meetingDate],
+    // The type filter is applied client-side on the derived type (the
+    // backend only exact-matches full titles) — never sent as `title`.
+    queryKey: ["meetings", clientId, meetingDate],
     queryFn: async () => {
       const params: Record<string, string> = {};
       if (clientId) params.client_id = clientId;
-      if (meetingTitle) params.title = meetingTitle;
       if (meetingDate) params.date = meetingDate;
       return (await api.get("/meetings", { params })).data as { meetings: MeetingSummary[] };
     },
@@ -509,13 +510,13 @@ export default function TestLab() {
 
   function handleClientChange(v: string) {
     setClientId(v);
-    setMeetingTitle("");
+    setSelectedMeetingTypes([]);
     setMeetingId("");
     setPreviewOpen(false);
   }
 
-  function handleTitleChange(v: string) {
-    setMeetingTitle(v);
+  function handleTypeChange(v: string[]) {
+    setSelectedMeetingTypes(v);
     setMeetingId("");
     setPreviewOpen(false);
   }
@@ -534,9 +535,9 @@ export default function TestLab() {
   const run = useMutation({
     mutationFn: async () => {
       // Denormalized meeting snapshot for the run log (plain strings only):
-      // client name from the picker, meeting type from the title filter
-      // (falls back to the instance title), meeting title from the picked
-      // meeting instance (falls back to the title filter / transcript).
+      // client name from the picker, meeting type derived from the picked
+      // instance's full title (falls back to the type filter), meeting title
+      // always the raw full instance title (unchanged backend contract).
       const clientName =
         (clientsQuery.data ?? []).find((c) => c.id === clientId)?.name ?? "";
       const picked = (meetingsQuery.data?.meetings ?? []).find((m) => m.id === meetingId);
@@ -547,8 +548,8 @@ export default function TestLab() {
         agent_ids: selected,
         model,
         client: clientName,
-        meeting_type: (meetingTitle || instanceTitle).trim(),
-        meeting_title: (instanceTitle || meetingTitle).trim(),
+        meeting_type: meetingTypeOf(instanceTitle) || selectedMeetingTypes[0] || "",
+        meeting_title: instanceTitle,
       })).data as { id: string; outputs: RunOutputs };
     },
     onSuccess: (res) => {
@@ -572,11 +573,26 @@ export default function TestLab() {
     value: c.id,
     label: c.name,
   }));
-  const titleOptions: FilterOption[] = (titlesQuery.data?.titles ?? []).map((t) => ({
-    value: t,
-    label: t,
-  }));
-  const meetingOptions: FilterOption[] = (meetingsQuery.data?.meetings ?? []).map((m) => {
+  // Distinct derived meeting types from the available full titles (the
+  // title list is scoped by client, so these narrow with it); "" skipped.
+  const typeOptions: FilterOption[] = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const t of titlesQuery.data?.titles ?? []) {
+      const v = meetingTypeOf(t);
+      if (v) set.add(v);
+    }
+    return [...set]
+      .sort((a, b) => a.localeCompare(b))
+      .map((v) => ({ value: v, label: v }));
+  }, [titlesQuery.data]);
+  // Type selection narrows the instance list client-side on the derived type.
+  const visibleMeetings: MeetingSummary[] = React.useMemo(() => {
+    const all = meetingsQuery.data?.meetings ?? [];
+    if (selectedMeetingTypes.length === 0) return all;
+    const want = new Set(selectedMeetingTypes);
+    return all.filter((m) => want.has(meetingTypeOf(m.title)));
+  }, [meetingsQuery.data, selectedMeetingTypes]);
+  const meetingOptions: FilterOption[] = visibleMeetings.map((m) => {
     const parts: string[] = [];
     if (typeof m.duration_min === "number") parts.push(`${m.duration_min} min`);
     if (m.participants && m.participants.length > 0) parts.push(m.participants.join(", "));
@@ -588,7 +604,6 @@ export default function TestLab() {
   });
 
   const clientDisabled = clientsQuery.isLoading || clientsDetail !== null;
-  const titleDisabled = titlesQuery.isLoading || titlesDetail !== null;
   const dateDisabled = false;
   const meetingDisabled = meetingsQuery.isLoading || meetingsDetail !== null;
 
@@ -635,20 +650,21 @@ export default function TestLab() {
               />
             </div>
             <div>
-              <span className={fieldLabel}>Meeting title</span>
-              <FilterCombobox
-                value={meetingTitle}
-                onChange={handleTitleChange}
-                options={titleOptions}
+              <span className={fieldLabel}>Meeting type</span>
+              <MultiSelectFilter
+                options={typeOptions}
+                selected={selectedMeetingTypes}
+                onChange={handleTypeChange}
                 placeholder={
                   titlesDetail !== null
                     ? "Unavailable — check backend"
                     : titlesQuery.isLoading
-                      ? "Loading titles…"
-                      : "Select meeting title… (optional)"
+                      ? "Loading types…"
+                      : "All meeting types"
                 }
-                disabled={titleDisabled}
-                ariaLabel="Meeting title"
+                ariaLabel="Meeting type"
+                filterPlaceholder="Search meeting types…"
+                emptyText={typeOptions.length === 0 ? "No meeting types yet." : "No matches."}
               />
             </div>
             <label className={fieldLabel}>
