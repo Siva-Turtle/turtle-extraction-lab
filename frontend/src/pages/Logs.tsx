@@ -221,6 +221,8 @@ const TABS: { id: DrawerTab; label: string; icon: typeof Sparkles }[] = [
 
 const INPUT_FILTERS = ["transcription", "messages", "mail"];
 
+const REASONING_EFFORTS = ["max", "xhigh", "high", "medium", "low", "minimal", "none"];
+
 export default function Logs() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [tab, setTab] = useState<DrawerTab>("pretty");
@@ -332,9 +334,9 @@ export default function Logs() {
     () => INPUT_FILTERS.map((v) => ({ value: v, label: v })),
     [],
   );
-  const effortOptions = React.useMemo(
-    () => distinctLogOptions(allLogs, (l) => l.reasoning_effort),
-    [allLogs],
+  const reasoningEffortOptions = React.useMemo(
+    () => REASONING_EFFORTS.map((v) => ({ value: v, label: v })),
+    [],
   );
 
   const active = activeId ? (allLogs.find((l) => l.id === activeId) ?? null) : null;
@@ -434,13 +436,13 @@ export default function Logs() {
           <div>
             <span className={fieldLabel}>Reasoning effort</span>
             <MultiSelectFilter
-              options={effortOptions}
+              options={reasoningEffortOptions}
               selected={selectedEfforts}
               onChange={setSelectedEfforts}
               placeholder="All efforts"
               ariaLabel="Filter by reasoning effort"
               filterPlaceholder="Search efforts…"
-              emptyText={effortOptions.length === 0 ? "No efforts yet." : "No matches."}
+              emptyText="No matches."
             />
           </div>
         </div>
@@ -464,7 +466,7 @@ export default function Logs() {
         </Card>
       ) : (
         <Card padded={false} className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-sm">
+          <table className="w-full min-w-[920px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#e5e7eb] font-heading text-xs font-bold uppercase tracking-wide text-[#8a8f98] dark:border-white/10">
                 <th className="px-4 py-3">Date</th>
@@ -494,7 +496,7 @@ export default function Logs() {
                     <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={l.model}>
                       {l.model}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                    <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={(l.reasoning_effort ?? "").trim() || "—"}>
                       {(l.reasoning_effort ?? "").trim() || "—"}
                     </td>
                     <td className="px-4 py-3">
@@ -849,7 +851,7 @@ function AnalyticsPanel({
 }) {
   const stats: [string, string][] = [
     ["Model", usage?.model ?? log.model ?? "—"],
-    ["Reasoning effort", (log.reasoning_effort ?? "").trim() || "—"],
+    ["Reasoning effort", (log.reasoning_effort ?? "").trim() || "Default"],
     ["Input tokens", fmtTokens(usage?.prompt_tokens)],
     ["Output tokens", fmtTokens(usage?.completion_tokens)],
     ["Thought tokens", fmtTokens(usage?.reasoning_tokens)],
@@ -915,7 +917,7 @@ function AnalyticsPanel({
                     <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{u.model ?? "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.reasoning_tokens)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens((u as any).reasoning_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>

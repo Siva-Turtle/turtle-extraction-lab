@@ -89,6 +89,29 @@ def test_complete_json_usage_partial_is_zeros(monkeypatch):
                      "reasoning_tokens": 0}
 
 
+def test_complete_json_usage_reasoning_tokens_from_details(monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    payload = _chat_payload(
+        json.dumps({"a": 1}),
+        {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46,
+         "completion_tokens_details": {"reasoning_tokens": 7}})
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
+    _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
+    assert usage == {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46,
+                     "reasoning_tokens": 7}
+
+
+def test_complete_json_usage_reasoning_tokens_fallback_top_level(monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    payload = _chat_payload(
+        json.dumps({"a": 1}),
+        {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3,
+         "reasoning_tokens": 9})
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
+    _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
+    assert usage["reasoning_tokens"] == 9
+
+
 def test_complete_json_response_format_modes(monkeypatch):
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
     seen: dict = {}
@@ -377,3 +400,49 @@ def test_run_error_agent_known_pricing_zero_costs(client, monkeypatch):
     # Totals still aggregate (failed agent contributes 0.0).
     assert body["usage"]["input_cost_usd"] == pytest.approx(0.000004)
     assert body["usage"]["output_cost_usd"] == pytest.approx(0.000012)
+
+
+def test_run_reasoning_effort_high_flows_to_requests_usage_logs(client, monkeypatch):
+    aid = _make_agent(client)
+    seen: dict = {}
+
+    async def _fake_complete(payload):
+        seen["payload"] = payload
+        return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20,
+                            "total_tokens": 30, "reasoning_tokens": 7})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "m", "reasoning_effort": "high"}).json()
+    assert body["requests"][aid]["reasoning"] == {"effort": "high"}
+    assert seen["payload"]["reasoning"] == {"effort": "high"}
+    assert body["usage"]["reasoning_tokens"] == 7
+    assert body["usage"]["per_agent"][aid]["reasoning_tokens"] == 7
+    logs = client.get("/api/v1/logs").json()
+    assert logs[0]["reasoning_effort"] == "high"
+    assert len(client.get("/api/v1/logs", params={"reasoning_efforts": "high"}).json()) == 1
+    assert client.get("/api/v1/logs", params={"reasoning_efforts": "low"}).json() == []
+
+    # Blank effort sends NO reasoning key and logs "".
+    seen.clear()
+
+    async def _fake_blank(payload):
+        seen["payload"] = payload
+        return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1,
+                            "total_tokens": 2, "reasoning_tokens": 0})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_blank)
+    body2 = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "m", "reasoning_effort": ""}).json()
+    assert "reasoning" not in body2["requests"][aid]
+    assert "reasoning" not in seen["payload"]
+    logs2 = client.get("/api/v1/logs").json()
+    blank = [l for l in logs2 if l["run_id"] == body2["id"]] if "id" in body2 else logs2
+    # Newest-first ordering puts the blank run at index 0.
+    assert logs2[0]["reasoning_effort"] == ""
