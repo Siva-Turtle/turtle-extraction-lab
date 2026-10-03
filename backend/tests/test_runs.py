@@ -120,8 +120,9 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
         assert props["mood"] == {
             "type": "object", "description": "Caller mood",
             "properties": {
-                "value": {"description": "Extracted value for mood",
-                          "type": ["string", "null"], "enum": ["good", "bad", None]},
+                "value": {"anyOf": [{"type": "string", "enum": ["good", "bad"]},
+                                    {"type": "null"}],
+                          "description": "Extracted value for mood"},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 "confidence_type": {"type": "string",
                                     "enum": ["quoted", "inferred", "normalized", "not_found"]},
@@ -171,8 +172,8 @@ def test_build_extraction_schema_mapping():
     assert schema["properties"]["b"]["properties"]["value"] == {
         "type": ["boolean", "null"], "description": "Extracted value for b"}
     assert schema["properties"]["e"]["properties"]["value"] == {
-        "type": ["string", "null"], "description": "Extracted value for e",
-        "enum": ["x", "y", None]}
+        "anyOf": [{"type": "string", "enum": ["x", "y"]}, {"type": "null"}],
+        "description": "Extracted value for e"}
     for key in ("s", "n", "b"):
         assert "enum" not in schema["properties"][key]["properties"]["value"]
     # Empty-enum edge falls back to plain string value (no enum key).
@@ -214,8 +215,9 @@ def test_build_extraction_schema_user_example():
     assert schema["properties"]["age"]["properties"]["value"]["type"] == ["number", "null"]
     assert schema["properties"]["is_nri"]["properties"]["value"]["type"] == ["boolean", "null"]
     assert schema["properties"]["client_type"]["properties"]["value"] == {
-        "type": ["string", "null"], "description": "Extracted value for client_type",
-        "enum": ["HNI", "UHNI", "mass_affluent", "retail", None]}
+        "anyOf": [{"type": "string", "enum": ["HNI", "UHNI", "mass_affluent", "retail"]},
+                  {"type": "null"}],
+        "description": "Extracted value for client_type"}
     assert schema["properties"]["annual_income"]["properties"]["value"]["type"] == ["number", "null"]
 
 
@@ -397,6 +399,129 @@ def test_build_extraction_schema_object_subtype_mapping():
                                    "vip": {"type": "boolean"}}
     assert value["required"] == ["nickname", "tags", "vip"]
     assert value["additionalProperties"] is False
+
+
+def test_nullable_enum_subfields_use_anyof():
+    """Anthropic rejects {"type": [...], "enum": [...]} — nullable enums use anyOf."""
+    from app.db.models import Attribute
+    from app.modules.runs.router import _sub_schema
+
+    assert _sub_schema("string", True, ["India", "Foreign"], "Seg") == {
+        "anyOf": [{"type": "string", "enum": ["India", "Foreign"]}, {"type": "null"}],
+        "description": "Seg",
+    }
+    assert _sub_schema("string", False, ["India", "Foreign"], "Seg") == {
+        "type": "string", "enum": ["India", "Foreign"], "description": "Seg",
+    }
+    assert _sub_schema("string", True, ["a", "b"]) == {
+        "anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
+    }
+    assert _sub_schema("string", True, None, "Hi") == {
+        "type": ["string", "null"], "description": "Hi"}
+
+    schema = build_extraction_schema([
+        Attribute(name="kyc", type="object", description="KYC",
+                  object_properties=[
+                      {"name": "seg", "type": "string", "null_allowed": True,
+                       "enum": ["India", "Foreign"], "description": "Segment"},
+                      {"name": "band", "type": "string", "null_allowed": False,
+                       "enum": ["HNI", "retail"], "description": "Band"},
+                  ]),
+    ])
+    props = schema["properties"]["kyc"]["properties"]["value"]["properties"]
+    assert props["seg"] == {
+        "anyOf": [{"type": "string", "enum": ["India", "Foreign"]}, {"type": "null"}],
+        "description": "Segment",
+    }
+    assert props["band"] == {
+        "type": "string", "enum": ["HNI", "retail"], "description": "Band",
+    }
+
+    schema2 = build_extraction_schema([
+        Attribute(name="holdings", type="array", description="Holdings",
+                  array_items={"kind": "object", "properties": [
+                      {"name": "description", "type": "string", "null_allowed": True,
+                       "enum": ["India", "Foreign", "Overall"], "description": "Which"},
+                      {"name": "value", "type": "number", "null_allowed": True},
+                  ]}),
+    ])
+    items_props = schema2["properties"]["holdings"]["properties"]["value"]["items"]["properties"]
+    assert items_props["description"] == {
+        "anyOf": [{"type": "string", "enum": ["India", "Foreign", "Overall"]},
+                  {"type": "null"}],
+        "description": "Which",
+    }
+    assert items_props["value"] == {"type": ["number", "null"]}
+
+    schema3 = build_extraction_schema([
+        Attribute(name="mood", type="enum", description="Mood",
+                  enum_values=["good", "bad"]),
+    ])
+    assert schema3["properties"]["mood"]["properties"]["value"] == {
+        "anyOf": [{"type": "string", "enum": ["good", "bad"]}, {"type": "null"}],
+        "description": "Extracted value for mood",
+    }
+
+    def _walk(o):
+        if isinstance(o, dict):
+            t = o.get("type")
+            if isinstance(t, list) and "enum" in o:
+                raise AssertionError(f"type-array + enum combo still present: {o}")
+            for v in o.values():
+                _walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                _walk(v)
+
+    _walk(schema)
+    _walk(schema2)
+    _walk(schema3)
+
+
+def test_run_agents_execute_concurrently(client, monkeypatch):
+    """Two agents overlap in time; outputs order still matches agent order."""
+    import asyncio
+    import time
+
+    import app.modules.runs.router as rr
+
+    aid1 = client.post(
+        "/api/v1/agents",
+        json={"name": "C1", "system_instruction": "sys-first"}).json()["id"]
+    aid2 = client.post(
+        "/api/v1/agents",
+        json={"name": "C2", "system_instruction": "sys-second"}).json()["id"]
+    client.post("/api/v1/attributes", json={"agent_ids": [aid1], "name": "email"})
+    client.post("/api/v1/attributes", json={"agent_ids": [aid2], "name": "email"})
+
+    starts: dict = {}
+    ends: dict = {}
+
+    async def _sleepy(payload):
+        text = payload["messages"][0]["content"]
+        key = "first" if "sys-first" in text else "second"
+        starts[key] = time.monotonic()
+        await asyncio.sleep(0.3 if key == "first" else 0.1)
+        ends[key] = time.monotonic()
+        return ({"ok": key}, {"prompt_tokens": 1, "completion_tokens": 1,
+                              "total_tokens": 2})
+
+    async def _no_price(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_json_payload", _sleepy)
+    monkeypatch.setattr(rr, "get_model_pricing", _no_price)
+
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid1, aid2], "model": "m"}).json()
+
+    assert set(starts) == {"first", "second"} and set(ends) == {"first", "second"}
+    assert max(starts.values()) < min(ends.values())
+    assert ends["second"] < ends["first"]
+    assert list(body["outputs"].keys()) == [aid1, aid2]
+    assert list(body["usage"]["per_agent"].keys()) == [aid1, aid2]
+    assert list(body["requests"].keys()) == [aid1, aid2]
 
 
 def test_run_group_id_round_trip(client, monkeypatch):

@@ -1,3 +1,4 @@
+import asyncio
 from time import perf_counter
 import copy
 
@@ -183,18 +184,46 @@ def _object_properties(a: Attribute) -> list[dict]:
 def _sub_schema(sub_type: str, null_allowed: bool,
                 enum: list[str] | None = None,
                 description: str | None = None) -> dict:
-    """Map one object sub-field to its JSON-schema fragment (items always string)."""
+    """Map one object sub-field to its JSON-schema fragment (items always string).
+
+    Nullable enums use anyOf (Anthropic rejects {"type": ["string", "null"],
+    "enum": [...]}): {"anyOf": [{"type": <base>, "enum": [...]},
+    {"type": "null"}], ...}. Non-nullable enums stay
+    {"type": <base>, "enum": [...]}. Non-enum fields unchanged.
+    """
+    if enum:
+        enum_vals = list(enum)
+        if sub_type == "array":
+            base = "array"
+        elif sub_type == "number":
+            base = "number"
+        elif sub_type == "boolean":
+            base = "boolean"
+        else:
+            base = "string"
+        if null_allowed:
+            out: dict = {"anyOf": [{"type": base, "enum": enum_vals},
+                                   {"type": "null"}]}
+            if sub_type == "array":
+                out["items"] = {"type": "string"}
+            if description:
+                out["description"] = description
+            return out
+        out = {"type": base, "enum": enum_vals}
+        if sub_type == "array":
+            out["items"] = {"type": "string"}
+        if description:
+            out["description"] = description
+        return out
     if sub_type == "array":
-        out: dict = {"type": (["array", "null"] if null_allowed else "array"),
-                     "items": {"type": "string"}}
+        out = {"type": (["array", "null"] if null_allowed else "array"),
+               "items": {"type": "string"}}
     elif sub_type == "number":
         out = {"type": (["number", "null"] if null_allowed else "number")}
     elif sub_type == "boolean":
         out = {"type": (["boolean", "null"] if null_allowed else "boolean")}
     else:
         out = {"type": (["string", "null"] if null_allowed else "string")}
-    if enum:
-        out["enum"] = list(enum)
     if description:
         out["description"] = description
     return out
@@ -275,15 +304,25 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
     - string -> {"type": ["string", "null"], "description": ...}
     - number -> {"type": ["number", "null"], ...}
     - boolean -> {"type": ["boolean", "null"], ...}
-    - enum -> {"type": ["string", "null"], "enum": [...allowed..., None], ...}
+    - enum (always nullable) -> {"anyOf": [{"type": "string",
+      "enum": [...]}, {"type": "null"}], "description": ...}
+      (Anthropic rejects {"type": ["string", "null"], "enum": [...]},
+      so nullable enums use anyOf without null inside the enum list)
     - array -> {"type": ["array", "null"], "items": <shape>, ...} where
       string->{"type":"string"}, number->{"type":"number"},
       object->{"type":"object","properties":{...},"required":[...all...],
       "additionalProperties":false}
     - object -> {"type": ["object", "null"], "properties": {sub-name: sub-schema},
       "required": [all sub names], "additionalProperties": False, ...}
+    Nullable enum sub-fields (inside array items / object properties) use
+    the same anyOf pattern via _sub_schema; non-nullable enum sub-fields
+    stay {"type": "string", "enum": [...]}. Non-enum fields unchanged.
     """
     desc = f"Extracted value for {a.name}"
+    if a.type == "enum" and (a.enum_values or []):
+        return {"anyOf": [{"type": "string", "enum": list(a.enum_values)},
+                           {"type": "null"}],
+                "description": desc}
     if a.type == "number":
         value_schema: dict = {"type": ["number", "null"], "description": desc}
     elif a.type == "boolean":
@@ -304,10 +343,9 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
                         "required": sub_required,
                         "additionalProperties": False, "description": desc}
     else:
-        # string + enum share the string base; unknown types fall back to string
+        # string (and unknown types fall back to string); empty-enum edge
+        # also lands here as a plain nullable string (no enum key).
         value_schema = {"type": ["string", "null"], "description": desc}
-    if a.type == "enum" and (a.enum_values or []):
-        value_schema["enum"] = [*list(a.enum_values), None]
     return value_schema
 
 
@@ -375,11 +413,23 @@ def _resolve_run_input(
 
 
 def _load_run_agents(db: Session, agent_ids: list[str]) -> list[Agent]:
-    """Load agents exactly like create_run (404 when ids match nothing)."""
-    agents = db.query(Agent).filter(Agent.id.in_(agent_ids)).all() if agent_ids else []
-    if agent_ids and not agents:
+    """Load agents exactly like create_run (404 when ids match nothing).
+
+    Order follows the input ``agent_ids`` (deduped) so outputs/requests/
+    per_agent insertion order is deterministic and matches the caller's
+    agent order, whether runs execute sequentially or via asyncio.gather.
+    """
+    rows = db.query(Agent).filter(Agent.id.in_(agent_ids)).all() if agent_ids else []
+    if agent_ids and not rows:
         raise HTTPException(404, "no matching agents")
-    return agents
+    by_id = {a.id: a for a in rows}
+    ordered: list[Agent] = []
+    seen: set[str] = set()
+    for aid in agent_ids or []:
+        if aid in by_id and aid not in seen:
+            ordered.append(by_id[aid])
+            seen.add(aid)
+    return ordered if ordered else rows
 
 
 def _build_agent_requests(
@@ -504,21 +554,17 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         model=payload.model, reasoning_effort=payload.reasoning_effort)
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     wall_start = perf_counter()
-    outputs: dict = {}
-    per_agent: dict = {}
-    total_in = 0
-    total_out = 0
-    total_in_reasoning = 0
-    for agent in agents:
+
+    async def _run_one(agent, payload_body, model: str):
+        # No DB access in here — pure OpenRouter call + timing so concurrent
+        # tasks never share the request's DB session.
         agent_start = perf_counter()
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
         reasoning_tokens = 0
-        payload_body = copy.deepcopy(requests[agent.id])
         try:
             parsed, usage = await complete_json_payload(payload_body)
-            outputs[agent.id] = parsed
             try:
                 prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
                 completion_tokens = int(usage.get("completion_tokens", 0) or 0)
@@ -534,14 +580,28 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                 total_tokens = 0
             if reasoning_tokens < 0:
                 reasoning_tokens = 0
+            duration_ms = (perf_counter() - agent_start) * 1000.0
+            return (agent.id, parsed, prompt_tokens, completion_tokens,
+                    total_tokens, reasoning_tokens, duration_ms, model)
         except Exception as exc:
-            outputs[agent.id] = {"_error": str(exc)}
-            prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = 0, 0, 0, 0
-        duration_ms = (perf_counter() - agent_start) * 1000.0
+            duration_ms = (perf_counter() - agent_start) * 1000.0
+            return (agent.id, {"_error": str(exc)}, 0, 0, 0, 0,
+                    duration_ms, model)
+
+    bodies = [(a, copy.deepcopy(requests[a.id]), payload.model) for a in agents]
+    results = await asyncio.gather(*[_run_one(a, b, m) for a, b, m in bodies])
+    outputs: dict = {}
+    per_agent: dict = {}
+    total_in = 0
+    total_out = 0
+    total_in_reasoning = 0
+    for (aid, parsed, prompt_tokens, completion_tokens,
+         total_tokens, reasoning_tokens, duration_ms, model) in results:
+        outputs[aid] = parsed
         total_in += prompt_tokens
         total_out += completion_tokens
         total_in_reasoning += reasoning_tokens
-        per_agent[agent.id] = {
+        per_agent[aid] = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
@@ -550,7 +610,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             "input_cost_usd": None,
             "output_cost_usd": None,
             "duration_ms": duration_ms,
-            "model": payload.model,
+            "model": model,
         }
     try:
         prompt_price, completion_price = await get_model_pricing(payload.model)
