@@ -8,12 +8,13 @@ created, existing ones keep their system_instruction/input_types/links and
 only get blank description/kind backfilled. Mapped attributes are linked
 (additive — existing links are never removed).
 
-Mapping labels below are CSV display labels (the `[Original: ...]` text).
-Each label is resolved to the normalized DB attribute name by, in order:
-  1. exact `[Original: <label>]` marker match in the attribute description,
-  2. `normalize_name(label)` direct match on the attribute name
-     (csv_import normalization logic, reused here),
-  3. normalized comparison against each attribute's Original marker.
+Mapping labels below are CSV display labels. Each label is resolved to the
+normalized DB attribute name by, in order:
+  1. `normalize_name(label)` direct match on the attribute name
+     (csv_import normalization logic, reused here; post-0018 primary),
+  2. exact `[Original: <label>]` marker match in the attribute description
+     (pre-0018 backward compat; 0018 stripped all markers, new rows have none),
+  3. normalized comparison against each attribute's legacy Original marker.
 Unresolvable labels are reported (and cause a non-zero exit) — run the
 attribute CSV import first, then re-run this script.
 """
@@ -136,7 +137,7 @@ AGENT_DEFS: list[tuple[str, str, str, str, list[str]]] = [
 
 
 def _original_marker(description: str) -> str:
-    """Extract the `[Original: ...]` marker (csv_import convention)."""
+    """Extract the legacy `[Original: ...]` marker (pre-0018 backward compat)."""
     desc = description or ""
     idx = desc.rfind("[Original: ")
     if idx != -1 and desc.endswith("]"):
@@ -147,12 +148,16 @@ def _original_marker(description: str) -> str:
 def resolve_label(label: str, by_marker: dict[str, str],
                    by_name: dict[str, object],
                    by_normalized_marker: dict[str, str]) -> str | None:
-    """Resolve one CSV display label to a DB attribute name (or None)."""
-    if label in by_marker:
-        return by_marker[label]
+    """Resolve one CSV display label to a DB attribute name (or None).
+
+    Post-0018 primary is the normalized name match; legacy markers are only
+    a backward-compat fallback (old rows still carrying them).
+    """
     norm = normalize_name(label)
     if norm in by_name:
         return norm
+    if label in by_marker:
+        return by_marker[label]
     if norm in by_normalized_marker:
         return by_normalized_marker[norm]
     return None

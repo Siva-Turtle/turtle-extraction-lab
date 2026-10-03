@@ -6,6 +6,7 @@ import {
   NOT_SELECTED_CANON,
   emptyRowCount,
   groupAgreementPct,
+  sortCompareColumns,
 } from "../../lib/compare";
 import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
@@ -70,7 +71,8 @@ export function ComparisonMatrix({
   showDoneBadge?: boolean;
 }): React.JSX.Element {
   const narrow = useIsNarrow();
-  const model = useCompareModel(columns, agents);
+  const sortedColumns = React.useMemo(() => sortCompareColumns(columns), [columns]);
+  const model = useCompareModel(sortedColumns, agents);
   const {
     visibleRows,
     rowsByAgent,
@@ -114,12 +116,12 @@ export function ComparisonMatrix({
       for (const row of list) {
         out.push({
           row,
-          cells: columns.map((c) => ({ row, colKey: c.key, merged: false, key: cellKeyFor(row, c.key, false) })),
+          cells: sortedColumns.map((c) => ({ row, colKey: c.key, merged: false, key: cellKeyFor(row, c.key, false) })),
         });
       }
     }
     return out;
-  }, [agents, rowsByAgent, columns]);
+  }, [agents, rowsByAgent, sortedColumns]);
 
   const firstKey = gridRows[0]?.cells[0]?.key ?? null;
   const activeKey = focusKey ?? firstKey;
@@ -344,8 +346,8 @@ export function ComparisonMatrix({
         <table ref={gridRef} role="grid" aria-label="Model comparison" className="w-full table-fixed border-collapse text-left">
           <colgroup>
             <col style={{ width: "18%" }} />
-            {columns.map((col) => (
-              <col key={col.key} style={{ width: `${82 / Math.max(columns.length, 1)}%` }} />
+            {sortedColumns.map((col) => (
+              <col key={col.key} style={{ width: `${82 / Math.max(sortedColumns.length, 1)}%` }} />
             ))}
           </colgroup>
           <thead className="sticky top-0 z-20">
@@ -356,7 +358,7 @@ export function ComparisonMatrix({
               >
                 Attribute
               </th>
-              {columns.map((col) => {
+              {sortedColumns.map((col) => {
                 const s = perCol.get(col.key) ?? { agreePct: 0, up: 0, down: 0, rated: 0, total: visibleRows.length };
                 return (
                   <ModelColumnHeader
@@ -386,7 +388,7 @@ export function ComparisonMatrix({
               const isCollapsed = collapsed.has(agent.id);
               // v2 auto entries + __agent__ feedback per column (never a fake row).
               const v2Badges: { key: string; label: string; title: string; auto: boolean }[] = [];
-              for (const col of columns) {
+              for (const col of sortedColumns) {
                 const log = col.log;
                 if (!log) continue;
                 const cons = (log.consistency ?? {}) as {
@@ -478,7 +480,7 @@ export function ComparisonMatrix({
                               </span>
                             </span>
                           </td>
-                          {columns.map((col) => {
+                          {sortedColumns.map((col) => {
                             const cell = row.cells[col.key];
                             const ck = cellKeyFor(row, col.key, false);
                             const focused = gridActive && activeKey === ck;
@@ -649,7 +651,7 @@ export function ComparisonMatrix({
                             // "≠ accepted": another cell in the row is rated
                             // up with a different canonical value.
                             let notAccepted = false;
-                            for (const other of columns) {
+                            for (const other of sortedColumns) {
                               if (other.key === col.key) continue;
                               const otherCell = row.cells[other.key];
                               if (!otherCell) continue;
@@ -730,7 +732,7 @@ export function ComparisonMatrix({
       </div>
       <AttributeCompareDrawer
         row={drawerRow}
-        columns={columns}
+        columns={sortedColumns}
         agent={drawerAgent}
         open={drawerRow !== null}
         onClose={() => setDrawerRow(null)}

@@ -75,6 +75,11 @@ function fmtPer1M(pricePerToken: number | null | undefined): string {
   return `$${(pricePerToken * 1_000_000).toFixed(2)}`;
 }
 
+function validPrice(v: unknown): number | null {
+  // Negative catalog prices ("-1" for dynamic routers) are unknown, never a price.
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
 function priceForSlot(
   slot: ModelSlot,
   models: ModelInfo[],
@@ -86,13 +91,10 @@ function priceForSlot(
     if (Array.isArray(list)) {
       const hit = list.find((e) => e.slug === prov);
       if (hit && hit.pricing) {
-        const p = hit.pricing.prompt;
-        const c = hit.pricing.completion;
-        if ((typeof p === "number" && Number.isFinite(p)) || (typeof c === "number" && Number.isFinite(c))) {
-          return {
-            prompt: typeof p === "number" && Number.isFinite(p) ? p : null,
-            completion: typeof c === "number" && Number.isFinite(c) ? c : null,
-          };
+        const p = validPrice(hit.pricing.prompt);
+        const c = validPrice(hit.pricing.completion);
+        if (p !== null || c !== null) {
+          return { prompt: p, completion: c };
         }
       }
     }
@@ -100,12 +102,7 @@ function priceForSlot(
   const m = models.find((x) => x.id === slot.model);
   const pricing = m?.pricing ?? null;
   if (!pricing) return { prompt: null, completion: null };
-  const p = pricing.prompt;
-  const c = pricing.completion;
-  return {
-    prompt: typeof p === "number" && Number.isFinite(p) ? p : null,
-    completion: typeof c === "number" && Number.isFinite(c) ? c : null,
-  };
+  return { prompt: validPrice(pricing.prompt), completion: validPrice(pricing.completion) };
 }
 
 /**
@@ -355,11 +352,11 @@ export function ModelSlotsPicker({
                 const price = priceForSlot(s, models, endpointsByModel);
                 const priceText =
                   price.prompt === null && price.completion === null
-                    ? "—"
+                    ? "dynamic"
                     : `${fmtPer1M(price.prompt)} / ${fmtPer1M(price.completion)}`;
                 const priceTitle =
                   price.prompt === null && price.completion === null
-                    ? "Price unknown"
+                    ? "Dynamic pricing — actual cost comes from usage"
                     : `in ${fmtPer1M(price.prompt)} per 1M · out ${fmtPer1M(price.completion)} per 1M`;
                 return (
                   <tr

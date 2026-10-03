@@ -20,8 +20,9 @@ def _schema():
 def test_build_chat_payload_content():
     schema = _schema()
     payload = build_chat_payload(model="m", system="sys", user="hello", json_schema=schema)
-    # Exact body shape: nothing but model / response_format / messages.
-    assert set(payload) == {"model", "messages", "response_format"}
+    # Exact body shape: model / response_format / messages / usage (cost reporting).
+    assert set(payload) == {"model", "messages", "response_format", "usage"}
+    assert payload["usage"] == {"include": True}
     assert payload["model"] == "m"
     assert payload["messages"] == [
         {"role": "system", "content": "sys"},
@@ -127,7 +128,8 @@ def test_requests_persisted_on_success(client, monkeypatch):
         "required": ["value", "confidence", "confidence_type", "evidence"],
         "additionalProperties": False,
     }
-    assert set(req) == {"model", "messages", "response_format"}
+    assert set(req) == {"model", "messages", "response_format", "usage"}
+    assert req["usage"] == {"include": True}
 
     logs = client.get("/api/v1/logs").json()
     assert logs[0]["requests"] == body["requests"]

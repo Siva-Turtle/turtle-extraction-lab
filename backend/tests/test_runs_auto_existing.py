@@ -355,7 +355,7 @@ def test_reuse_auto_copies_consistency_and_only_auto_feedback(client, monkeypatc
     # Manual rating on __agent__ replaces auto (drops "auto").
     assert client.post(f"/api/v1/runs/{run_id}/feedback", json={
         "agent_name": "asset", "attribute_name": "__agent__",
-        "rating": "up", "remarks": "human says ok"}).json() == {"ok": True}
+        "rating": "up", "remarks": "human says ok"}).json()["ok"] is True
     logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
     src = logs[run_id]
     assert src["feedback"]["asset"]["__agent__"] == {
@@ -371,8 +371,11 @@ def test_reuse_auto_copies_consistency_and_only_auto_feedback(client, monkeypatc
     assert reused["log"]["consistency"] == src["consistency"]
     assert reused["log"]["consistency"]["auto"] is True
     fb = reused["log"]["feedback"]
-    # Only auto entries copied; manual rating left behind.
-    assert fb == {}
+    # Reused rows share the SOURCE feedback (merged, not copied): manual
+    # rating surfaces with a source_log_id marker, DB holds no copy.
+    assert fb["asset"]["__agent__"]["rating"] == "up"
+    assert fb["asset"]["__agent__"]["remarks"] == "human says ok"
+    assert fb["asset"]["__agent__"]["source_log_id"] == log_id
 
 
 def test_reuse_non_auto_feedback_starts_empty(client, monkeypatch):
@@ -396,7 +399,10 @@ def test_reuse_non_auto_feedback_starts_empty(client, monkeypatch):
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
     logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
+    src_id = logs[run_id]["id"]
     reused = client.post("/api/v1/runs/reuse", json={
-        "log_id": logs[run_id]["id"]}).json()
-    assert reused["log"]["feedback"] == {}
+        "log_id": src_id}).json()
+    # Display merges the SOURCE feedback (single source of truth).
+    assert reused["log"]["feedback"]["M"]["email"]["rating"] == "up"
+    assert reused["log"]["feedback"]["M"]["email"]["source_log_id"] == src_id
     assert reused["log"]["consistency"] == {}

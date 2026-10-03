@@ -7,6 +7,7 @@ import {
   canonicalKey,
   emptyRowCount,
   groupAgreementPct,
+  sortCompareColumns,
 } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
@@ -154,7 +155,8 @@ export function CompareCardList({
   focusColumnKey?: string;
   showDoneBadge?: boolean;
 }): React.JSX.Element {
-  const model = useCompareModel(columns, agents);
+  const sortedColumns = React.useMemo(() => sortCompareColumns(columns), [columns]);
+  const model = useCompareModel(sortedColumns, agents);
   const {
     rowsByAgent,
     detail,
@@ -189,7 +191,7 @@ export function CompareCardList({
         role="list"
         aria-label="Model summaries"
       >
-        {columns.map((col) => {
+        {sortedColumns.map((col) => {
           const s = perCol.get(col.key) ?? { agreePct: 0, up: 0, down: 0, rated: 0, total: 0 };
           const usage = col.log?.usage;
           const showStatus =
@@ -271,7 +273,7 @@ export function CompareCardList({
         const agreeLabel = agentAgreementLabel(totalRows);
         const isCollapsed = collapsed.has(agent.id);
         const v2Badges: { key: string; label: string; title: string }[] = [];
-        for (const col of columns) {
+        for (const col of sortedColumns) {
           const log = col.log;
           if (!log) continue;
           const cons = (log.consistency ?? {}) as {
@@ -355,7 +357,7 @@ export function CompareCardList({
                       )}
                     </header>
                     <ul className="mt-1.5 grid gap-1.5">
-                      {columns.map((col) => {
+                      {sortedColumns.map((col) => {
                         const cell = row.cells[col.key];
                         if (!col.log) {
                           return (
@@ -563,7 +565,7 @@ export function CompareCardList({
 
       <AttributeCompareDrawer
         row={drawerRow}
-        columns={columns}
+        columns={sortedColumns}
         agent={drawerAgent}
         open={drawerRow !== null}
         onClose={() => setDrawerRow(null)}

@@ -129,7 +129,7 @@ export function useFeedback(): {
         return next;
       });
       try {
-        await api.post("/runs/feedback-batch", {
+        const res = await api.post("/runs/feedback-batch", {
           items: items.map((it) => ({
             run_id: it.runId,
             agent_name: it.agent,
@@ -137,6 +137,40 @@ export function useFeedback(): {
             rating: it.rating,
           })),
         });
+        // Reused cells redirect to the ORIGINAL log: mirror the optimistic
+        // overlay under the resolved (source) key too, so the source view
+        // shows it immediately. Display for reused cells already reads the
+        // merged source feedback, so the original key keeps working.
+        try {
+          const resolved = (res?.data as { resolved?: unknown })?.resolved;
+          if (Array.isArray(resolved)) {
+            setOverlay((prevOv) => {
+              const next = { ...prevOv };
+              for (const r of resolved) {
+                if (!r || typeof r !== "object") continue;
+                const rec = r as Record<string, unknown>;
+                const origId = typeof rec.run_id === "string" ? rec.run_id : "";
+                const resId = typeof rec.resolved_run_id === "string" ? rec.resolved_run_id : "";
+                const ag = typeof rec.agent_name === "string" ? rec.agent_name : "";
+                // Backend resolves by agent_name; items use `agent`. Match by order fallback.
+                if (origId === "" || resId === "" || resId === origId) continue;
+                // Find the original item to get attr (backend echoes it).
+                const attr = typeof rec.attribute_name === "string" ? rec.attribute_name : "";
+                // Overlay under the source key with the same rating.
+                const srcItem = items.find(
+                  (it) => it.runId === origId && it.attr === attr,
+                );
+                const rating = srcItem ? srcItem.rating : undefined;
+                if (rating === undefined) continue;
+                // Agent name for the source may differ; use echoed agent_name.
+                next[overlayKey(resId, ag, attr)] = rating;
+              }
+              return next;
+            });
+          }
+        } catch {
+          // ignore overlay-mirror failures (main overlay already set)
+        }
         invalidateFeedbackQueries(qc);
       } catch (e: unknown) {
         setOverlay((prevOv) => {
@@ -166,12 +200,23 @@ export function useFeedback(): {
       const prev = remarksOverlayRef.current[k];
       setRemarksOverlay((prevOv) => ({ ...prevOv, [k]: text }));
       try {
-        await api.post(`/runs/${runId}/feedback`, {
+        const res = await api.post(`/runs/${runId}/feedback`, {
           agent_name: agent,
           attribute_name: attr,
           rating,
           remarks: text,
         });
+        // Mirror remarks overlay under the resolved (source) key for reused cells.
+        try {
+          const resolvedId = (res?.data as { resolved_run_id?: unknown })?.resolved_run_id;
+          if (typeof resolvedId === "string" && resolvedId !== "" && resolvedId !== runId) {
+            // Backend echoes the target agent name only via overlayKey agnostic path;
+            // reuse the same agent/attr (names are stable across reuse).
+            setRemarksOverlay((prevOv) => ({ ...prevOv, [overlayKey(resolvedId, agent, attr)]: text }));
+          }
+        } catch {
+          // ignore mirror failures
+        }
         invalidateFeedbackQueries(qc);
       } catch (e: unknown) {
         setRemarksOverlay((prevOv) => {

@@ -7,7 +7,7 @@ import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
 import { fmt, fmtCostBoth, fmtMs, fmtTokens, modelLabel, serverDetail } from "../lib/format";
 import type { AgentUsage, LogFilters, LogRow, RunUsage } from "../lib/logTypes";
-import { buildRows, columnStats } from "../lib/compare";
+import { buildRows, columnStats, sortLogsByModel } from "../lib/compare";
 import { agentsFromLog, columnsFromLogs, unionAgentsFromLogs } from "../lib/compareData";
 import { agentRunningKey } from "../lib/useMultiRun";
 import { groupLogs } from "../lib/logGroups";
@@ -427,6 +427,8 @@ export default function Logs() {
                 <tbody>
                   {groups.map((g) => {
                     const first = g.rows[0] as LogRow;
+                    // Multi-model badges/columns are always alphabetical by model.
+                    const orderedRows = sortLogsByModel(g.rows);
                     const single = g.rows.length === 1;
                     const usage = single ? getUsage(first) : null;
                     const costUsd = single ? usage?.cost_usd : g.totalCostUsd;
@@ -465,10 +467,10 @@ export default function Logs() {
                         ) : (
                           <td
                             className="px-4 py-3"
-                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}${reusedSuffix(r)} — ${rowCostText(r)}`).join("\n")}
+                            title={orderedRows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}${reusedSuffix(r)} — ${rowCostText(r)}`).join("\n")}
                           >
                             <span className="inline-flex max-w-56 flex-wrap items-center gap-1">
-                              {g.rows.slice(0, 3).map((r) => (
+                              {orderedRows.slice(0, 3).map((r) => (
                                 <span key={r.id} title={`${r.model}${r.provider ? ` · ${r.provider}` : " · Auto"}`}>
                                   <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}{reusedSuffix(r)}</Badge>
                                 </span>
@@ -725,10 +727,12 @@ function RawSingle({ log }: { log: LogRow }) {
 function RawPanel({ rows }: { rows: LogRow[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Every row stays listed, including older attempts of retried models; the
-  // matrix (columnsFromLogs) shows only the latest per model+effort.
+  // matrix (columnsFromLogs) shows only the latest per model+effort. Tabs are
+  // always alphabetical by model (single-model table selector).
+  const ordered = React.useMemo(() => sortLogsByModel(rows), [rows]);
   const attempts = React.useMemo(() => attemptLabels(rows), [rows]);
-  if (rows.length <= 1) return <RawSingle log={rows[0] as LogRow} />;
-  const selected = rows.find((r) => r.id === selectedId) ?? (rows[0] as LogRow);
+  if (ordered.length <= 1) return <RawSingle log={ordered[0] as LogRow} />;
+  const selected = ordered.find((r) => r.id === selectedId) ?? (ordered[0] as LogRow);
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div
@@ -736,7 +740,7 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
         aria-label="Model"
         className="flex flex-wrap items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
       >
-        {rows.map((r) => {
+        {ordered.map((r) => {
           const isSel = r.id === selected.id;
           const attempt = attempts.get(r.id);
           const full = isFullyReused(r);
@@ -971,7 +975,23 @@ function PerAgentTable({
               typeof (u as { provider?: unknown }).provider === "string"
                 ? ((u as { provider?: string }).provider as string)
                 : "";
-            const modelText = served ? `${model} · ${served}` : model;
+            const servedModel =
+              typeof (u as { served_model?: unknown }).served_model === "string"
+                ? ((u as { served_model?: string }).served_model as string)
+                : "";
+            const modelText = servedModel
+              ? `${model} → ${servedModel}${served ? ` · ${served}` : ""}`
+              : served
+                ? `${model} · ${served}`
+                : model;
+            const modelTitle = servedModel
+              ? `Requested ${model}, served by ${servedModel}${served ? ` via ${served}` : ""}`
+              : served
+                ? `Served by ${served}`
+                : undefined;
+            const costTitle = servedModel
+              ? `Actual cost ${fmtCostBoth(u.cost_usd)} · served by ${servedModel}`
+              : undefined;
             return (
             <tr
               key={key}
@@ -982,7 +1002,7 @@ function PerAgentTable({
               </td>
               <td
                 className="max-w-40 break-all px-3 py-2 font-mono text-[11px]"
-                title={served ? `Served by ${served}` : undefined}
+                title={modelTitle}
               >
                 {modelText}
               </td>
@@ -991,7 +1011,7 @@ function PerAgentTable({
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens((u as unknown as { reasoning_tokens?: unknown }).reasoning_tokens)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.input_cost_usd)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.output_cost_usd)}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>
+              <td className="whitespace-nowrap px-3 py-2 text-right font-mono" title={costTitle}>{fmtCostBoth(u.cost_usd)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
             </tr>
             );

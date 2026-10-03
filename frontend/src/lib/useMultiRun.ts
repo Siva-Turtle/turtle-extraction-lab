@@ -2,6 +2,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "./api";
+import { sortCompareColumns } from "./compare";
 import { serverDetail } from "./format";
 import type { CompareColumn, LogRow, ModelSlot } from "./logTypes";
 
@@ -462,29 +463,32 @@ export function useMultiRun(): {
       }
     }
     // Every column POSTs /runs with `reuse` for that slot ({} = fresh).
+    // Columns are always alphabetical by model (stable, not slot order).
     const reuseForColumn: Record<string, Record<string, string>> = {};
-    const cols: CompareColumn[] = slots.map((s) => {
-      const k = slotKey(s.model, s.effort, s.provider ?? "");
-      const m = reuse[k];
-      const clean: Record<string, string> = {};
-      if (m && typeof m === "object") {
-        for (const [agentId, logId] of Object.entries(m)) {
-          if (typeof agentId === "string" && typeof logId === "string" && logId !== "") {
-            clean[agentId] = logId;
+    const cols: CompareColumn[] = sortCompareColumns(
+      slots.map((s) => {
+        const k = slotKey(s.model, s.effort, s.provider ?? "");
+        const m = reuse[k];
+        const clean: Record<string, string> = {};
+        if (m && typeof m === "object") {
+          for (const [agentId, logId] of Object.entries(m)) {
+            if (typeof agentId === "string" && typeof logId === "string" && logId !== "") {
+              clean[agentId] = logId;
+            }
           }
         }
-      }
-      reuseForColumn[k] = clean;
-      return {
-        key: k,
-        model: s.model,
-        effort: s.effort,
-        provider: s.provider ?? "",
-        status: "running",
-        startedAt: now,
-        log: null,
-      };
-    });
+        reuseForColumn[k] = clean;
+        return {
+          key: k,
+          model: s.model,
+          effort: s.effort,
+          provider: s.provider ?? "",
+          status: "running",
+          startedAt: now,
+          log: null,
+        };
+      }),
+    );
     reuseRef.current = reuseForColumn;
     autoRef.current = auto;
     groupRef.current = gid;

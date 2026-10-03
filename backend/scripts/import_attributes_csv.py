@@ -50,7 +50,9 @@ def _parse_wrap_result(raw: object) -> bool:
 def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
     existing: dict[str, object] = {a.name: a for a in db.query(Attribute).all()}
     taken: set[str] = set(existing.keys())
-    # Re-run idempotency: map "[Original: X]" marker -> attribute name.
+    # Re-run idempotency matches by attribute NAME. Old "[Original: X]"
+    # markers are still *read* for backward compatibility (pre-0018 rows),
+    # but never written (csv_import.build_description no longer emits them).
     marker_to_name: dict[str, str] = {}
     for nm, row_obj in existing.items():
         desc = getattr(row_obj, "description", "") or ""
@@ -98,8 +100,11 @@ def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
                 wrap_raw = None
             parsed["wrap_result"] = _parse_wrap_result(wrap_raw)
             base = parsed["name"]
-            if original in marker_to_name:
-                # Idempotent re-run: same original already imported -> upsert.
+            if base in existing:
+                # Primary: match by attribute name (post-0018, no markers).
+                name = base
+            elif original in marker_to_name:
+                # Backward compat: pre-0018 row still carrying its marker.
                 name = marker_to_name[original]
             elif base not in taken:
                 name = base

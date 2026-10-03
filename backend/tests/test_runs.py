@@ -37,7 +37,7 @@ def test_run_and_feedback_flow(client, monkeypatch):
     fb = client.post(f"/api/v1/runs/{rid}/feedback", json={
         "agent_name": "A", "attribute_name": "email",
         "rating": "up", "remarks": "exact quote"}).json()
-    assert fb == {"ok": True}
+    assert fb["ok"] is True and fb.get("resolved_run_id", rid) == rid
     assert client.post(f"/api/v1/runs/{rid}/feedback",
                        json={"rating": "meh"}).status_code == 422
     got = client.get(f"/api/v1/runs/{rid}/feedback").json()
@@ -59,10 +59,10 @@ def test_feedback_edit_overwrites_latest(client, monkeypatch):
 
     assert client.post(f"/api/v1/runs/{rid}/feedback", json={
         "agent_name": "A", "attribute_name": "email",
-        "rating": "up", "remarks": "first"}).json() == {"ok": True}
+        "rating": "up", "remarks": "first"}).json()["ok"] is True
     assert client.post(f"/api/v1/runs/{rid}/feedback", json={
         "agent_name": "A", "attribute_name": "email",
-        "rating": "down", "remarks": "second"}).json() == {"ok": True}
+        "rating": "down", "remarks": "second"}).json()["ok"] is True
 
     logs = client.get("/api/v1/logs").json()
     assert logs[0]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "second"}}}
@@ -598,17 +598,17 @@ def test_feedback_clear_removes_key(client, monkeypatch):
 
     assert client.post(f"/api/v1/runs/{rid}/feedback", json={
         "agent_name": "A", "attribute_name": "email",
-        "rating": "up", "remarks": "keep me"}).json() == {"ok": True}
+        "rating": "up", "remarks": "keep me"}).json()["ok"] is True
     # remarks None keeps existing text.
     assert client.post(f"/api/v1/runs/{rid}/feedback", json={
         "agent_name": "A", "attribute_name": "email",
-        "rating": "down"}).json() == {"ok": True}
+        "rating": "down"}).json()["ok"] is True
     logs = client.get("/api/v1/logs").json()
     assert logs[0]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "keep me"}}}
 
     # Clear removes the cell (and the agent key when empty), history keeps "clear".
     assert client.post(f"/api/v1/runs/{rid}/feedback", json={
-        "agent_name": "A", "attribute_name": "email", "rating": ""}).json() == {"ok": True}
+        "agent_name": "A", "attribute_name": "email", "rating": ""}).json()["ok"] is True
     logs = client.get("/api/v1/logs").json()
     assert logs[0]["feedback"] == {}
     got = client.get(f"/api/v1/runs/{rid}/feedback").json()
@@ -634,7 +634,7 @@ def test_feedback_batch_and_only_unrated(client, monkeypatch):
             {"run_id": r2, "agent_name": "A", "attribute_name": "email",
              "rating": "down", "remarks": "two"},
         ]}).json()
-    assert body == {"ok": True, "applied": 2, "skipped": 0}
+    assert body["ok"] is True and body["applied"] == 2 and body["skipped"] == 0
     logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
     assert logs[r1]["feedback"] == {"A": {"email": {"rating": "up", "remarks": "one"}}}
     assert logs[r2]["feedback"] == {"A": {"email": {"rating": "down", "remarks": "two"}}}
@@ -647,7 +647,7 @@ def test_feedback_batch_and_only_unrated(client, monkeypatch):
             {"run_id": r2, "agent_name": "A", "attribute_name": "other",
              "rating": "up", "remarks": "new"},
         ], "only_unrated": True}).json()
-    assert body == {"ok": True, "applied": 1, "skipped": 1}
+    assert body["ok"] is True and body["applied"] == 1 and body["skipped"] == 1
     logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
     assert logs[r1]["feedback"]["A"]["email"]["rating"] == "up"
     assert logs[r2]["feedback"]["A"]["other"] == {"rating": "up", "remarks": "new"}

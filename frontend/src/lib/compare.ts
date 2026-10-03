@@ -882,3 +882,61 @@ export function emptyRowCount(rows: CompareRow[]): number {
   }
   return n;
 }
+
+/**
+ * Short model name: the part after the FIRST "/" (e.g. "anthropic/claude-sonnet-4"
+ * -> "claude-sonnet-4", "typesafe/jev-router" -> "jev-router"). No slash -> whole id.
+ */
+export function modelShortName(modelId: string): string {
+  const id = typeof modelId === "string" ? modelId : "";
+  const i = id.indexOf("/");
+  return i >= 0 ? id.slice(i + 1) : id;
+}
+
+function normStr(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/**
+ * Alphabetical column order: by short model name (case-insensitive), then
+ * effort, then provider. Stable and independent of slot/completion order.
+ * Works for CompareColumn and LogRow shapes (model/effort/provider).
+ */
+export function compareColumnsByModel(
+  a: { model?: unknown; effort?: unknown; reasoning_effort?: unknown; provider?: unknown; key?: unknown; id?: unknown },
+  b: { model?: unknown; effort?: unknown; reasoning_effort?: unknown; provider?: unknown; key?: unknown; id?: unknown },
+): number {
+  const aModel = normStr(a.model);
+  const bModel = normStr(b.model);
+  const aShort = modelShortName(aModel).toLowerCase();
+  const bShort = modelShortName(bModel).toLowerCase();
+  if (aShort !== bShort) return aShort < bShort ? -1 : 1;
+  const aEff = normStr((a as { effort?: unknown }).effort ?? (a as { reasoning_effort?: unknown }).reasoning_effort).toLowerCase();
+  const bEff = normStr((b as { effort?: unknown }).effort ?? (b as { reasoning_effort?: unknown }).reasoning_effort).toLowerCase();
+  if (aEff !== bEff) return aEff < bEff ? -1 : 1;
+  const aProv = normStr(a.provider).toLowerCase();
+  const bProv = normStr(b.provider).toLowerCase();
+  if (aProv !== bProv) return aProv < bProv ? -1 : 1;
+  // Final tie-breakers for total stability: full id, then key/id.
+  const aFull = aModel.toLowerCase();
+  const bFull = bModel.toLowerCase();
+  if (aFull !== bFull) return aFull < bFull ? -1 : 1;
+  const aKey = String((a as { key?: unknown }).key ?? (a as { id?: unknown }).id ?? "");
+  const bKey = String((b as { key?: unknown }).key ?? (b as { id?: unknown }).id ?? "");
+  if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+  return 0;
+}
+
+/** Sorted copy of compare columns (alphabetical by model, see above). */
+export function sortCompareColumns<T extends { model?: unknown; effort?: unknown; provider?: unknown; key?: unknown }>(
+  columns: T[],
+): T[] {
+  return [...(columns ?? [])].sort(compareColumnsByModel);
+}
+
+/** Sorted copy of log rows (alphabetical by model, for selectors/lists). */
+export function sortLogsByModel<T extends { model?: unknown; reasoning_effort?: unknown; provider?: unknown; id?: unknown }>(
+  rows: T[],
+): T[] {
+  return [...(rows ?? [])].sort(compareColumnsByModel);
+}

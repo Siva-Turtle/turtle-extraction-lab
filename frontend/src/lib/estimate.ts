@@ -43,12 +43,13 @@ export function estimateRunCost(input: EstimateInput): RunEstimate {
     outTokens += attrs * 60;
   }
   const pricing = input.pricing ?? null;
+  // Negative catalog prices ("-1" for dynamic routers) are unknown, never a price.
   const promptPrice =
-    pricing && typeof pricing.prompt === "number" && Number.isFinite(pricing.prompt)
+    pricing && typeof pricing.prompt === "number" && Number.isFinite(pricing.prompt) && pricing.prompt >= 0
       ? pricing.prompt
       : null;
   const completionPrice =
-    pricing && typeof pricing.completion === "number" && Number.isFinite(pricing.completion)
+    pricing && typeof pricing.completion === "number" && Number.isFinite(pricing.completion) && pricing.completion >= 0
       ? pricing.completion
       : null;
   const usd =

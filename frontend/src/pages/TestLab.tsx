@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, fmtRelative, modelLabel, serverDetail } from "../lib/format";
+import { sortCompareColumns } from "../lib/compare";
 import { unionAgentsFromLogs } from "../lib/compareData";
 import { estimateRunCost } from "../lib/estimate";
 import type { ColumnStatus, CompareAgent, CompareColumn, LogRow, ModelSlot } from "../lib/logTypes";
@@ -476,7 +477,7 @@ function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | nul
   return <span>{Math.max(0, Math.round((now - startedAt) / 1000))}s</span>;
 }
 
-/** One per-model result block in picker order: header + SingleModelTable when it has a log. */
+/** One per-model result block (columns are alphabetical): header + SingleModelTable when it has a log. */
 function ColumnBlock({
   column,
   onRetry,
@@ -1423,13 +1424,13 @@ export default function TestLab() {
             <Link
               to="/logs"
               className="ml-auto font-heading text-xs font-bold text-[#0d5c4a] hover:underline dark:text-[#2fdebf]"
-            >
+              >
               Open in Logs
             </Link>
           </div>
           {multi.columns.length > 1 ? (
             <ComparisonMatrix
-              columns={multi.columns}
+              columns={sortCompareColumns(multi.columns)}
               agents={compareAgents}
               editable
               onRetry={multi.retry}
@@ -1438,7 +1439,7 @@ export default function TestLab() {
             />
           ) : (
             <div className="grid gap-3">
-              {multi.columns.map((column) => (
+              {sortCompareColumns(multi.columns).map((column) => (
                 <ColumnBlock
                   key={column.key}
                   column={column}

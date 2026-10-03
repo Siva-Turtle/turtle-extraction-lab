@@ -1,7 +1,7 @@
 import * as React from "react";
 import { formatValue, modelLabel } from "../../lib/format";
 import { cn } from "../../lib/cn";
-import { canonicalKey } from "../../lib/compare";
+import { canonicalKey, sortCompareColumns } from "../../lib/compare";
 import type { CompareRow, ElementDiff } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { Badge } from "../ui/Badge";
@@ -141,6 +141,7 @@ export function AttributeCompareDrawer({
     if (!open) setRemarksFor(null);
   }, [open, row]);
 
+  const sortedColumns = sortCompareColumns(columns);
   if (!open || !row) return null;
 
   const attrMeta = agent?.attributes.find((a) => a.name === row.attr);
@@ -174,7 +175,7 @@ export function AttributeCompareDrawer({
       }
     >
       <div className="grid gap-3">
-        {columns.map((col) => {
+        {sortedColumns.map((col) => {
           const cell = row.cells[col.key];
           if (!cell || !col.log) return null;
           if (cell.canon === "__not_selected__") {

@@ -11,7 +11,14 @@ from sqlalchemy.orm import Session
 from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, complete_json, complete_json_payload, get_model_pricing
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
-from app.modules.logs.router import _out
+from app.modules.logs.router import (
+    _agent_id_for_name,
+    _agent_name_for_id,
+    _merged_feedback,
+    _out,
+    _out_resolved,
+    _resolve_original_log,
+)
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import (
     BatchFeedbackIn, CheckExistingAutoOut, CheckExistingIn, CheckExistingOut,
@@ -1103,8 +1110,11 @@ async def _call_single_payload(payload_body: dict):
     """One OpenRouter call + timing (shared by create_run/retry/auto).
 
     Returns (parsed, prompt_tokens, completion_tokens, total_tokens,
-    reasoning_tokens, duration_ms, served_provider). Errors become
-    ({"_error": ...}, zeros, "").
+    reasoning_tokens, duration_ms, served_provider, actual_cost,
+    cost_details, served_model). Errors become ({"_error": ...}, zeros, "",
+    None, None, ""). ``actual_cost`` is usage.cost (None when unknown);
+    preferred over tokens x catalog price for dynamic routers.
+    ``served_model`` is the top-level response model ("" when absent).
     """
     agent_start = perf_counter()
     try:
@@ -1130,37 +1140,116 @@ async def _call_single_payload(payload_body: dict):
             served = ""
         if not isinstance(served, str):
             served = ""
+        try:
+            actual = usage.get("cost") if isinstance(usage, dict) else None
+        except Exception:
+            actual = None
+        if not isinstance(actual, (int, float)):
+            actual = None
+        else:
+            try:
+                import math as _math
+                if not (_math.isfinite(float(actual)) and float(actual) >= 0):
+                    actual = None
+                else:
+                    actual = float(actual)
+            except Exception:
+                actual = None
+        try:
+            details = usage.get("cost_details") if isinstance(usage, dict) else None
+        except Exception:
+            details = None
+        if not isinstance(details, dict):
+            details = None
+        try:
+            served_model = usage.get("served_model", "") if isinstance(usage, dict) else ""
+        except Exception:
+            served_model = ""
+        if not isinstance(served_model, str):
+            served_model = ""
         duration_ms = (perf_counter() - agent_start) * 1000.0
-        return parsed, prompt_tokens, completion_tokens, total_tokens, reasoning_tokens, duration_ms, served
+        return (parsed, prompt_tokens, completion_tokens, total_tokens,
+                reasoning_tokens, duration_ms, served, actual, details, served_model)
     except Exception as exc:
         duration_ms = (perf_counter() - agent_start) * 1000.0
-        return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms, ""
+        return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms, "", None, None, ""
 
 
 def _per_agent_entry(prompt_tokens: int, completion_tokens: int, total_tokens: int,
                      reasoning_tokens: int, duration_ms: float, model: str,
-                     provider: str = "") -> dict:
-    return {
+                     provider: str = "", actual_cost=None,
+                     cost_details=None, served_model: str = "") -> dict:
+    """Per-agent usage entry. ``actual_cost`` (usage.cost) becomes cost_usd
+    when not None (preferred over catalog pricing, e.g. dynamic routers);
+    ``served_model`` is stored only when it differs from the requested
+    ``model``. Negative catalog-derived prices are never stored (callers
+    treat them as unknown)."""
+    try:
+        cost = round(float(actual_cost), 6) if isinstance(actual_cost, (int, float)) else None
+    except Exception:
+        cost = None
+    entry: dict = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "reasoning_tokens": reasoning_tokens,
-        "cost_usd": None,
+        "cost_usd": cost,
         "input_cost_usd": None,
         "output_cost_usd": None,
         "duration_ms": duration_ms,
         "model": model,
         "provider": provider if isinstance(provider, str) else "",
     }
+    try:
+        sm = (served_model or "").strip() if isinstance(served_model, str) else ""
+    except Exception:
+        sm = ""
+    try:
+        req = (model or "").strip() if isinstance(model, str) else ""
+    except Exception:
+        req = ""
+    if sm and sm != req:
+        entry["served_model"] = sm
+    if isinstance(cost_details, dict) and cost_details:
+        try:
+            entry["cost_details"] = dict(cost_details)
+        except Exception:
+            pass
+    return entry
+
+
+def _valid_price(v) -> float | None:
+    """Catalog price when known and >= 0, else None (never negative)."""
+    try:
+        if v is None:
+            return None
+        f = float(v)  # type: ignore[arg-type]
+        import math as _math
+        if not _math.isfinite(f) or f < 0:
+            return None
+        return f
+    except Exception:
+        return None
 
 
 def _fill_pricing(per_agent: dict, prompt_price, completion_price, skip_ids=frozenset()) -> None:
+    """Fill catalog-derived costs, preferring actual usage.cost.
+
+    - cost_usd: kept when already a number (actual usage.cost); otherwise
+      tokens x catalog price when BOTH prices are known and >= 0.
+    - input/output splits: from catalog when that side is known and >= 0,
+      else None. Negative ("-1" dynamic) is unknown, never a price.
+    """
     skip = set(skip_ids or ())
+    prompt_price = _valid_price(prompt_price)
+    completion_price = _valid_price(completion_price)
     if prompt_price is not None and completion_price is not None:
         for aid, entry in per_agent.items():
             if aid in skip or not isinstance(entry, dict):
                 continue
             try:
+                if isinstance(entry.get("cost_usd"), (int, float)):
+                    continue
                 cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
             except Exception:
                 continue
@@ -1219,7 +1308,7 @@ def _totals_from_per_agent(per_agent: dict, prompt_price=None, completion_price=
         except Exception:
             total_output_cost = None
     if not per_agent:
-        if prompt_price is None or completion_price is None:
+        if _valid_price(prompt_price) is None or _valid_price(completion_price) is None:
             total_cost = None
             total_input_cost = None
             total_output_cost = None
@@ -1372,7 +1461,8 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
 
     async def _one(agent):
         body = copy.deepcopy(requests.get(agent.id, {}))
-        parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(body)
+        (parsed, pt, ct, tt, rt, dur, served,
+         actual, details, served_model) = await _call_single_payload(body)
         try:
             row = by_id.get(agent.id)
             if row is not None and is_identifier(row):
@@ -1383,7 +1473,8 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
                         pass
         except Exception:
             pass
-        per_entry = _per_agent_entry(pt, ct, tt, rt, dur, model, served)
+        per_entry = _per_agent_entry(pt, ct, tt, rt, dur, model, served,
+                                     actual, details, served_model)
         if isinstance(parsed, dict) and "_error" in parsed:
             try:
                 err = str(parsed.get("_error", ""))
@@ -1508,71 +1599,18 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
             else:
                 prompt_price, completion_price = None, None
             reused_ids = set(valid_reuse.keys())
-            if prompt_price is not None and completion_price is not None:
-                for aid, entry in per_agent.items():
-                    if aid in reused_ids:
-                        continue
-                    try:
-                        cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
-                    except Exception:
-                        continue
-                    entry["cost_usd"] = round(cost, 6)
-            for aid, entry in per_agent.items():
-                if aid in reused_ids:
-                    continue
-                try:
-                    if prompt_price is None:
-                        entry["input_cost_usd"] = None
-                    else:
-                        entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
-                    if completion_price is None:
-                        entry["output_cost_usd"] = None
-                    else:
-                        entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
-                except Exception:
-                    pass
-            total_in = 0
-            total_out = 0
-            total_reason = 0
             try:
-                for v in per_agent.values():
-                    if not isinstance(v, dict):
-                        continue
-                    total_in += int(v.get("prompt_tokens", 0) or 0)
-                    total_out += int(v.get("completion_tokens", 0) or 0)
-                    total_reason += int(v.get("reasoning_tokens", 0) or 0)
+                _fill_pricing(per_agent, prompt_price, completion_price,
+                              skip_ids=reused_ids)
             except Exception:
                 pass
-            if any(not isinstance(v.get("cost_usd"), (int, float)) for v in per_agent.values()):
-                total_cost = None
-            else:
-                try:
-                    total_cost = round(sum((v["cost_usd"] for v in per_agent.values()), 0.0), 6)
-                except Exception:
-                    total_cost = None
-            if any(not isinstance(v.get("input_cost_usd"), (int, float)) for v in per_agent.values()):
-                total_input_cost = None
-            else:
-                try:
-                    total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
-                except Exception:
-                    total_input_cost = None
-            if any(not isinstance(v.get("output_cost_usd"), (int, float)) for v in per_agent.values()):
-                total_output_cost = None
-            else:
-                try:
-                    total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
-                except Exception:
-                    total_output_cost = None
-            if not per_agent:
-                if prompt_price is None or completion_price is None:
-                    total_cost = None
-                    total_input_cost = None
-                    total_output_cost = None
-                else:
-                    total_cost = 0.0
-                    total_input_cost = 0.0
-                    total_output_cost = 0.0
+            totals = _totals_from_per_agent(per_agent, prompt_price, completion_price)
+            total_in = totals["prompt_tokens"]
+            total_out = totals["completion_tokens"]
+            total_reason = totals["reasoning_tokens"]
+            total_cost = totals["cost_usd"]
+            total_input_cost = totals["input_cost_usd"]
+            total_output_cost = totals["output_cost_usd"]
             wall_ms = (perf_counter() - wall_start) * 1000.0
             usage_duration_ms = wall_ms
             try:
@@ -1642,7 +1680,7 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
             db.refresh(log)
             resp = {"id": run.id, "outputs": outputs, "usage": usage,
                     "requests": requests, "log_id": log.id,
-                    "run_group_id": log.run_group_id or "", "log": _out(log)}
+                    "run_group_id": log.run_group_id or "", "log": _out_resolved(log, db)}
             yield _ndjson_line({"type": "done", "log": resp["log"],
                                 "id": resp["id"], "log_id": resp["log_id"],
                                 "run_group_id": resp["run_group_id"]})
@@ -1773,6 +1811,11 @@ async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
             except Exception:
                 feedback = {}
             try:
+                feedback = _redirect_auto_feedback_for_reuse(
+                    db, valid_reuse, feedback, snapshots=snapshots)
+            except Exception:
+                pass
+            try:
                 prompt_price, completion_price = await get_model_pricing(model)
             except Exception:
                 prompt_price, completion_price = None, None
@@ -1815,7 +1858,7 @@ async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
             db.add(log)
             db.commit()
             db.refresh(log)
-            resp_log = _out(log)
+            resp_log = _out_resolved(log, db)
             yield _ndjson_line({"type": "done", "log": resp_log,
                                 "id": run.id, "log_id": log.id,
                                 "run_group_id": log.run_group_id or ""})
@@ -2231,72 +2274,17 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         # All reused: no OpenRouter calls at all (not even pricing).
         prompt_price, completion_price = None, None
     # Price ONLY fresh agents; reused keep their source numbers verbatim.
+    # Actual usage.cost (if present) is preferred over catalog pricing.
     reused_ids = set(valid_reuse.keys())
-    if prompt_price is not None and completion_price is not None:
-        for aid, entry in per_agent.items():
-            if aid in reused_ids:
-                continue
-            try:
-                cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
-            except Exception:
-                continue
-            entry["cost_usd"] = round(cost, 6)
-    for aid, entry in per_agent.items():
-        if aid in reused_ids:
-            continue
-        try:
-            if prompt_price is None:
-                entry["input_cost_usd"] = None
-            else:
-                entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
-            if completion_price is None:
-                entry["output_cost_usd"] = None
-            else:
-                entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
-        except Exception:
-            pass
-    # Totals include reused agents' original numbers. Any None -> None,
-    # the same way the code treats unknown pricing today.
-    if any(not isinstance(v.get("cost_usd"), (int, float)) for v in per_agent.values()):
-        total_cost: float | None = None
-    else:
-        try:
-            total_cost = round(sum((v["cost_usd"] for v in per_agent.values()), 0.0), 6)
-        except Exception:
-            total_cost = None
-    if any(not isinstance(v.get("input_cost_usd"), (int, float)) for v in per_agent.values()):
-        total_input_cost: float | None = None
-    else:
-        try:
-            total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
-        except Exception:
-            total_input_cost = None
-    if any(not isinstance(v.get("output_cost_usd"), (int, float)) for v in per_agent.values()):
-        total_output_cost: float | None = None
-    else:
-        try:
-            total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
-        except Exception:
-            total_output_cost = None
-    # Empty-run edge: no agents -> totals mirror the old zero-agent math
-    # (0.0 when pricing known, None when unknown). The any() above is
-    # False for {}, so sums are 0.0 — but only when pricing is known;
-    # when pricing is unknown there are no entries to be None, yet old
-    # code left total_cost None. Preserve that.
-    if not per_agent:
-        if prompt_price is None or completion_price is None:
-            total_cost = None
-            total_input_cost = None
-            total_output_cost = None
-        else:
-            total_cost = 0.0
-            total_input_cost = 0.0
-            total_output_cost = 0.0
-        # When fresh agents exist but pricing unknown, the any() above is
-        # already None-correct; nothing more to do.
-        if fresh_agents and (prompt_price is None or completion_price is None):
-            # total_cost already None via per-agent Nones; input/output too.
-            pass
+    try:
+        _fill_pricing(per_agent, prompt_price, completion_price,
+                      skip_ids=reused_ids)
+    except Exception:
+        pass
+    _tot = _totals_from_per_agent(per_agent, prompt_price, completion_price)
+    total_cost = _tot["cost_usd"]
+    total_input_cost = _tot["input_cost_usd"]
+    total_output_cost = _tot["output_cost_usd"]
     wall_ms = (perf_counter() - wall_start) * 1000.0
     usage_duration_ms = wall_ms
     try:
@@ -2368,7 +2356,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(log)
     return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests,
-            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out(log)}
+            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out_resolved(log, db)}
 
 
 @router.get("", response_model=list[RunOut])
@@ -2419,6 +2407,130 @@ def _apply_feedback_cell(
     return (rating, new_remarks)
 
 
+def _redirect_auto_feedback_for_reuse(db, valid_reuse, feedback, snapshots=None):
+    """Move auto feedback for reused agents to their ORIGINAL logs.
+
+    - Removes reused agents' entries from ``feedback`` (new log stores no
+      copy; display merges source feedback).
+    - Writes each auto ``__agent__`` cell to the original log when that log
+      has no rating there yet (skip when already rated, manual or auto).
+    - Caller commits. Never raises.
+    """
+    try:
+        if not isinstance(feedback, dict) or not valid_reuse:
+            return feedback
+        from sqlalchemy.orm.attributes import flag_modified as _fm
+        snaps = snapshots if isinstance(snapshots, dict) else {}
+        for aid, src in list(valid_reuse.items()):
+            try:
+                # Agent name in the new log.
+                aname = ""
+                try:
+                    s = snaps.get(aid) if isinstance(snaps, dict) else None
+                    if isinstance(s, dict) and isinstance(s.get("name"), str) and s.get("name"):
+                        aname = s.get("name")
+                except Exception:
+                    aname = ""
+                if not aname:
+                    try:
+                        ag = None
+                        # valid_reuse values are RunLogs; name via _agent_name_for_id fallback.
+                        aname = _agent_name_for_id(src, aid, fallback="") or ""
+                    except Exception:
+                        aname = ""
+                if not aname:
+                    continue
+                cell_map = feedback.get(aname)
+                if not isinstance(cell_map, dict):
+                    continue
+                auto_cell = cell_map.get("__agent__")
+                if not isinstance(auto_cell, dict) or auto_cell.get("auto") is not True:
+                    # Only auto cells are redirected; drop any legacy copy.
+                    try:
+                        if aname in feedback:
+                            del feedback[aname]
+                    except Exception:
+                        pass
+                    continue
+                # Resolve to the ORIGINAL (chain) log.
+                try:
+                    orig = _resolve_original_log(db, src, aid)
+                except Exception:
+                    orig = src
+                if orig is None:
+                    try:
+                        del feedback[aname]
+                    except Exception:
+                        pass
+                    continue
+                try:
+                    orig_name = _agent_name_for_id(orig, aid, fallback=aname)
+                except Exception:
+                    orig_name = aname
+                try:
+                    ofb = getattr(orig, "feedback", None) or {}
+                    if not isinstance(ofb, dict):
+                        ofb = {}
+                    else:
+                        ofb = {k: dict(v) if isinstance(v, dict) else {} for k, v in ofb.items()}
+                except Exception:
+                    ofb = {}
+                # Skip when the original already has feedback there.
+                try:
+                    if _cell_is_rated(ofb, orig_name, "__agent__"):
+                        pass
+                    else:
+                        import copy as _cpy
+                        ofb.setdefault(orig_name, {})["__agent__"] = _cpy.deepcopy(auto_cell)
+                        orig.feedback = ofb
+                        try:
+                            _fm(orig, "feedback")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                try:
+                    if aname in feedback:
+                        del feedback[aname]
+                except Exception:
+                    pass
+            except Exception:
+                continue
+        return feedback
+    except Exception:
+        return feedback
+
+
+def _resolve_write_target(db, log, agent_name: str):
+    """Resolve a feedback write to the original log for reused agents.
+
+    Returns (target_log, target_agent_name, agent_id). Chain-resolved with
+    cycle guard; non-reused cells return (log, agent_name, aid-or-None).
+    """
+    try:
+        aid = _agent_id_for_name(log, agent_name or "")
+    except Exception:
+        aid = None
+    if not aid:
+        return log, agent_name, None
+    try:
+        orig = _resolve_original_log(db, log, aid)
+    except Exception:
+        return log, agent_name, aid
+    if orig is None:
+        return log, agent_name, aid
+    try:
+        if getattr(orig, "id", "") == getattr(log, "id", ""):
+            return log, agent_name, aid
+    except Exception:
+        return log, agent_name, aid
+    try:
+        target_name = _agent_name_for_id(orig, aid, fallback=agent_name or "")
+    except Exception:
+        target_name = agent_name
+    return orig, target_name, aid
+
+
 def _cell_is_rated(fb: dict, agent_name: str, attribute_name: str) -> bool:
     cell = _cell_existing(fb, agent_name or "agent", attribute_name or "attribute")
     rating = cell.get("rating", "")
@@ -2445,24 +2557,11 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
             _reuse_cons = {}
     except Exception:
         _reuse_cons = {}
-    # Auto logs carry auto feedback forward (manual ratings are not copied);
-    # non-auto logs start empty (unchanged behaviour).
-    try:
-        _reuse_fb: dict = {}
-        if isinstance(_reuse_cons, dict) and _reuse_cons.get("auto") is True:
-            _src_fb = getattr(source, "feedback", None) or {}
-            if isinstance(_src_fb, dict):
-                for _ag_name, _attr_map in _src_fb.items():
-                    if not isinstance(_attr_map, dict):
-                        continue
-                    _kept: dict = {}
-                    for _at_name, _cell in _attr_map.items():
-                        if isinstance(_cell, dict) and _cell.get("auto") is True:
-                            _kept[_at_name] = copy.deepcopy(_cell)
-                    if _kept:
-                        _reuse_fb[_ag_name] = _kept
-    except Exception:
-        _reuse_fb = {}
+    # Reused outputs share ONE source of truth: the new row stores NO
+    # feedback copy (display merges the source's feedback with a
+    # source_log_id marker). Legacy rows holding a copy are ignored for
+    # display in favour of the source (see _merged_feedback).
+    _reuse_fb: dict = {}
     try:
         agent_ids = list(agent_snapshot.keys()) if isinstance(agent_snapshot, dict) else []
     except Exception:
@@ -2499,7 +2598,7 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
     db.refresh(log)
     return {"id": run.id, "outputs": log.outputs or {}, "usage": log.usage or {},
             "requests": log.requests or {}, "log_id": log.id,
-            "run_group_id": log.run_group_id or "", "log": _out(log)}
+            "run_group_id": log.run_group_id or "", "log": _out_resolved(log, db)}
 
 
 @router.post("/check-existing", response_model=CheckExistingOut)
@@ -2717,13 +2816,20 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
             slot_agents = []
         slots.append({"model": model, "reasoning_effort": effort,
                       "provider": prov,
-                      "log": _out(log) if log is not None else None,
+                      "log": (_out_resolved(log, db) if log is not None else None),
                       "agents": slot_agents})
     return {"slots": slots}
 
 
 @router.post("/feedback-batch")
 def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
+    """Batch thumbs/remarks. Reused cells redirect to the ORIGINAL log.
+
+    Returns {ok, applied, skipped, resolved} where resolved parallels
+    ``items`` as {run_id, agent_name, attribute_name, resolved_run_id} so the
+    frontend optimistic overlay uses the source key. No feedback is copied
+    into the new row.
+    """
     # Validate everything before mutating: unknown run_id -> 404, nothing applied.
     logs_by_run: dict[str, RunLog] = {}
     for item in payload.items:
@@ -2737,24 +2843,54 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
     from sqlalchemy.orm.attributes import flag_modified
     applied = 0
     skipped = 0
+    resolved: list[dict] = []
+    # Cache target logs by id so repeated items share one mutation.
+    target_cache: dict[str, RunLog] = {}
+    target_fb: dict[str, dict] = {}
     for item in payload.items:
         log = logs_by_run[item.run_id]
-        fb = dict(log.feedback or {}) if isinstance(log.feedback, dict) else {}
-        # Rebuild nested dicts so mutation is visible even without flag_modified.
-        fb = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb.items()}
-        if payload.only_unrated and _cell_is_rated(fb, item.agent_name, item.attribute_name):
+        try:
+            target, target_name, _aid = _resolve_write_target(db, log, item.agent_name)
+        except Exception:
+            target, target_name = log, item.agent_name
+        try:
+            target_run_id = getattr(target, "run_id", "") or item.run_id
+        except Exception:
+            target_run_id = item.run_id
+        resolved.append({"run_id": item.run_id, "agent_name": item.agent_name,
+                         "attribute_name": item.attribute_name,
+                         "resolved_run_id": target_run_id})
+        try:
+            tid = getattr(target, "id", "") or ""
+        except Exception:
+            tid = ""
+        if tid not in target_cache:
+            target_cache[tid] = target
+            try:
+                fb0 = dict(getattr(target, "feedback", None) or {}) if isinstance(
+                    getattr(target, "feedback", None), dict) else {}
+            except Exception:
+                fb0 = {}
+            target_fb[tid] = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb0.items()}
+        fb = target_fb[tid]
+        if payload.only_unrated and _cell_is_rated(fb, target_name, item.attribute_name):
             skipped += 1
             continue
         history_rating, history_remarks = _apply_feedback_cell(
-            fb, item.agent_name, item.attribute_name, item.rating, item.remarks)
-        log.feedback = fb
-        flag_modified(log, "feedback")
-        db.add(Feedback(run_id=item.run_id, agent_name=item.agent_name,
+            fb, target_name, item.attribute_name, item.rating, item.remarks)
+        applied += 1
+        # History follows the source (resolved) run.
+        db.add(Feedback(run_id=target_run_id, agent_name=target_name,
                         attribute_name=item.attribute_name,
                         rating=history_rating, remarks=history_remarks))
-        applied += 1
+    for tid, target in target_cache.items():
+        try:
+            target.feedback = target_fb.get(tid, {})
+            flag_modified(target, "feedback")
+        except Exception:
+            pass
     db.commit()
-    return {"ok": True, "applied": applied, "skipped": skipped}
+    return {"ok": True, "applied": applied, "skipped": skipped, "resolved": resolved}
 
 
 @router.post("/auto")
@@ -2787,13 +2923,15 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         db, agents=[identifier], input_data=resolved_data,
         model=payload.model, reasoning_effort=effort, provider=provider_requested)
     ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
-    parsed_ident, ipt, ict, itt, irt, idur, iserved = await _call_single_payload(ident_body)
+    (parsed_ident, ipt, ict, itt, irt, idur, iserved,
+     iactual, idetails, iserved_model) = await _call_single_payload(ident_body)
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
         try:
             parsed_ident = normalize_identifier_output(parsed_ident)
         except Exception:
             pass
-    per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model, iserved)
+    per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model, iserved,
+                                 iactual, idetails, iserved_model)
     ident_errored = not isinstance(parsed_ident, dict) or "_error" in parsed_ident
     if ident_errored:
         answers = _all_false_answers()
@@ -2902,6 +3040,13 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         feedback = apply_auto_feedback({}, consistency)
     except Exception:
         feedback = {}
+    # Reused agents share the SOURCE log's feedback: move auto cells there
+    # (or skip when already rated), never store a copy on the new row.
+    try:
+        feedback = _redirect_auto_feedback_for_reuse(
+            db, valid_reuse, feedback, snapshots=snapshots)
+    except Exception:
+        pass
     try:
         prompt_price, completion_price = await get_model_pricing(payload.model)
     except Exception:
@@ -2944,7 +3089,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(log)
     return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests,
-            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out(log)}
+            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out_resolved(log, db)}
 
 
 @router.post("/logs/{log_id}/retry-agent")
@@ -2960,7 +3105,8 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
     if not agent_id or not isinstance(stored_requests.get(agent_id), dict):
         raise HTTPException(400, "agent_id has no stored request")
     stored_body = copy.deepcopy(stored_requests[agent_id])
-    parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(stored_body)
+    (parsed, pt, ct, tt, rt, dur, served,
+     actual_cost, cost_details, served_model) = await _call_single_payload(stored_body)
     # Identifier normalisation when the retried agent is the identifier.
     try:
         snap_kind = ""
@@ -2993,7 +3139,8 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
         prompt_price, completion_price = await get_model_pricing(log.model or "")
     except Exception:
         prompt_price, completion_price = None, None
-    entry = _per_agent_entry(pt, ct, tt, rt, dur, log.model or "", served)
+    entry = _per_agent_entry(pt, ct, tt, rt, dur, log.model or "", served,
+                                 actual_cost, cost_details, served_model)
     _fill_pricing({agent_id: entry}, prompt_price, completion_price)
     # Drop any reused markers on the retried agent.
     for k in ("reused_from_log_id", "reused_from_created_at"):
@@ -3119,7 +3266,7 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
         pass
     db.commit()
     db.refresh(log)
-    return {"log": _out(log)}
+    return {"log": _out_resolved(log, db)}
 
 
 @router.get("/{run_id}", response_model=RunDetail)
@@ -3134,30 +3281,46 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{run_id}/feedback")
 def add_feedback(run_id: str, payload: FeedbackCreate, db: Session = Depends(get_db)):
+    """Single-cell thumbs/remarks. Reused cells redirect to the ORIGINAL log.
+
+    Returns {ok, resolved_run_id} so the frontend overlay uses the source key.
+    """
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(404, "run not found")
     if payload.rating not in ("up", "down", ""):
         raise HTTPException(422, "rating must be up|down|''")
     log = db.query(RunLog).filter(RunLog.run_id == run_id).first()
+    resolved_run_id = run_id
+    target_name = payload.agent_name
     if log:
-        fb = dict(log.feedback or {}) if isinstance(log.feedback, dict) else {}
+        try:
+            target, tname, _aid = _resolve_write_target(db, log, payload.agent_name)
+        except Exception:
+            target, tname = log, payload.agent_name
+        target_name = tname
+        try:
+            resolved_run_id = getattr(target, "run_id", "") or run_id
+        except Exception:
+            resolved_run_id = run_id
+        fb = dict(getattr(target, "feedback", None) or {}) if isinstance(
+            getattr(target, "feedback", None), dict) else {}
         fb = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb.items()}
         history_rating, history_remarks = _apply_feedback_cell(
-            fb, payload.agent_name, payload.attribute_name, payload.rating, payload.remarks)
-        log.feedback = fb
+            fb, target_name, payload.attribute_name, payload.rating, payload.remarks)
+        target.feedback = fb
         # Re-assign so SQLAlchemy flags the JSON column dirty on every backend.
         from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(log, "feedback")
+        flag_modified(target, "feedback")
     else:
         existing_remarks = ""
         new_remarks = existing_remarks if payload.remarks is None else (payload.remarks or "")
         history_rating = "clear" if payload.rating == "" else payload.rating
         history_remarks = new_remarks
-    db.add(Feedback(run_id=run_id, agent_name=payload.agent_name, attribute_name=payload.attribute_name,
+    db.add(Feedback(run_id=resolved_run_id, agent_name=target_name, attribute_name=payload.attribute_name,
                     rating=history_rating, remarks=history_remarks))
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "resolved_run_id": resolved_run_id}
 
 
 @router.get("/{run_id}/feedback", response_model=list[FeedbackOut])

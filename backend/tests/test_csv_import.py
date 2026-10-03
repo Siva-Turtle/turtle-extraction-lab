@@ -108,7 +108,9 @@ def test_parse_row_preserves_original_and_group():
                        "boolean", "Is it adequate?", "")
     assert parsed["name"] == "term_insurance_coverage_adequacy"
     assert parsed["group"] == "Insurance"
-    assert "[Original: Term Insurance Coverage Adequacy]" in parsed["description"]
+    # Post-0018: no [Original:] markers are written.
+    assert "[Original:" not in parsed["description"]
+    assert parsed["description"] == "Is it adequate?"
     # Already-snake names keep the description untouched.
     same = parse_row("Demographic", "native_city", "string", "The city.", "")
     assert same["name"] == "native_city"
@@ -140,7 +142,8 @@ def test_import_csv_sample_upsert_and_schema(client, db, tmp_path):
     assert rows["stocks_test"]["array_items"]["kind"] == "object"
     assert rows["stocks_test"]["array_items"]["properties"][0]["name"] == "description"
     assert rows["card_name_s"]["array_items"] == {"kind": "string", "properties": []}
-    assert "[Original: Card Name(s)]" in rows["card_name_s"]["description"]
+    assert "[Original:" not in rows["card_name_s"]["description"]
+    assert rows["card_name_s"]["description"] == "Names."
 
     # Re-run is idempotent (upsert, no dupes, no new collisions).
     stats2 = import_csv(str(p), db)

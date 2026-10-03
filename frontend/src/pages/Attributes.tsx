@@ -232,6 +232,63 @@ function EnumValuesEditor({
   );
 }
 
+/** Pipe-separated enum draft input: typing " " or "|" never vanishes.
+ * Holds a local draft string (initialised from the joined enum, re-synced
+ * when the row identity / enum changes from outside). Draft updates on
+ * change; parsed into the enum array on blur (blur fires before Save, so
+ * trySave/save sees the committed value; save also cleans via trim/filter).
+ */
+function EnumPipeDraftInput({
+  value,
+  rowKey,
+  index,
+  onCommit,
+}: {
+  value: string[];
+  rowKey: string;
+  index: number;
+  onCommit: (next: string[]) => void;
+}): React.JSX.Element {
+  const joined = React.useMemo(() => (value ?? []).join(" | "), [value]);
+  const [draft, setDraft] = React.useState(joined);
+  // Re-sync when the row identity or the outside enum changes (e.g. opening
+  // a different attribute). While typing, `value` is unchanged (commit only
+  // on blur), so the draft is never clobbered mid-keystroke.
+  React.useEffect(() => {
+    setDraft(joined);
+  }, [rowKey, joined]);
+
+  function parse(s: string): string[] {
+    return s
+      .split("|")
+      .map((x) => x.trim())
+      .filter((x) => x !== "");
+  }
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const parsed = parse(draft);
+        const cur = value ?? [];
+        const same =
+          parsed.length === cur.length && parsed.every((v, i) => v === cur[i]);
+        if (!same) onCommit(parsed);
+        else {
+          // Normalise display (e.g. extra spaces) even when equal as sets.
+          const norm = (value ?? []).join(" | ");
+          if (draft !== norm) setDraft(norm);
+        }
+      }}
+      spellCheck={false}
+      placeholder="Allowed values, separated by | (optional)"
+      aria-label={`Allowed values for property ${index + 1}`}
+      className={cn(fieldInput, "mt-0 font-mono text-xs")}
+    />
+  );
+}
+
 /** Ordered sub-fields for type=="object" (dict): name + limited type + null flag.
  * Plus-to-add; no new row while the last name is empty; exact-match dedupe.
  * Each row also carries optional `enum` (pipe-separated allowed values) and
@@ -329,18 +386,12 @@ function ObjectPropertiesEditor({
               </button>
             </div>
             <div className="grid gap-1.5 sm:grid-cols-2">
-              <input
-                value={(p.enum ?? []).join(" | ")}
-                onChange={(e) =>
-                  setRow(i, {
-                    ...p,
-                    enum: e.target.value.split("|").map((s) => s.trim()).filter((s) => s !== ""),
-                  })
-                }
-                spellCheck={false}
-                placeholder="Allowed values, separated by | (optional)"
-                aria-label={`Allowed values for property ${i + 1}`}
-                className={cn(fieldInput, "mt-0 font-mono text-xs")}
+              <EnumPipeDraftInput
+                key={`${p.name}::${i}`}
+                value={p.enum ?? []}
+                rowKey={`${p.name}::${i}`}
+                index={i}
+                onCommit={(next) => setRow(i, { ...p, enum: next })}
               />
               <input
                 value={p.description ?? ""}

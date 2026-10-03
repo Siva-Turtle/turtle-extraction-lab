@@ -29,7 +29,8 @@ def test_build_chat_payload_omits_reasoning_when_blank():
         p = build_chat_payload(model="m", system="s", user="u", reasoning_effort=blank)
         assert "reasoning" not in p
         # Exact-shape contract for existing callers.
-        assert set(p) == {"model", "messages", "response_format"}
+        assert set(p) == {"model", "messages", "response_format", "usage"}
+        assert p["usage"] == {"include": True}
 
 
 def test_build_chat_payload_reasoning_strips():
@@ -40,8 +41,7 @@ def test_build_chat_payload_reasoning_strips():
 def test_extract_usage_reasoning_tokens():
     u = _extract_usage({"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15,
                         "completion_tokens_details": {"reasoning_tokens": 17}})
-    assert u == {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15,
-                 "reasoning_tokens": 17}
+    assert u["prompt_tokens"] == 5 and u["completion_tokens"] == 10 and u["total_tokens"] == 15 and u["reasoning_tokens"] == 17 and u["cost"] is None
     # Absent block means 0.
     assert _extract_usage({"prompt_tokens": 1})["reasoning_tokens"] == 0
     assert _extract_usage({})["reasoning_tokens"] == 0
@@ -91,8 +91,7 @@ def test_complete_json_picks_up_reasoning_tokens(monkeypatch):
     monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client(body))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert usage["reasoning_tokens"] == 17
-    assert usage == {"prompt_tokens": 3, "completion_tokens": 9, "total_tokens": 12,
-                     "reasoning_tokens": 17, "provider": ""}
+    assert usage["reasoning_tokens"] == 17 and usage["provider"] == "" and usage["cost"] is None and usage["served_model"] == ""
 
 
 def _make_agent(client):

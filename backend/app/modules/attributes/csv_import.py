@@ -168,13 +168,14 @@ def parse_object_spec(raw: str) -> list[dict]:
 
 
 def build_description(csv_desc: str, original: str, normalized: str) -> str:
-    """CSV Description + original Property preserved alongside (suffix)."""
-    desc = (csv_desc or "").strip()
-    orig = (original or "").strip()
-    if orig and orig != normalized:
-        suffix = f"[Original: {orig}]"
-        return f"{desc} {suffix}".strip() if desc else suffix
-    return desc
+    """CSV Description verbatim (trimmed). No [Original:] markers are written.
+
+    ``original``/``normalized`` are accepted for backward-compatible callers
+    but ignored: 0018 stripped every marker from the DB and new imports must
+    never re-introduce them. Re-run idempotency matches by attribute name;
+    old markers are still *read* (import script) for backward compatibility.
+    """
+    return (csv_desc or "").strip()
 
 
 # Single source of truth for constrained/annotated item sub-fields so

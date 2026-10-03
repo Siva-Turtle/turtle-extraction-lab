@@ -1,0 +1,337 @@
+[
+  {
+    "id": "f6a399cc2ca34baf9f764401ae10a46e",
+    "name": "advance_tax",
+    "description": "Whether advance tax is recommended or not needed. [Original: Advance Tax]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "325f59aff07a4080b88975f4e491dcbb",
+    "name": "alumni_institute",
+    "description": "Educational institutes attended by the Client/Prospect. [Original: Alumni (Institute)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "5a516623d8984155986a9c26b44d7abc",
+    "name": "alumni_organization",
+    "description": "Organizations/companies associated with by the Client/Prospect as alumni or through prior employment/association. [Original: Alumni (Organization)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "ad5bb598dfa74199b89ac3a12ad6d87e",
+    "name": "areas_of_interest",
+    "description": "Custom Turtle tags capturing areas of financial/personal interest that meaningfully characterize the Client/Prospect. [Original: Areas of Interest]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "ac583f202cac40bb98dae91320676fd4",
+    "name": "credit_cards",
+    "description": "Names of credit cards mentioned by the Client. [Original: Card Name(s)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "577fa74ae78542f3bfe2c75de8a58e24",
+    "name": "from_date",
+    "description": "Date associated with the planned return journey. Normalize to YYYY-MM-DD. If only an approximate period is mentioned, use the earliest date. [Original: From (Date)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "fac40b0b1f554f1e9d66c0a74ba65cd7",
+    "name": "from_destination",
+    "description": "City from which the NRI plans to return. [Original: From (Destination)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "d777e644efe64cc1bbc31917a6a9d9e8",
+    "name": "health_insurance_coverage_adequacy",
+    "description": "Is the health insurance coverage adequate for the Client? [Original: Health Insurance Coverage Adequacy]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "aa29f9ed7e0a41a3aa29dd3ffe8c905e",
+    "name": "huf",
+    "description": "Status of the Client's HUF. [Original: HUF]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "e5e93720537342dab4506377f9defac0",
+    "name": "huf_source",
+    "description": "Who is the Karta or who owns the HUF. [Original: HUF Source]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "9cf6ddf24c0546e2acf4ebafee82947f",
+    "name": "insurance_policies",
+    "description": "This attribute consolidates every insurance policy the Client mentions into a single list so cover gaps can be assessed. The two boolean adequacy judgements (term_insurance_coverage_adequacy, health_insurance_coverage_adequacy) stay as separate attributes. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- insurance_type (enum, required): Type of policy, e.g. 'life_term', 'health'. Allowed values: life_term, health, ulip, other. Meanings: life_term = pure protection term cover; health = medical cover; ulip = Unit Linked Insurance Plan (investment-cum-insurance); other = any policy not listed.\n- insurer (string, nullable): Insurance company, e.g. 'HDFC Life', 'Star Health'.\n- policy_name (string, nullable): Plan name if given, e.g. 'Click 2 Protect'.\n- covered_members (string, nullable): Who is covered, e.g. 'self', 'self, spouse, 2 children'.\n- cover_amount (string, nullable): Sum assured / cover, e.g. 'INR 10000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- premium_amount (string, nullable): Premium per period, e.g. 'INR 12000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- premium_frequency (enum, nullable): How often the premium is paid, e.g. 'annual'. Allowed values: monthly, quarterly, annual, one_time.\n- source (enum, nullable): Who provides the cover, e.g. 'personal'. employer = group / corporate cover. Allowed values: employer, personal.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"I have a 1 crore HDFC term plan with 12k annual premium, and a 10 lakh Star Health family floater.\" -> [\n  {\n    \"insurance_type\": \"life_term\",\n    \"insurer\": \"HDFC Life\",\n    \"policy_name\": null,\n    \"covered_members\": \"self\",\n    \"cover_amount\": \"INR 10000000\",\n    \"premium_amount\": \"INR 12000\",\n    \"premium_frequency\": \"annual\",\n    \"source\": \"personal\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"1 crore HDFC term plan with 12k annual premium\"\n  },\n  {\n    \"insurance_type\": \"health\",\n    \"insurer\": \"Star Health\",\n    \"policy_name\": null,\n    \"covered_members\": \"family\",\n    \"cover_amount\": \"INR 1000000\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": \"personal\",\n    \"confidence\": 0.85,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"a 10 lakh Star Health family floater\"\n  }\n]\nExample 2 - Client: \"My employer gives me a 5 lakh health cover for my family; I pay nothing for it.\" -> [\n  {\n    \"insurance_type\": \"health\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": \"family\",\n    \"cover_amount\": \"INR 500000\",\n    \"premium_amount\": \"0\",\n    \"premium_frequency\": null,\n    \"source\": \"employer\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"My employer gives me a 5 lakh health cover for my family\"\n  }\n]\nExample 3 - Client: \"I do have a ULIP from years ago but I don't remember the cover, and I have no separate term cover of my own.\" -> [\n  {\n    \"insurance_type\": \"ulip\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": null,\n    \"cover_amount\": \"Yes\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": \"personal\",\n    \"confidence\": 0.75,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I do have a ULIP from years ago but I don't remember the cover\"\n  },\n  {\n    \"insurance_type\": \"life_term\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": null,\n    \"cover_amount\": \"0\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": null,\n    \"confidence\": 0.9,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I have no separate term cover of my own\"\n  }\n]",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "insurance_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "life_term",
+            "health",
+            "ulip",
+            "other"
+          ],
+          "description": "Type of policy, e.g. 'life_term', 'health'."
+        },
+        {
+          "name": "insurer",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Insurance company, e.g. 'HDFC Life', 'Star Health'."
+        },
+        {
+          "name": "policy_name",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Plan name if given, e.g. 'Click 2 Protect'."
+        },
+        {
+          "name": "covered_members",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Who is covered, e.g. 'self', 'self, spouse, 2 children'."
+        },
+        {
+          "name": "cover_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Sum assured / cover, e.g. 'INR 10000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "premium_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Premium per period, e.g. 'INR 12000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "premium_frequency",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "monthly",
+            "quarterly",
+            "annual",
+            "one_time"
+          ],
+          "description": "How often the premium is paid, e.g. 'annual'."
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "employer",
+            "personal"
+          ],
+          "description": "Who provides the cover, e.g. 'personal'. employer = group / corporate cover."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    }
+  },
+  {
+    "id": "759fb43c12f44ada8ed0f7e18d1d4eba",
+    "name": "kc_taker_knowledge",
+    "description": "Only for Karma Conversations. How well was the Turtle's KC Taker able to answer the Prospect's questions, on a scale of 1 to 10, with reason.",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "9a4303600c4f45d38f7ca4567b0b0754",
+    "name": "kc_taker_readiness",
+    "description": "Only for Karma Conversations. How prepared was the Turtle's KC Taker and how well did they prepare around the Prospect's background, on a scale of 1 to 10, with reason.",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "66a8cc9331ac4c039063e821706f4ba6",
+    "name": "list_of_all_queries_asked",
+    "description": "All queries/questions asked during the conversation, including whether they remain open/closed and who asked them.\n\nIf the response is that they will get back on that query -> Then mark it as open",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "query",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "asked_by",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    }
+  },
+  {
+    "id": "08ecbcb4f95b4bbd9a79d2b992036770",
+    "name": "preferred_mode_of_communication_email_wa_call",
+    "description": "Preferred communication channel. [Original: Preferred mode of communication (Email/WA/Call)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "9789ab0a6df54a728f66abcb396d79cd",
+    "name": "tax_filing_history_for_india",
+    "description": "Short summary of the Client's Indian tax filing history. [Original: Tax Filing History (For India)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "17f328237f7e4f2baf232828187a5eff",
+    "name": "tax_filing_history_for_non_india",
+    "description": "Short summary of the Client's non-India tax filing history. [Original: Tax Filing History (For Non-India)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "9a8b7c5cb4df45b88d432eb1f4bde6f9",
+    "name": "tax_filing_years_for_india",
+    "description": "Financial years for which Indian tax filing was explicitly mentioned. [Original: Tax Filing Years (For India)]",
+    "array_items": {
+      "kind": "number",
+      "properties": []
+    }
+  },
+  {
+    "id": "1300beb350504247b3d6880fd79f942b",
+    "name": "tax_filing_years_for_non_india",
+    "description": "Years for which non-India tax filing was explicitly mentioned. [Original: Tax Filing Years (For Non-India)]",
+    "array_items": {
+      "kind": "number",
+      "properties": []
+    }
+  },
+  {
+    "id": "bfdf02a1739c4d4082b50228e4b3a749",
+    "name": "term_insurance_coverage_adequacy",
+    "description": "Is the term insurance coverage adequate for the Client? [Original: Term Insurance Coverage Adequacy]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "2e05bb0465ff4c85ab5fac53d2a6aaf4",
+    "name": "to_date",
+    "description": "Planned date of permanent relocation to India. Normalize to YYYY-MM-DD. If only month/year is mentioned, use the 1st; for a rough period, use the earliest date. [Original: To (Date)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "ccd4780a7ef64db4aba3e8b6bb1e7199",
+    "name": "to_destination",
+    "description": "Indian city to which the NRI plans to return permanently. [Original: To (Destination)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "6806eda68654408b91dfe64bf6b79289",
+    "name": "will_executed_y_n",
+    "description": "Whether the Client has an executed will. [Original: Will Executed (Y/N)]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  },
+  {
+    "id": "6bbcf22eb5df44129d115a6104cd1394",
+    "name": "works_at",
+    "description": "Current work/employment status of the Client/Prospect. [Original: Works at]",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    }
+  }
+]

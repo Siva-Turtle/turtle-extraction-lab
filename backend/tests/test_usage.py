@@ -68,7 +68,8 @@ def test_complete_json_usage_full(monkeypatch):
     parsed, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert parsed == {"a": 1}
     assert usage == {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46,
-                     "reasoning_tokens": 0, "provider": ""}
+                     "reasoning_tokens": 0, "provider": "",
+                     "cost": None, "cost_details": None, "served_model": ""}
 
 
 def test_complete_json_usage_missing_is_zeros(monkeypatch):
@@ -77,7 +78,8 @@ def test_complete_json_usage_missing_is_zeros(monkeypatch):
                         _fake_client_factory(_chat_payload(json.dumps({"a": 1}))))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert usage == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                     "reasoning_tokens": 0, "provider": ""}
+                     "reasoning_tokens": 0, "provider": "",
+                     "cost": None, "cost_details": None, "served_model": ""}
 
 
 def test_complete_json_usage_partial_is_zeros(monkeypatch):
@@ -86,7 +88,8 @@ def test_complete_json_usage_partial_is_zeros(monkeypatch):
     monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert usage == {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 0,
-                     "reasoning_tokens": 0, "provider": ""}
+                     "reasoning_tokens": 0, "provider": "",
+                     "cost": None, "cost_details": None, "served_model": ""}
 
 
 def test_complete_json_usage_reasoning_tokens_from_details(monkeypatch):
@@ -98,7 +101,8 @@ def test_complete_json_usage_reasoning_tokens_from_details(monkeypatch):
     monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert usage == {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46,
-                     "reasoning_tokens": 7, "provider": ""}
+                     "reasoning_tokens": 7, "provider": "",
+                     "cost": None, "cost_details": None, "served_model": ""}
 
 
 def test_complete_json_usage_reasoning_tokens_fallback_top_level(monkeypatch):
@@ -446,3 +450,114 @@ def test_run_reasoning_effort_high_flows_to_requests_usage_logs(client, monkeypa
     blank = [l for l in logs2 if l["run_id"] == body2["id"]] if "id" in body2 else logs2
     # Newest-first ordering puts the blank run at index 0.
     assert logs2[0]["reasoning_effort"] == ""
+
+
+def test_usage_cost_preferred_over_catalog(client, monkeypatch):
+    aid = _make_agent(client)
+
+    async def _fake_complete(payload):
+        return ({"ok": 1}, {"prompt_tokens": 10, "completion_tokens": 20,
+                             "total_tokens": 30, "cost": 0.123456789,
+                             "cost_details": {"upstream_inference_cost": 0.1}})
+
+    async def _fake_pricing(model):
+        return (0.000001, 0.000002)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+    usage = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "test-model"}).json()["usage"]
+    per = usage["per_agent"][aid]
+    # Actual usage.cost wins (rounded to 6dp), not 10*1e-6+20*2e-6=0.00005.
+    assert per["cost_usd"] == pytest.approx(0.123457)
+    assert usage["cost_usd"] == pytest.approx(0.123457)
+    # Input/output splits still come from the catalog price.
+    assert per["input_cost_usd"] == pytest.approx(0.00001)
+    assert per["output_cost_usd"] == pytest.approx(0.00004)
+
+
+def test_negative_catalog_price_is_unknown():
+    # "-1" (dynamic router) is never a price.
+    assert runs_router._valid_price("-1") is None
+    assert runs_router._valid_price(-1.0) is None
+    assert runs_router._valid_price(None) is None
+    assert runs_router._valid_price(0.000001) == pytest.approx(0.000001)
+    per = {}
+    aid = "a1"
+    per[aid] = runs_router._per_agent_entry(10, 20, 30, 0, 1.0, "m", "")
+    runs_router._fill_pricing(per, -1.0, -1.0)
+    assert per[aid]["cost_usd"] is None
+    assert per[aid]["input_cost_usd"] is None
+    assert per[aid]["output_cost_usd"] is None
+
+
+def test_negative_pricing_via_models_returns_none(monkeypatch):
+    openrouter.clear_pricing_cache()
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    payload = {"data": [
+        {"id": "typesafe/jev-router",
+         "pricing": {"prompt": "-1", "completion": "-1"}},
+    ]}
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_client_factory(payload))
+    assert asyncio.run(openrouter.get_model_pricing("typesafe/jev-router")) == (None, None)
+    openrouter.clear_pricing_cache()
+
+
+def test_served_model_recorded_when_differs(client, monkeypatch):
+    aid = _make_agent(client)
+
+    async def _fake_complete(payload):
+        return ({"ok": 1}, {"prompt_tokens": 5, "completion_tokens": 5,
+                             "total_tokens": 10, "cost": 0.01,
+                             "served_model": "openai/gpt-4o"})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "typesafe/jev-router"}).json()
+    per = body["usage"]["per_agent"][aid]
+    assert per["cost_usd"] == pytest.approx(0.01)
+    assert per["served_model"] == "openai/gpt-4o"
+    assert per["model"] == "typesafe/jev-router"
+
+
+def test_served_model_omitted_when_same(client, monkeypatch):
+    aid = _make_agent(client)
+
+    async def _fake_complete(payload):
+        return ({"ok": 1}, {"prompt_tokens": 5, "completion_tokens": 5,
+                             "total_tokens": 10,
+                             "served_model": "test-model"})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fake_complete)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+    per = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [aid], "model": "test-model"}).json()["usage"]["per_agent"][aid]
+    assert "served_model" not in per
+
+
+def test_build_chat_payload_includes_usage():
+    from app.core.openrouter import build_chat_payload
+    p = build_chat_payload(model="m", system="s", user="u")
+    assert p["usage"] == {"include": True}
+
+
+def test_extract_usage_cost_and_details():
+    u = openrouter._extract_usage({"prompt_tokens": 1, "completion_tokens": 2,
+                                    "total_tokens": 3, "cost": 0.05,
+                                    "cost_details": {"a": 1}})
+    assert u["cost"] == pytest.approx(0.05)
+    assert u["cost_details"] == {"a": 1}
+    u2 = openrouter._extract_usage({"prompt_tokens": 1, "cost": "-1"})
+    assert u2["cost"] is None
+    u3 = openrouter._extract_usage({"prompt_tokens": 1, "cost": "oops"})
+    assert u3["cost"] is None

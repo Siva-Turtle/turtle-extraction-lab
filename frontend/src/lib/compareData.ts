@@ -1,6 +1,7 @@
 // Shared mapping from stored log rows to comparison-matrix inputs.
 // Used by both Test Lab (finished columns) and the Logs group detail.
 
+import { sortCompareColumns } from "./compare";
 import type { CompareAgent, CompareColumn, LogRow } from "./logTypes";
 
 /** done when no agent failed, partial when some did, error when all did. */
@@ -18,10 +19,11 @@ function statusOf(log: LogRow): CompareColumn["status"] {
 }
 
 /**
- * One finished matrix column per model+effort, in first-seen order. A retried
- * model adds another log row to the same group; the matrix keeps only the
- * LATEST row (by created_at) per `model|reasoning_effort`. Callers that need
- * every attempt (Raw tab, list badges, cost sums) use the raw rows directly.
+ * One finished matrix column per model+effort, always alphabetical by model
+ * (stable, not first-seen/slot/completion order). A retried model adds
+ * another log row to the same group; the matrix keeps only the LATEST row
+ * (by created_at) per `model|reasoning_effort`. Callers that need every
+ * attempt (Raw tab, list badges, cost sums) use the raw rows directly.
  */
 export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
   const latest = new Map<string, LogRow>();
@@ -36,7 +38,7 @@ export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
     // Later in input order wins ties (invalid timestamps sink to -Infinity).
     if (!cur || timeOf(log.created_at) >= timeOf(cur.created_at)) latest.set(k, log);
   }
-  return order.map((k) => {
+  const cols = order.map((k) => {
     const log = latest.get(k) as LogRow;
     return {
       key: log.id,
@@ -47,6 +49,7 @@ export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
       log,
     };
   });
+  return sortCompareColumns(cols);
 }
 
 /** Sortable timestamp; invalid timestamps sink last. */

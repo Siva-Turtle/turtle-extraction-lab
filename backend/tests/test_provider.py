@@ -13,7 +13,8 @@ def test_build_chat_payload_without_provider_byte_identical():
     for blank in (None, "", "   "):
         p = build_chat_payload(model="m", system="s", user="u", provider=blank)
         assert "provider" not in p
-        assert set(p) == {"model", "messages", "response_format"}
+        assert set(p) == {"model", "messages", "response_format", "usage"}
+        assert p["usage"] == {"include": True}
     # Default (no provider kwarg) is also byte-identical.
     p0 = build_chat_payload(model="m", system="s", user="u")
     p1 = build_chat_payload(model="m", system="s", user="u", provider="")

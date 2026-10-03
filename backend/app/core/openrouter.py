@@ -174,6 +174,13 @@ def build_chat_payload(
     text, separated by a blank line). All other models, and Anthropic with
     <=16 unions, stay byte-identical. Deterministic: same input ->
     byte-identical payload.
+
+    Usage reporting: the payload always carries
+    ``{"usage": {"include": True}}`` so OpenRouter returns ``usage.cost``
+    (actual charge, required for dynamic-pricing routers like
+    typesafe/jev-router whose catalog price is "-1"). Reuse / check-existing
+    matching compares only ``messages`` (never the ``usage`` key), so old
+    logs without it still match.
     """
     system_content = system
     if json_schema is None:
@@ -200,6 +207,7 @@ def build_chat_payload(
             {"role": "system", "content": system_content},
             {"role": "user", "content": user},
         ],
+        "usage": {"include": True},
     }
     effort = reasoning_effort.strip() if isinstance(reasoning_effort, str) else ""
     if effort:
@@ -214,10 +222,14 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
     """POST a prebuilt payload and return (parsed_json, usage).
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
-    "total_tokens": int, "reasoning_tokens": int, "provider": str};
+    "total_tokens": int, "reasoning_tokens": int, "provider": str,
+    "cost": float|None, "cost_details": dict|None, "served_model": str};
     missing/partial OpenRouter ``usage`` blocks become zeros and never raise.
     ``provider`` is the top-level OpenRouter response ``provider`` string
-    ("" when absent).
+    ("" when absent). ``cost`` is usage.cost (actual charge, None when
+    absent/negative/unparseable) — preferred over tokens x catalog price for
+    dynamic-pricing routers. ``served_model`` is the top-level response
+    ``model`` ("" when absent).
     """
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -255,6 +267,11 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
     except Exception:
         prov = ""
     usage["provider"] = prov if isinstance(prov, str) else ""
+    try:
+        served = data.get("model") if isinstance(data, dict) else ""
+    except Exception:
+        served = ""
+    usage["served_model"] = served if isinstance(served, str) else ""
     return parsed, usage
 
 
@@ -284,7 +301,14 @@ async def complete_json(
 
 
 def _extract_usage(usage: object) -> dict:
-    """Normalize an OpenRouter ``usage`` block to ints; never raises."""
+    """Normalize an OpenRouter ``usage`` block; never raises.
+
+    Tokens become ints (missing/negative -> 0). ``cost`` becomes a
+    float|None (actual charge, None when absent/negative/unparseable) and
+    ``cost_details`` passes through when it is a dict, else None. Negative
+    catalog prices ("-1" for dynamic routers) are never a price — callers
+    treat them as unknown.
+    """
 
     def _safe_int(v: object) -> int:
         try:
@@ -293,9 +317,23 @@ def _extract_usage(usage: object) -> dict:
         except Exception:
             return 0
 
+    def _safe_cost(v: object):
+        try:
+            if v is None:
+                return None
+            f = float(v)  # type: ignore[arg-type]
+            if not (f >= 0):
+                return None
+            import math as _math
+            if not _math.isfinite(f):
+                return None
+            return f
+        except Exception:
+            return None
+
     if not isinstance(usage, dict):
         return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                "reasoning_tokens": 0}
+                "reasoning_tokens": 0, "cost": None, "cost_details": None}
     prompt = _safe_int(usage.get("prompt_tokens"))
     completion = _safe_int(usage.get("completion_tokens"))
     total = _safe_int(usage.get("total_tokens"))
@@ -314,8 +352,12 @@ def _extract_usage(usage: object) -> dict:
             reasoning = n if n >= 0 else 0
         except Exception:
             reasoning = 0
+    cost = _safe_cost(usage.get("cost"))
+    cost_details = usage.get("cost_details")
+    if not isinstance(cost_details, dict):
+        cost_details = None
     return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total,
-            "reasoning_tokens": reasoning}
+            "reasoning_tokens": reasoning, "cost": cost, "cost_details": cost_details}
 
 
 # --- Model pricing (USD per token), 24h in-process cache -------------------

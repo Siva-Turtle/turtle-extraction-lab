@@ -50,6 +50,10 @@ export type AgentUsage = {
   model: string;
   // Actually-served OpenRouter provider ("" when unknown / old rows).
   provider?: string;
+  // Model that actually served the request (dynamic routers); present only
+  // when it differs from the requested `model`.
+  served_model?: string;
+  cost_details?: Record<string, unknown>;
   reused_from_log_id?: string;
   reused_from_created_at?: string | null;
 };
