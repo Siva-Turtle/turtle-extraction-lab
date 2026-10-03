@@ -32,8 +32,10 @@ function slotKey(model: string, effort: string): string {
 /**
  * Fire one `POST /runs` per model slot sharing a `run_group_id`, all at
  * once. Columns stay in picker order and fill in as each call settles.
- * Pass `{ existing }` to reuse already-finished logs for matched slots
- * (those columns are not posted; ratings go to the old log's run_id).
+ * Pass `{ existing }` to save a reused copy for matched slots: those columns
+ * `POST /runs/reuse` (`{log_id, run_group_id}`) in parallel with the real
+ * runs, starting "running" and settling from `res.data.log` exactly like a
+ * real run (so the copy appears in Log history in the same group).
  */
 export function useMultiRun(): {
   groupId: string;
@@ -51,6 +53,9 @@ export function useMultiRun(): {
   const [columns, setColumns] = React.useState<CompareColumn[]>([]);
   const payloadRef = React.useRef<Record<string, unknown>>({});
   const groupRef = React.useRef("");
+  // Per-column flag: which columns are reuse copies + the source log id, so
+  // retry() re-posts to /runs/reuse instead of firing a fresh model run.
+  const reuseSourceRef = React.useRef<Record<string, string>>({});
 
   const invalidate = React.useCallback(() => {
     qc.invalidateQueries({ queryKey: ["logs"] });
@@ -86,17 +91,15 @@ export function useMultiRun(): {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
     const existing = opts?.existing ?? {};
+    // Every column starts "running" — matched slots POST /runs/reuse, the
+    // rest POST /runs — so the reused copy lands in Log history in this
+    // group with its cost/time/tokens. Single-model runs use the same path.
+    const reuseSource: Record<string, string> = {};
     const cols: CompareColumn[] = slots.map((s) => {
       const k = slotKey(s.model, s.effort);
       const old = existing[k];
-      if (old) {
-        return {
-          key: k,
-          model: s.model,
-          effort: s.effort,
-          status: statusOf(old),
-          log: old,
-        };
+      if (old && typeof old.id === "string" && old.id !== "") {
+        reuseSource[k] = old.id;
       }
       return {
         key: k,
@@ -107,22 +110,25 @@ export function useMultiRun(): {
         log: null,
       };
     });
+    reuseSourceRef.current = reuseSource;
     groupRef.current = gid;
     payloadRef.current = { ...basePayload };
     setGroupId(gid);
     setColumns(cols);
-    const toRun = cols.filter((c) => !existing[c.key]);
-    // All columns came from existing logs: nothing to post.
-    if (toRun.length === 0) {
-      invalidate();
-      const ok = cols.filter((c) => c.status === "done" || c.status === "partial").length;
-      const failed = cols.length - ok;
-      if (failed === 0) toast.success(`${ok}/${cols.length} models done`);
-      else toast.error(`${ok}/${cols.length} done · ${failed} failed`);
+    if (cols.length === 0) {
       return;
     }
-    const jobs = toRun.map((col) =>
-      api
+    const jobs = cols.map((col) => {
+      const sourceId = reuseSource[col.key];
+      if (sourceId) {
+        return api
+          .post("/runs/reuse", { log_id: sourceId, run_group_id: gid })
+          .then(
+            (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
+            (e: unknown) => applyHttpError(col.key, e),
+          );
+      }
+      return api
         .post("/runs", {
           ...basePayload,
           model: col.model,
@@ -132,17 +138,11 @@ export function useMultiRun(): {
         .then(
           (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
           (e: unknown) => applyHttpError(col.key, e),
-        ),
-    );
+        );
+    });
     void Promise.all(jobs).then((statuses) => {
-      const existingOk = cols.filter(
-        (c) => existing[c.key] && (c.status === "done" || c.status === "partial"),
-      ).length;
-      const existingFailed = cols.filter(
-        (c) => existing[c.key] && c.status !== "done" && c.status !== "partial",
-      ).length;
-      const ok = statuses.filter((s) => s === "done" || s === "partial").length + existingOk;
-      const failed = statuses.length - (statuses.filter((s) => s === "done" || s === "partial").length) + existingFailed;
+      const ok = statuses.filter((s) => s === "done" || s === "partial").length;
+      const failed = statuses.length - ok;
       const total = cols.length;
       if (failed === 0) toast.success(`${ok}/${total} models done`);
       else toast.error(`${ok}/${total} done · ${failed} failed`);
@@ -158,6 +158,14 @@ export function useMultiRun(): {
         c.key === key ? { ...c, status: "running" as const, error: undefined, startedAt: Date.now() } : c,
       ),
     );
+    const sourceId = reuseSourceRef.current[key];
+    if (sourceId) {
+      api.post("/runs/reuse", { log_id: sourceId, run_group_id: gid }).then(
+        (res) => applySuccess(key, (res.data as RunResponse).log ?? null),
+        (e: unknown) => applyHttpError(key, e),
+      );
+      return;
+    }
     api
       .post("/runs", {
         ...payloadRef.current,

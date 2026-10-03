@@ -7,6 +7,7 @@ import { ThumbButtons } from "../ui/ThumbButtons";
 import { CompareToolbar } from "./CompareToolbar";
 import { AttributeCompareDrawer } from "./AttributeCompareDrawer";
 import { agreementMark, useCompareModel } from "./useCompareModel";
+import { ReusedBadge, isReused } from "./ReusedBadge";
 import type { CompareRow } from "../../lib/compare";
 
 const PENDING_CANON = "__pending__";
@@ -134,6 +135,11 @@ export function CompareCardList({
               >
                 {modelLabel(col.model, col.effort)}
               </p>
+              {col.log && isReused(col.log) && (
+                <span className="mt-1 inline-flex">
+                  <ReusedBadge log={col.log} />
+                </span>
+              )}
               {showStatus && (
                 <p className="mt-0.5 font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                   {col.status === "running" || col.status === "queued" ? (

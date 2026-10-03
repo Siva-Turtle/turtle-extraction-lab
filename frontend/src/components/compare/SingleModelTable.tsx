@@ -10,6 +10,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { CardTitle } from "../ui/Card";
 import { ThumbButtons } from "../ui/ThumbButtons";
+import { ReusedBadge, isReused, reusedFromLabel } from "./ReusedBadge";
 
 type PrettyAttr = {
   value?: unknown;
@@ -299,8 +300,18 @@ function AttrRow({
  * markup and classes unchanged). One column => this table.
  */
 export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
+  const reused = isReused(log);
+  const reusedWhen = reused ? reusedFromLabel(log) : null;
   return (
     <div className="grid min-w-0 max-w-full gap-3">
+      {reused && (
+        <p className="flex flex-wrap items-center gap-2 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+          <ReusedBadge log={log} />
+          <span>
+            Reused output from {reusedWhen ?? "a previous run"} — no new model call.
+          </span>
+        </p>
+      )}
       {Object.entries(log.outputs ?? {}).map(([agentId, out]) => {
         const agentName = agentDisplayName(log, agentId);
         if (out && typeof out === "object" && "_error" in (out as Record<string, unknown>)) {

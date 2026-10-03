@@ -19,6 +19,7 @@ import { MultiSelectFilter } from "../components/ui/Combobox";
 import type { ModelOption } from "../components/ui/Combobox";
 import { ComparisonMatrix } from "../components/compare/ComparisonMatrix";
 import { SingleModelTable } from "../components/compare/SingleModelTable";
+import { ReusedBadge, isReused } from "../components/compare/ReusedBadge";
 
 type DrawerTab = "pretty" | "raw" | "analytics";
 
@@ -410,6 +411,8 @@ export default function Logs() {
                     const costUsd = single ? usage?.cost_usd : g.totalCostUsd;
                     const tokens = single ? usage?.total_tokens : g.totalTokens;
                     const ms = single ? usage?.duration_ms : g.maxDurationMs;
+                    const hasReused = g.rows.some((r) => isReused(r));
+                    const reusedRow = g.rows.find((r) => isReused(r));
                     return (
                       <tr
                         key={g.key}
@@ -420,18 +423,24 @@ export default function Logs() {
                           {fmt(g.createdAt)}
                         </td>
                         {single ? (
-                          <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={first.model}>
-                            {modelLabel(first.model, first.reasoning_effort ?? "")}
+                          <td className="px-4 py-3" title={first.model}>
+                            <span className="inline-flex max-w-56 items-center gap-1.5">
+                              <span className="max-w-48 truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                                {modelLabel(first.model, first.reasoning_effort ?? "")}
+                                {isReused(first) ? " (reused)" : ""}
+                              </span>
+                              {isReused(first) && <ReusedBadge log={first} />}
+                            </span>
                           </td>
                         ) : (
                           <td
                             className="px-4 py-3"
-                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "")} — ${rowCostText(r)}`).join("\n")}
+                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "")}${isReused(r) ? " (reused)" : ""} — ${rowCostText(r)}`).join("\n")}
                           >
                             <span className="inline-flex max-w-56 flex-wrap items-center gap-1">
                               {g.rows.slice(0, 3).map((r) => (
                                 <span key={r.id} title={r.model}>
-                                  <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "")}</Badge>
+                                  <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "")}{isReused(r) ? " (reused)" : ""}</Badge>
                                 </span>
                               ))}
                               {g.rows.length > 3 && (
@@ -439,6 +448,7 @@ export default function Logs() {
                                   +{g.rows.length - 3}
                                 </span>
                               )}
+                              {hasReused && reusedRow && <ReusedBadge log={reusedRow} />}
                             </span>
                           </td>
                         )}
@@ -457,7 +467,10 @@ export default function Logs() {
                         <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
                           👍{g.up} 👎{g.down}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                        <td
+                          className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+                          title={hasReused ? "includes reused output (not re-charged)" : undefined}
+                        >
                           {fmtCostBoth(costUsd)}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
@@ -669,13 +682,14 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
         {rows.map((r) => {
           const isSel = r.id === selected.id;
           const attempt = attempts.get(r.id);
-          const label = modelLabel(r.model, r.reasoning_effort ?? "");
+          const reused = isReused(r);
+          const label = `${modelLabel(r.model, r.reasoning_effort ?? "")}${reused ? " (reused)" : ""}`;
           return (
             <button
               key={r.id}
               role="tab"
               aria-selected={isSel}
-              title={attempt ? `${label} · ${attempt} (${r.created_at})` : r.model}
+              title={attempt ? `${label} · ${attempt} (${r.created_at})` : reused ? `${label} (${r.model})` : r.model}
               onClick={() => setSelectedId(r.id)}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
@@ -685,6 +699,11 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
               )}
             >
               <span className="max-w-40 truncate font-mono">{label}</span>
+              {reused && (
+                <span className="inline-flex">
+                  <ReusedBadge log={r} />
+                </span>
+              )}
               {attempt && (
                 <span className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-normal dark:border-white/10">
                   {attempt}
@@ -1016,7 +1035,13 @@ function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }
                     className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
                   >
                     <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]" title={l.model}>
-                      {modelLabel(l.model, l.reasoning_effort ?? "")}
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span>
+                          {modelLabel(l.model, l.reasoning_effort ?? "")}
+                          {isReused(l) ? " (reused)" : ""}
+                        </span>
+                        {isReused(l) && <ReusedBadge log={l} />}
+                      </span>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.prompt_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.completion_tokens)}</td>

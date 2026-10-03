@@ -52,6 +52,10 @@ export type LogRow = {
   created_at: string;
   // Multi-model compare: the backend always ships a string ("" on old rows).
   run_group_id: string;
+  // Reused output (POST /runs/reuse copies an old log into a new row in the
+  // same group): "" = real model call. Optional for old rows / old backends.
+  reused_from_log_id?: string;
+  reused_from_created_at?: string | null;
 };
 
 export type ModelSlot = { model: string; effort: string };

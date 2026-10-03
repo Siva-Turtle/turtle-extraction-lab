@@ -5,6 +5,7 @@ import { fmtCost, fmtMs, fmtTokens, modelLabel, USD_TO_INR } from "../../lib/for
 import type { CompareColumn } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/Badge";
+import { ReusedBadge, isReused } from "./ReusedBadge";
 
 function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | null {
   const [now, setNow] = React.useState(() => Date.now());
@@ -97,6 +98,7 @@ export function ModelColumnHeader({
           >
             {modelLabel(column.model, column.effort)}
           </span>
+          {column.log && isReused(column.log) && <ReusedBadge log={column.log} />}
           <div className="relative" ref={menuRef}>
             <button
               type="button"
