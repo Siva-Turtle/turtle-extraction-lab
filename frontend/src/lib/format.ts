@@ -84,3 +84,27 @@ export function shortModel(id: string): string {
   const i = id.lastIndexOf("/");
   return i >= 0 ? id.slice(i + 1) : id;
 }
+
+/** Model label with reasoning effort: `short:effort`, or just short when effort is blank. */
+export function modelLabel(model: string, effort: string): string {
+  const short = shortModel(model);
+  const e = (effort ?? "").trim();
+  return e === "" ? short : `${short}:${e}`;
+}
+
+/** Relative run time, e.g. "just now", "5 min ago", "3 h ago", "2 d ago". Falls back to fmt(). */
+export function fmtRelative(ts: string): string {
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return fmt(ts);
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return fmt(ts);
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} d ago`;
+  return fmt(ts);
+}

@@ -18,25 +18,18 @@ function ValueView({ value }: { value: unknown }): React.JSX.Element {
     if (value.length === 0) {
       return <span className="italic text-[#8a8f98]">— not found</span>;
     }
-    const shown = value.slice(0, 4);
-    const rest = value.length - shown.length;
     return (
       <span className="flex flex-wrap gap-1">
-        {shown.map((v, i) => (
+        {value.map((v, i) => (
           <span
             // eslint-disable-next-line react/no-array-index-key
             key={i}
             title={formatValue(v)}
-            className="max-w-full truncate rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
+            className="max-w-full break-words rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
           >
             {formatValue(v)}
           </span>
         ))}
-        {rest > 0 && (
-          <span className="rounded-full border border-[#e5e7eb] px-2 py-0.5 font-sans text-[11px] text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]">
-            +{rest}
-          </span>
-        )}
       </span>
     );
   }
@@ -58,7 +51,7 @@ function ValueView({ value }: { value: unknown }): React.JSX.Element {
   }
   const text = formatValue(value);
   return (
-    <span className="line-clamp-3 break-words font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]" title={text}>
+    <span className="break-words font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]" title={text}>
       {text}
     </span>
   );
@@ -137,7 +130,7 @@ export function CompareCell({
       )}
       {detail === "evidence" && !notFound && evidenceText.trim() !== "" && (
         <span
-          className="line-clamp-3 break-words italic font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+          className="break-words italic font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
           title={evidenceText}
         >
           “{evidenceText}”

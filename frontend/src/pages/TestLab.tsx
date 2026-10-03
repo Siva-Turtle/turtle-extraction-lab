@@ -5,10 +5,10 @@ import { Check, ChevronDown, Eye, Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
-import { fmtCostBoth, serverDetail, shortModel } from "../lib/format";
+import { fmtCostBoth, fmtRelative, modelLabel, serverDetail } from "../lib/format";
 import { agentsFromLog } from "../lib/compareData";
 import { estimateRunCost } from "../lib/estimate";
-import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
+import type { ColumnStatus, CompareAgent, CompareColumn, LogRow, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -411,8 +411,7 @@ function ColumnBlock({
   return (
     <div className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
       <div className="flex flex-wrap items-center gap-2">
-        <CardTitle title={column.model}>{shortModel(column.model)}</CardTitle>
-        <Badge tone="neutral">{column.effort || "default"}</Badge>
+        <CardTitle title={column.model}>{modelLabel(column.model, column.effort)}</CardTitle>
         <StatusBadge status={column.status} />
         {column.status === "running" && (
           <span className="inline-flex items-center gap-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
@@ -462,6 +461,12 @@ export default function TestLab() {
   const [meetingDate, setMeetingDate] = React.useState("");
   const [meetingId, setMeetingId] = React.useState("");
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
+  const [pendingRun, setPendingRun] = React.useState<{
+    slots: ModelSlot[];
+    basePayload: Record<string, unknown>;
+    existing: Record<string, LogRow>;
+  } | null>(null);
 
   const multi = useMultiRun();
 
@@ -595,7 +600,43 @@ export default function TestLab() {
       toast.error(why);
       return;
     }
-    multi.start(slots, buildBasePayload());
+    const basePayload = buildBasePayload();
+    const currentSlots = [...slots];
+    setChecking(true);
+    api
+      .post("/runs/check-existing", {
+        ...basePayload,
+        models: currentSlots.map((s) => ({ model: s.model, reasoning_effort: s.effort })),
+      })
+      .then(
+        (res) => {
+          setChecking(false);
+          const matches = (res.data as { matches?: { model: string; reasoning_effort: string; log: LogRow }[] })
+            .matches;
+          const existing: Record<string, LogRow> = {};
+          if (Array.isArray(matches)) {
+            for (const m of matches) {
+              if (!m || typeof m.model !== "string" || !m.log) continue;
+              const effort = typeof m.reasoning_effort === "string" ? m.reasoning_effort : "";
+              const k = `${m.model}|${effort}`;
+              // Only keep matches for currently requested slots.
+              if (currentSlots.some((s) => `${s.model}|${s.effort}` === k)) {
+                existing[k] = m.log as LogRow;
+              }
+            }
+          }
+          if (Object.keys(existing).length === 0) {
+            multi.start(currentSlots, basePayload);
+            return;
+          }
+          setPendingRun({ slots: currentSlots, basePayload, existing });
+        },
+        () => {
+          // Any error (including 404 on old backends): run as today.
+          setChecking(false);
+          multi.start(currentSlots, basePayload);
+        },
+      );
   }
 
   function canRun() {
@@ -750,8 +791,7 @@ export default function TestLab() {
                 emptyText={typeOptions.length === 0 ? "No meeting types yet." : "No matches."}
               />
             </div>
-            <label className={fieldLabel}>
-              Meeting start date
+            <div className="flex items-end">
               <input
                 type="date"
                 value={meetingDate}
@@ -760,7 +800,7 @@ export default function TestLab() {
                 aria-label="Meeting start date"
                 className={cn(fieldInput, "h-11 disabled:cursor-not-allowed disabled:opacity-50")}
               />
-            </label>
+            </div>
           </div>
           {pickerErrorDetail && (
             <p
@@ -802,8 +842,15 @@ export default function TestLab() {
             >
               <Eye className="h-4 w-4" aria-hidden="true" />
             </Button>
-            <Button loading={multi.running} onClick={handleRun}>
-              <Play className="h-4 w-4" aria-hidden="true" /> {slots.length > 1 ? `Run ${slots.length} models` : "Run"}
+            <Button loading={multi.running || checking} onClick={handleRun} disabled={checking}>
+              {checking ? (
+                "Checking…"
+              ) : (
+                <>
+                  <Play className="h-4 w-4" aria-hidden="true" />{" "}
+                  {slots.length > 1 ? `Run ${slots.length} models` : "Run"}
+                </>
+              )}
             </Button>
           </div>
         </div>
@@ -835,6 +882,78 @@ export default function TestLab() {
               </p>
             </div>
           )}
+        </Modal>
+      )}
+
+      {pendingRun && (
+        <Modal title="Output already exists" onClose={() => setPendingRun(null)}>
+          <div className="grid gap-3">
+            <ul className="grid gap-2">
+              {pendingRun.slots.map((s) => {
+                const k = `${s.model}|${s.effort}`;
+                const existing = pendingRun.existing[k];
+                if (existing) {
+                  return (
+                    <li
+                      key={k}
+                      className="flex items-baseline justify-between gap-3 rounded-xl border border-[#e5e7eb] bg-[#f1f2f3]/60 px-3 py-2 dark:border-white/10 dark:bg-white/5"
+                    >
+                      <span
+                        className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                        title={s.model}
+                      >
+                        {modelLabel(s.model, s.effort)}
+                      </span>
+                      <span
+                        className="shrink-0 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+                        title={existing.created_at}
+                      >
+                        {fmtRelative(existing.created_at)}
+                      </span>
+                    </li>
+                  );
+                }
+                return (
+                  <li
+                    key={k}
+                    className="flex items-baseline justify-between gap-3 rounded-xl border border-dashed border-[#e5e7eb] px-3 py-2 dark:border-white/10"
+                  >
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                      title={s.model}
+                    >
+                      {modelLabel(s.model, s.effort)}
+                    </span>
+                    <span className="shrink-0 font-sans text-xs text-[#8a8f98]">will run</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={() => setPendingRun(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const p = pendingRun;
+                  setPendingRun(null);
+                  multi.start(p.slots, p.basePayload);
+                }}
+              >
+                Regenerate
+              </Button>
+              <Button
+                onClick={() => {
+                  const p = pendingRun;
+                  setPendingRun(null);
+                  multi.start(p.slots, p.basePayload, { existing: p.existing });
+                }}
+              >
+                Show last output
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
 

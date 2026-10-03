@@ -32,12 +32,18 @@ function slotKey(model: string, effort: string): string {
 /**
  * Fire one `POST /runs` per model slot sharing a `run_group_id`, all at
  * once. Columns stay in picker order and fill in as each call settles.
+ * Pass `{ existing }` to reuse already-finished logs for matched slots
+ * (those columns are not posted; ratings go to the old log's run_id).
  */
 export function useMultiRun(): {
   groupId: string;
   columns: CompareColumn[];
   running: boolean;
-  start: (slots: ModelSlot[], basePayload: Record<string, unknown>) => void;
+  start: (
+    slots: ModelSlot[],
+    basePayload: Record<string, unknown>,
+    opts?: { existing?: Record<string, LogRow> },
+  ) => void;
   retry: (key: string) => void;
 } {
   const qc = useQueryClient();
@@ -72,22 +78,50 @@ export function useMultiRun(): {
     return "error" as const;
   }
 
-  function start(slots: ModelSlot[], basePayload: Record<string, unknown>) {
+  function start(
+    slots: ModelSlot[],
+    basePayload: Record<string, unknown>,
+    opts?: { existing?: Record<string, LogRow> },
+  ) {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
-    const cols: CompareColumn[] = slots.map((s) => ({
-      key: slotKey(s.model, s.effort),
-      model: s.model,
-      effort: s.effort,
-      status: "running",
-      startedAt: now,
-      log: null,
-    }));
+    const existing = opts?.existing ?? {};
+    const cols: CompareColumn[] = slots.map((s) => {
+      const k = slotKey(s.model, s.effort);
+      const old = existing[k];
+      if (old) {
+        return {
+          key: k,
+          model: s.model,
+          effort: s.effort,
+          status: statusOf(old),
+          log: old,
+        };
+      }
+      return {
+        key: k,
+        model: s.model,
+        effort: s.effort,
+        status: "running",
+        startedAt: now,
+        log: null,
+      };
+    });
     groupRef.current = gid;
     payloadRef.current = { ...basePayload };
     setGroupId(gid);
     setColumns(cols);
-    const jobs = cols.map((col) =>
+    const toRun = cols.filter((c) => !existing[c.key]);
+    // All columns came from existing logs: nothing to post.
+    if (toRun.length === 0) {
+      invalidate();
+      const ok = cols.filter((c) => c.status === "done" || c.status === "partial").length;
+      const failed = cols.length - ok;
+      if (failed === 0) toast.success(`${ok}/${cols.length} models done`);
+      else toast.error(`${ok}/${cols.length} done · ${failed} failed`);
+      return;
+    }
+    const jobs = toRun.map((col) =>
       api
         .post("/runs", {
           ...basePayload,
@@ -101,10 +135,17 @@ export function useMultiRun(): {
         ),
     );
     void Promise.all(jobs).then((statuses) => {
-      const ok = statuses.filter((s) => s === "done" || s === "partial").length;
-      const failed = statuses.length - ok;
-      if (failed === 0) toast.success(`${ok}/${statuses.length} models done`);
-      else toast.error(`${ok}/${statuses.length} done · ${failed} failed`);
+      const existingOk = cols.filter(
+        (c) => existing[c.key] && (c.status === "done" || c.status === "partial"),
+      ).length;
+      const existingFailed = cols.filter(
+        (c) => existing[c.key] && c.status !== "done" && c.status !== "partial",
+      ).length;
+      const ok = statuses.filter((s) => s === "done" || s === "partial").length + existingOk;
+      const failed = statuses.length - (statuses.filter((s) => s === "done" || s === "partial").length) + existingFailed;
+      const total = cols.length;
+      if (failed === 0) toast.success(`${ok}/${total} models done`);
+      else toast.error(`${ok}/${total} done · ${failed} failed`);
     });
   }
 

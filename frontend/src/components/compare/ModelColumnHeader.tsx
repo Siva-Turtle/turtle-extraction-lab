@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { fmtCost, fmtMs, fmtTokens, shortModel, USD_TO_INR } from "../../lib/format";
+import { fmtCost, fmtMs, fmtTokens, modelLabel, USD_TO_INR } from "../../lib/format";
 import type { CompareColumn } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/Badge";
@@ -41,6 +41,7 @@ export function ModelColumnHeader({
   isCheapest,
   isFastest,
   onRetry,
+  showDoneBadge = true,
 }: {
   column: CompareColumn;
   agreePct: number;
@@ -51,6 +52,7 @@ export function ModelColumnHeader({
   isCheapest: boolean;
   isFastest: boolean;
   onRetry: (key: string) => void;
+  showDoneBadge?: boolean;
 }): React.JSX.Element {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
@@ -93,7 +95,7 @@ export function ModelColumnHeader({
             title={column.model}
             className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
           >
-            {shortModel(column.model)}
+            {modelLabel(column.model, column.effort)}
           </span>
           <div className="relative" ref={menuRef}>
             <button
@@ -130,8 +132,7 @@ export function ModelColumnHeader({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone="neutral">{column.effort || "default"}</Badge>
-          {column.status === "done" && <Badge tone="success">done</Badge>}
+          {showDoneBadge && column.status === "done" && <Badge tone="success">done</Badge>}
           {column.status === "partial" && <Badge tone="warning">partial</Badge>}
           {column.status === "error" && <Badge tone="danger">error</Badge>}
           {(column.status === "running" || column.status === "queued") && (

@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
-import { fmt, fmtCostBoth, fmtMs, fmtTokens, serverDetail, shortModel } from "../lib/format";
+import { fmt, fmtCostBoth, fmtMs, fmtTokens, modelLabel, serverDetail } from "../lib/format";
 import type { AgentUsage, LogFilters, LogRow, RunUsage } from "../lib/logTypes";
 import { buildRows, columnStats } from "../lib/compare";
 import { agentsFromLog, columnsFromLogs } from "../lib/compareData";
@@ -421,17 +421,17 @@ export default function Logs() {
                         </td>
                         {single ? (
                           <td className="max-w-48 truncate px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]" title={first.model}>
-                            {first.model}
+                            {modelLabel(first.model, first.reasoning_effort ?? "")}
                           </td>
                         ) : (
                           <td
                             className="px-4 py-3"
-                            title={g.rows.map((r) => `${r.model} — ${rowCostText(r)}`).join("\n")}
+                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "")} — ${rowCostText(r)}`).join("\n")}
                           >
                             <span className="inline-flex max-w-56 flex-wrap items-center gap-1">
                               {g.rows.slice(0, 3).map((r) => (
                                 <span key={r.id} title={r.model}>
-                                  <Badge tone="neutral">{shortModel(r.model)}</Badge>
+                                  <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "")}</Badge>
                                 </span>
                               ))}
                               {g.rows.length > 3 && (
@@ -668,14 +668,14 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
       >
         {rows.map((r) => {
           const isSel = r.id === selected.id;
-          const effort = (r.reasoning_effort ?? "").trim() || "default";
           const attempt = attempts.get(r.id);
+          const label = modelLabel(r.model, r.reasoning_effort ?? "");
           return (
             <button
               key={r.id}
               role="tab"
               aria-selected={isSel}
-              title={attempt ? `${r.model} · ${effort} · ${attempt} (${r.created_at})` : r.model}
+              title={attempt ? `${label} · ${attempt} (${r.created_at})` : r.model}
               onClick={() => setSelectedId(r.id)}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
@@ -684,8 +684,7 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
                   : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
               )}
             >
-              <span className="max-w-40 truncate font-mono">{shortModel(r.model)}</span>
-              <span className="font-sans font-normal">· {effort}</span>
+              <span className="max-w-40 truncate font-mono">{label}</span>
               {attempt && (
                 <span className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-normal dark:border-white/10">
                   {attempt}
@@ -772,7 +771,7 @@ function PrettyPanel({
         </p>
       )}
       {multi ? (
-        <ComparisonMatrix columns={columns} agents={agents} editable />
+        <ComparisonMatrix columns={columns} agents={agents} editable showDoneBadge={false} />
       ) : (
         <SingleModelTable log={log} />
       )}
@@ -990,11 +989,10 @@ function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }
       <div className="min-w-0 max-w-full">
         <h3 className={sectionLabel}>Model comparison</h3>
         <div className="mt-1.5 max-w-full overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
-          <table className="w-full min-w-[1100px] font-sans text-xs">
+          <table className="w-full min-w-[1000px] font-sans text-xs">
             <thead>
               <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
                 <th className="px-3 py-2">Model</th>
-                <th className="px-3 py-2">Effort</th>
                 <th className="px-3 py-2 text-right">In</th>
                 <th className="px-3 py-2 text-right">Out</th>
                 <th className="px-3 py-2 text-right">Thought</th>
@@ -1018,10 +1016,7 @@ function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }
                     className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
                   >
                     <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]" title={l.model}>
-                      {shortModel(l.model)}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      {(l.reasoning_effort ?? "").trim() || "Default"}
+                      {modelLabel(l.model, l.reasoning_effort ?? "")}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.prompt_tokens)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u?.completion_tokens)}</td>

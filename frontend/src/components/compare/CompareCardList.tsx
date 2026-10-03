@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
-import { fmtMs, formatValue, shortModel } from "../../lib/format";
+import { fmtMs, formatValue, modelLabel } from "../../lib/format";
 import { NOT_FOUND_CANON } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { ThumbButtons } from "../ui/ThumbButtons";
@@ -24,9 +24,44 @@ function CompactValue({ value }: { value: unknown }): React.JSX.Element {
   if (typeof value === "string" && value.trim() === "") {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return <span className="italic text-[#8a8f98]">— not found</span>;
+    }
+    return (
+      <span className="flex min-w-0 flex-1 flex-wrap gap-1">
+        {value.map((v, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <span
+            key={i}
+            title={formatValue(v)}
+            className="max-w-full break-words rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-0.5 font-sans text-xs text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
+          >
+            {formatValue(v)}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      return <span className="italic text-[#8a8f98]">— not found</span>;
+    }
+    return (
+      <span className="grid min-w-0 flex-1 gap-0.5">
+        {entries.map(([k, v]) => (
+          <span key={k} className="break-words font-mono text-xs" title={`${k}: ${formatValue(v)}`}>
+            <span className="text-[#4a5058] dark:text-[#C3C2B7]">{k}: </span>
+            <span className="text-[#1d1d1d] dark:text-[#F0EFEC]">{formatValue(v)}</span>
+          </span>
+        ))}
+      </span>
+    );
+  }
   const text = formatValue(value);
   return (
-    <span className="line-clamp-3 min-w-0 flex-1 break-words font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]" title={text}>
+    <span className="min-w-0 flex-1 break-words font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]" title={text}>
       {text}
     </span>
   );
@@ -42,33 +77,27 @@ export function CompareCardList({
   agents,
   editable,
   onRetry,
+  showDoneBadge = true,
 }: {
   columns: CompareColumn[];
   agents: CompareAgent[];
   editable: boolean;
   onRetry?: (key: string) => void;
   focusColumnKey?: string;
+  showDoneBadge?: boolean;
 }): React.JSX.Element {
   const model = useCompareModel(columns, agents);
   const {
     rowsByAgent,
-    prefs,
-    setPrefs,
-    filter,
-    setFilter,
     detail,
     setDetail,
     collapsed,
     toggleAgent,
-    counts,
-    overall,
     perCol,
-    allFinished,
     effectiveRating,
     hasRemarks,
     attrDescription,
     handleCellRate,
-    handleMergedRate,
   } = model;
 
   const [drawerRow, setDrawerRow] = React.useState<CompareRow | null>(null);
@@ -87,6 +116,12 @@ export function CompareCardList({
         {columns.map((col) => {
           const s = perCol.get(col.key) ?? { agreePct: 0, up: 0, down: 0, rated: 0, total: 0 };
           const usage = col.log?.usage;
+          const showStatus =
+            col.status === "running" ||
+            col.status === "queued" ||
+            col.status === "partial" ||
+            col.status === "error" ||
+            (col.status === "done" && showDoneBadge);
           return (
             <div
               key={col.key}
@@ -97,19 +132,20 @@ export function CompareCardList({
                 title={col.model}
                 className="truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
               >
-                {shortModel(col.model)}
+                {modelLabel(col.model, col.effort)}
               </p>
-              <p className="mt-0.5 font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                {col.effort || "default"}
-                {col.status === "running" || col.status === "queued" ? (
-                  <span className="ml-1 inline-flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                    {col.status}
-                  </span>
-                ) : (
-                  ` · ${col.status}`
-                )}
-              </p>
+              {showStatus && (
+                <p className="mt-0.5 font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                  {col.status === "running" || col.status === "queued" ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      {col.status}
+                    </span>
+                  ) : (
+                    col.status
+                  )}
+                </p>
+              )}
               <p className="mt-0.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                 <span title={typeof usage?.cost_usd === "number" ? `$${usage.cost_usd} USD` : "Cost unknown"}>
                   {costText(usage?.cost_usd)}
@@ -126,18 +162,8 @@ export function CompareCardList({
       </div>
 
       <CompareToolbar
-        filter={filter}
-        onFilter={setFilter}
-        merge={prefs.merge}
-        onMerge={(v) => setPrefs((p) => ({ ...p, merge: v }))}
-        link={prefs.link}
-        onLink={(v) => setPrefs((p) => ({ ...p, link: v }))}
         detail={detail}
         onDetail={setDetail}
-        counts={counts}
-        up={overall.up}
-        down={overall.down}
-        agreePct={overall.agreePct}
       />
 
       {agents.map((agent) => {
@@ -159,55 +185,6 @@ export function CompareCardList({
               agentRows.map((row) => {
                 const mark = agreementMark(row);
                 const desc = attrDescription(row);
-                const merged =
-                  prefs.merge && row.state === "unanimous" && allFinished && columns.length > 1;
-                if (merged) {
-                  const firstKey = columns[0]?.key ?? "";
-                  const firstCell = firstKey ? row.cells[firstKey] : undefined;
-                  const ratings = columns.map((c) => effectiveRating(row, c.key));
-                  const mergedRating =
-                    ratings.length > 0 && ratings.every((r) => r === "up")
-                      ? ("up" as const)
-                      : ratings.length > 0 && ratings.every((r) => r === "down")
-                        ? ("down" as const)
-                        : null;
-                  return (
-                    <article
-                      key={`${row.agentId}|${row.attr}`}
-                      className="rounded-2xl border border-[#e5e7eb] bg-white p-3 dark:border-white/10 dark:bg-[#1a1a1a]"
-                    >
-                      <header className="flex items-baseline gap-1.5">
-                        <h4
-                          className="min-w-0 flex-1 break-words font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
-                          title={desc || undefined}
-                        >
-                          {row.attr}
-                        </h4>
-                        <span aria-hidden="true" className="shrink-0 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                          {mark}
-                        </span>
-                      </header>
-                      <div className="mt-2 flex items-start gap-2">
-                        <span className="shrink-0 font-sans text-[11px] font-bold text-[#4a5058] dark:text-[#C3C2B7]">
-                          All {columns.length} models
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setDrawerRow(row)}
-                          title="Open attribute comparison"
-                          className="min-w-0 flex-1 rounded text-left focus-visible:outline-2 focus-visible:outline-brand"
-                        >
-                          {firstCell ? <CompactValue value={firstCell.value} /> : null}
-                        </button>
-                        {editable && (
-                          <span className="flex shrink-0 items-center">
-                            <ThumbButtons value={mergedRating} onChange={(n) => handleMergedRate(row, n)} size="sm" />
-                          </span>
-                        )}
-                      </div>
-                    </article>
-                  );
-                }
                 return (
                   <article
                     key={`${row.agentId}|${row.attr}`}
@@ -231,7 +208,7 @@ export function CompareCardList({
                           return (
                             <li key={col.key} className="flex items-center gap-2">
                               <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {shortModel(col.model)}
+                                {modelLabel(col.model, col.effort)}
                               </span>
                               {col.status === "error" ? (
                                 <span className="flex-1 font-sans text-[11px] text-[#b91c1c] dark:text-[#f87171]">
@@ -256,7 +233,7 @@ export function CompareCardList({
                           return (
                             <li key={col.key} className="flex items-center gap-2">
                               <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {shortModel(col.model)}
+                                {modelLabel(col.model, col.effort)}
                               </span>
                               <span className="flex-1 font-sans text-[11px] text-[#b91c1c] dark:text-[#f87171]">
                                 Agent failed{cell?.error ? ` · ${cell.error}` : ""}
@@ -278,7 +255,7 @@ export function CompareCardList({
                         return (
                           <li key={col.key} className="flex items-start gap-2">
                             <span title={col.model} className="w-20 shrink-0 truncate pt-0.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                              {shortModel(col.model)}
+                              {modelLabel(col.model, col.effort)}
                             </span>
                             <button
                               type="button"
@@ -298,7 +275,7 @@ export function CompareCardList({
                               )}
                               {detail === "evidence" && !notFound && evidenceText.trim() !== "" && (
                                 <span
-                                  className="line-clamp-3 break-words font-sans text-[11px] italic text-[#4a5058] dark:text-[#C3C2B7]"
+                                  className="break-words font-sans text-[11px] italic text-[#4a5058] dark:text-[#C3C2B7]"
                                   title={evidenceText}
                                 >
                                   “{evidenceText}”

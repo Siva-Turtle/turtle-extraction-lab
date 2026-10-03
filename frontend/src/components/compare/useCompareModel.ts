@@ -1,29 +1,26 @@
 import * as React from "react";
 import { toast } from "sonner";
-import { buildRows, columnStats, groupAgreementPct, linkedTargets } from "../../lib/compare";
+import { buildRows, columnStats, linkedTargets } from "../../lib/compare";
 import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { useFeedback } from "../../lib/useFeedback";
 import type { FeedbackRateItem } from "../../lib/useFeedback";
-import type { CompareDetail, CompareFilter } from "./CompareToolbar";
+import type { CompareDetail } from "./CompareToolbar";
 
 const PREFS_KEY = "lab:compare-prefs";
 
-type Prefs = { merge: boolean; link: boolean };
-
-function loadPrefs(): Prefs {
+function loadDetail(): CompareDetail {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { merge: true, link: true };
+    if (!raw) return "value";
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return { merge: true, link: true };
+    if (!parsed || typeof parsed !== "object") return "value";
     const rec = parsed as Record<string, unknown>;
-    return {
-      merge: rec.merge !== false,
-      link: rec.link !== false,
-    };
+    const d = rec.detail;
+    if (d === "confidence" || d === "evidence" || d === "value") return d;
+    return "value";
   } catch {
-    return { merge: true, link: true };
+    return "value";
   }
 }
 
@@ -72,9 +69,10 @@ export type CellIdentity = {
 };
 
 /**
- * Shared row/filter/feedback model for ComparisonMatrix and CompareCardList.
- * Row building, toolbar state, per-column stats and linked-rating logic live
- * here so the two views cannot drift apart.
+ * Shared row/feedback model for ComparisonMatrix and CompareCardList.
+ * Merge is always OFF (every model gets its own cell); link identical is
+ * always ON with Undo toast. Only the detail mode is persisted (stored merge
+ * values in `lab:compare-prefs` are ignored).
  */
 export function useCompareModel(
   columns: CompareColumn[],
@@ -83,16 +81,10 @@ export function useCompareModel(
   rows: CompareRow[];
   visibleRows: CompareRow[];
   rowsByAgent: Map<string, CompareRow[]>;
-  prefs: Prefs;
-  setPrefs: React.Dispatch<React.SetStateAction<Prefs>>;
-  filter: CompareFilter;
-  setFilter: React.Dispatch<React.SetStateAction<CompareFilter>>;
   detail: CompareDetail;
   setDetail: React.Dispatch<React.SetStateAction<CompareDetail>>;
   collapsed: Set<string>;
   toggleAgent: (agentId: string) => void;
-  counts: { all: number; disagreements: number; unrated: number; ratedDown: number };
-  overall: { up: number; down: number; agreePct: number };
   perCol: Map<string, { agreePct: number; up: number; down: number; rated: number; total: number }>;
   cheapestKey: string;
   fastestKey: string;
@@ -104,22 +96,19 @@ export function useCompareModel(
   cellIdentity: (row: CompareRow, colKey: string) => CellIdentity | null;
   attrDescription: (row: CompareRow) => string;
   handleCellRate: (row: CompareRow, colKey: string, next: "up" | "down" | null) => void;
-  handleMergedRate: (row: CompareRow, next: "up" | "down" | null) => void;
   saveRemarksFor: (row: CompareRow, colKey: string, text: string) => Promise<void>;
 } {
   const feedback = useFeedback();
-  const [prefs, setPrefs] = React.useState<Prefs>(loadPrefs);
-  const [filter, setFilter] = React.useState<CompareFilter>("all");
-  const [detail, setDetail] = React.useState<CompareDetail>("value");
+  const [detail, setDetail] = React.useState<CompareDetail>(loadDetail);
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ detail }));
     } catch {
       // ignore persistence failures (private mode, quota)
     }
-  }, [prefs]);
+  }, [detail]);
 
   const rows = React.useMemo(() => buildRows(agents, columns), [agents, columns]);
 
@@ -218,53 +207,6 @@ export function useCompareModel(
     return map;
   }, [rows, columns, effectiveRating]);
 
-  const overall = React.useMemo(() => {
-    let up = 0;
-    let down = 0;
-    for (const col of columns) {
-      up += perCol.get(col.key)?.up ?? 0;
-      down += perCol.get(col.key)?.down ?? 0;
-    }
-    return { up, down, agreePct: groupAgreementPct(rows) };
-  }, [columns, perCol, rows]);
-
-  const counts = React.useMemo(() => {
-    let disagreements = 0;
-    let unrated = 0;
-    let ratedDown = 0;
-    for (const r of rows) {
-      if (r.state === "majority" || r.state === "split") disagreements += 1;
-      const keys = comparedKeys(r);
-      if (keys.length === 0) continue;
-      let anyRated = false;
-      let anyDown = false;
-      for (const k of keys) {
-        const rating = effectiveRating(r, k);
-        if (rating === "up" || rating === "down") anyRated = true;
-        if (rating === "down") anyDown = true;
-      }
-      if (!anyRated) unrated += 1;
-      if (anyDown) ratedDown += 1;
-    }
-    return { all: rows.length, disagreements, unrated, ratedDown };
-  }, [rows, effectiveRating]);
-
-  const visibleRows = React.useMemo(() => {
-    if (filter === "all") return rows;
-    return rows.filter((r) => {
-      if (filter === "disagreements") return r.state === "majority" || r.state === "split";
-      const keys = comparedKeys(r);
-      if (filter === "unrated") {
-        if (keys.length === 0) return false;
-        return keys.every((k) => effectiveRating(r, k) === null);
-      }
-      if (filter === "rated-down") {
-        return keys.some((k) => effectiveRating(r, k) === "down");
-      }
-      return true;
-    });
-  }, [rows, filter, effectiveRating]);
-
   const { cheapestKey, fastestKey } = React.useMemo(() => {
     const finished = columns.filter(
       (c) => c.log && (c.status === "done" || c.status === "partial"),
@@ -350,22 +292,11 @@ export function useCompareModel(
   const handleCellRate = React.useCallback(
     (row: CompareRow, colKey: string, next: "up" | "down" | null): void => {
       const rating: "up" | "down" | "" = next ?? "";
-      const keys = prefs.link ? [colKey, ...linkedTargets(rows, row, colKey)] : [colKey];
+      // Link identical is always ON.
+      const keys = [colKey, ...linkedTargets(rows, row, colKey)];
       void rateWithUndo(row, keys, rating);
     },
-    [prefs.link, rateWithUndo, rows],
-  );
-
-  const handleMergedRate = React.useCallback(
-    (row: CompareRow, next: "up" | "down" | null): void => {
-      const rating: "up" | "down" | "" = next ?? "";
-      void rateWithUndo(
-        row,
-        columns.map((c) => c.key),
-        rating,
-      );
-    },
-    [columns, rateWithUndo],
+    [rateWithUndo, rows],
   );
 
   const saveRemarksFor = React.useCallback(
@@ -386,6 +317,8 @@ export function useCompareModel(
     });
   }
 
+  const visibleRows = rows;
+
   const rowsByAgent = React.useMemo(() => {
     const map = new Map<string, CompareRow[]>();
     for (const a of agents) map.set(a.id, []);
@@ -404,16 +337,10 @@ export function useCompareModel(
     rows,
     visibleRows,
     rowsByAgent,
-    prefs,
-    setPrefs,
-    filter,
-    setFilter,
     detail,
     setDetail,
     collapsed,
     toggleAgent,
-    counts,
-    overall,
     perCol,
     cheapestKey,
     fastestKey,
@@ -425,7 +352,6 @@ export function useCompareModel(
     cellIdentity,
     attrDescription,
     handleCellRate,
-    handleMergedRate,
     saveRemarksFor,
   };
 }

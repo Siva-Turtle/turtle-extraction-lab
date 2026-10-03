@@ -1,12 +1,11 @@
 import * as React from "react";
-import { formatValue, shortModel } from "../../lib/format";
+import { formatValue, modelLabel } from "../../lib/format";
 import { canonicalKey } from "../../lib/compare";
 import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { Drawer } from "../ui/Drawer";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import { RemarksPopover } from "../ui/RemarksPopover";
-import { Badge } from "../ui/Badge";
 import type { CompareModel } from "./useCompareModel";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -170,9 +169,8 @@ export function AttributeCompareDrawer({
                   title={col.model}
                   className="max-w-48 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                 >
-                  {shortModel(col.model)}
+                  {modelLabel(col.model, col.effort)}
                 </span>
-                <Badge tone="neutral">{col.effort || "default"}</Badge>
               </div>
               <div className="mt-2">
                 <FullValue value={cell.value} consensus={consensus} />
@@ -209,7 +207,7 @@ export function AttributeCompareDrawer({
                       onClick={() => setRemarksFor((cur) => (cur === col.key ? null : col.key))}
                       disabled={!canRemark}
                       title={canRemark ? "Edit remarks" : "Rate first"}
-                      aria-label={`Remarks for ${shortModel(col.model)} / ${row.attr}`}
+                      aria-label={`Remarks for ${modelLabel(col.model, col.effort)} / ${row.attr}`}
                       aria-pressed={remarksFor === col.key}
                       className="flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] text-xs text-[#4a5058] transition-colors hover:border-[#1d1d1d] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-[#C3C2B7]"
                     >

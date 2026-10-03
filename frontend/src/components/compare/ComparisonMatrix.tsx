@@ -43,38 +43,32 @@ export function ComparisonMatrix({
   agents,
   editable,
   onRetry,
+  showDoneBadge = true,
 }: {
   columns: CompareColumn[];
   agents: CompareAgent[];
   editable: boolean;
   onRetry?: (key: string) => void;
   focusColumnKey?: string;
+  showDoneBadge?: boolean;
 }): React.JSX.Element {
   const narrow = useIsNarrow();
   const model = useCompareModel(columns, agents);
   const {
     visibleRows,
     rowsByAgent,
-    prefs,
-    setPrefs,
-    filter,
-    setFilter,
     detail,
     setDetail,
     collapsed,
     toggleAgent,
-    counts,
-    overall,
     perCol,
     cheapestKey,
     fastestKey,
-    allFinished,
     effectiveRating,
     hasRemarks,
     getRemarksText,
     attrDescription,
     handleCellRate,
-    handleMergedRate,
     saveRemarksFor,
   } = model;
 
@@ -85,28 +79,22 @@ export function ComparisonMatrix({
   const [gridActive, setGridActive] = React.useState(false);
   const gridRef = React.useRef<HTMLTableElement>(null);
 
-  // Flat grid order (render order): agent sections in `agents` order, rows in
-  // filter order; merged unanimous rows count as one cell.
+  // Flat grid order (render order): agent sections in `agents` order.
+  // Merge identical is always OFF: every model gets its own cell.
   const gridRows = React.useMemo((): { row: CompareRow; cells: FocusCell[] }[] => {
     const out: { row: CompareRow; cells: FocusCell[] }[] = [];
     for (const agent of agents) {
       const list = rowsByAgent.get(agent.id) ?? [];
       if (list.length === 0) continue;
       for (const row of list) {
-        const merged =
-          prefs.merge && row.state === "unanimous" && allFinished && columns.length > 1;
-        if (merged) {
-          out.push({ row, cells: [{ row, colKey: columns[0]?.key ?? "", merged: true, key: cellKeyFor(row, "", true) }] });
-        } else {
-          out.push({
-            row,
-            cells: columns.map((c) => ({ row, colKey: c.key, merged: false, key: cellKeyFor(row, c.key, false) })),
-          });
-        }
+        out.push({
+          row,
+          cells: columns.map((c) => ({ row, colKey: c.key, merged: false, key: cellKeyFor(row, c.key, false) })),
+        });
       }
     }
     return out;
-  }, [agents, rowsByAgent, prefs.merge, allFinished, columns]);
+  }, [agents, rowsByAgent, columns]);
 
   const firstKey = gridRows[0]?.cells[0]?.key ?? null;
   const activeKey = focusKey ?? firstKey;
@@ -185,13 +173,6 @@ export function ComparisonMatrix({
     return true;
   }
 
-  function mergedRatingOf(row: CompareRow): "up" | "down" | null {
-    const ratings = columns.map((c) => effectiveRating(row, c.key));
-    if (ratings.length > 0 && ratings.every((r) => r === "up")) return "up";
-    if (ratings.length > 0 && ratings.every((r) => r === "down")) return "down";
-    return null;
-  }
-
   function jumpNextUnrated(fromKey: string | null): void {
     // Search order: disagreement rows first, then the rest; within a row,
     // columns left to right. Start after the current cell, wrap around.
@@ -201,10 +182,7 @@ export function ComparisonMatrix({
     for (const gr of gridRows) {
       const isDis = gr.row.state === "majority" || gr.row.state === "split";
       for (const cell of gr.cells) {
-        if (cell.merged) {
-          const unrated = mergedRatingOf(cell.row) === null;
-          if (unrated) (isDis ? disagreements : rest).push(cell);
-        } else if (rateableCell(cell.row, cell.colKey) && effectiveRating(cell.row, cell.colKey) === null) {
+        if (rateableCell(cell.row, cell.colKey) && effectiveRating(cell.row, cell.colKey) === null) {
           (isDis ? disagreements : rest).push(cell);
         }
       }
@@ -253,8 +231,7 @@ export function ComparisonMatrix({
       if (!editable) return;
       e.preventDefault();
       const next = key === "u" || key === "U" ? "up" : "down";
-      if (cell.merged) handleMergedRate(cell.row, next);
-      else if (rateableCell(cell.row, cell.colKey)) handleCellRate(cell.row, cell.colKey, next);
+      if (rateableCell(cell.row, cell.colKey)) handleCellRate(cell.row, cell.colKey, next);
       else return;
       moveFrom(cell.key, 1, 0);
       return;
@@ -262,14 +239,13 @@ export function ComparisonMatrix({
     if (key === "x" || key === "X" || key === "0") {
       if (!editable) return;
       e.preventDefault();
-      if (cell.merged) handleMergedRate(cell.row, null);
-      else if (rateableCell(cell.row, cell.colKey)) handleCellRate(cell.row, cell.colKey, null);
+      if (rateableCell(cell.row, cell.colKey)) handleCellRate(cell.row, cell.colKey, null);
       return;
     }
     if (key === "r" || key === "R") {
       if (!editable) return;
       e.preventDefault();
-      const rating = cell.merged ? mergedRatingOf(cell.row) : effectiveRating(cell.row, cell.colKey);
+      const rating = effectiveRating(cell.row, cell.colKey);
       if (rating === null) return;
       setRemarksFor(cell.key);
       return;
@@ -289,25 +265,15 @@ export function ComparisonMatrix({
 
   if (narrow) {
     return (
-      <CompareCardList columns={columns} agents={agents} editable={editable} onRetry={onRetry} />
+      <CompareCardList columns={columns} agents={agents} editable={editable} onRetry={onRetry} showDoneBadge={showDoneBadge} />
     );
   }
 
   return (
     <div className="grid gap-3">
       <CompareToolbar
-        filter={filter}
-        onFilter={setFilter}
-        merge={prefs.merge}
-        onMerge={(v) => setPrefs((p) => ({ ...p, merge: v }))}
-        link={prefs.link}
-        onLink={(v) => setPrefs((p) => ({ ...p, link: v }))}
         detail={detail}
         onDetail={setDetail}
-        counts={counts}
-        up={overall.up}
-        down={overall.down}
-        agreePct={overall.agreePct}
         onShortcuts={() => setShortcutsOpen(true)}
       />
       <div
@@ -340,6 +306,7 @@ export function ComparisonMatrix({
                     isCheapest={col.key === cheapestKey}
                     isFastest={col.key === fastestKey}
                     onRetry={(k) => onRetry?.(k)}
+                    showDoneBadge={showDoneBadge}
                   />
                 );
               })}
@@ -378,90 +345,6 @@ export function ComparisonMatrix({
                     agentRows.map((row) => {
                       const attrDesc = attrDescription(row);
                       const mark = agreementMark(row);
-                      const merged =
-                        prefs.merge && row.state === "unanimous" && allFinished && columns.length > 1;
-                      if (merged) {
-                        const firstKey = columns[0]?.key ?? "";
-                        const firstCell = firstKey ? row.cells[firstKey] : undefined;
-                        const mergedRating = mergedRatingOf(row);
-                        const anyRemarks = columns.some((c) => hasRemarks(row, c.key));
-                        const tdClass = cellClassFor({
-                          rated: mergedRating,
-                          disagreesWithMajority: false,
-                          isSplit: false,
-                          notFound: false,
-                        });
-                        const ck = cellKeyFor(row, "", true);
-                        const focused = gridActive && activeKey === ck;
-                        const remarksTarget = columns[0]?.key ?? "";
-                        return (
-                          <tr key={`${row.agentId}|${row.attr}`} className="border-b border-[#e5e7eb] last:border-0 dark:border-white/10">
-                            <td className="sticky left-0 z-10 min-w-[180px] max-w-[240px] border-r border-[#e5e7eb] bg-white p-3 align-top dark:border-white/10 dark:bg-[#1a1a1a]">
-                              <span className="flex items-start gap-1.5">
-                                <span
-                                  className="max-w-full flex-1 break-words font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
-                                  title={attrDesc || undefined}
-                                >
-                                  {row.attr}
-                                </span>
-                                <span
-                                  aria-hidden="true"
-                                  className="shrink-0 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
-                                >
-                                  {mark}
-                                </span>
-                              </span>
-                            </td>
-                            <td
-                              colSpan={columns.length}
-                              data-cell-key={ck}
-                              tabIndex={activeKey === ck ? 0 : -1}
-                              onFocus={() => setFocusKey(ck)}
-                              onKeyDown={(e) =>
-                                onCellKeyDown(e, { row, colKey: remarksTarget, merged: true, key: ck })
-                              }
-                              className={cn(
-                                "relative min-w-[220px] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand",
-                                tdClass,
-                                focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
-                              )}
-                            >
-                              {firstCell && (
-                                <CompareCell
-                                  value={firstCell.value}
-                                  confidence={firstCell.confidence}
-                                  confidenceType={firstCell.confidenceType}
-                                  evidence={firstCell.evidence}
-                                  detail={detail}
-                                  rating={mergedRating}
-                                  onRate={(n) => handleMergedRate(row, n)}
-                                  editable={editable}
-                                  hasRemarks={anyRemarks}
-                                  notAccepted={false}
-                                  notFound={false}
-                                  onValueClick={() => setDrawerRow(row)}
-                                  onRemarksClick={() =>
-                                    setRemarksFor((cur) => (cur === ck ? null : ck))
-                                  }
-                                  remarksOpen={remarksFor === ck}
-                                  canRemark={mergedRating !== null}
-                                />
-                              )}
-                              {remarksFor === ck && remarksTarget && (
-                                <RemarksPopover
-                                  value={getRemarksText(row, remarksTarget)}
-                                  onClose={() => setRemarksFor(null)}
-                                  onSave={(text) => {
-                                    void saveRemarksFor(row, remarksTarget, text)
-                                      .then(() => setRemarksFor(null))
-                                      .catch(() => undefined);
-                                  }}
-                                />
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      }
                       return (
                         <tr
                           key={`${row.agentId}|${row.attr}`}
