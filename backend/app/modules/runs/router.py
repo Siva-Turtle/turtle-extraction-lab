@@ -10,7 +10,8 @@ from app.db.session import get_db
 from app.modules.logs.router import _out
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import (
-    BatchFeedbackIn, FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut,
+    BatchFeedbackIn, CheckExistingIn, CheckExistingOut,
+    FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut,
 )
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -341,40 +342,58 @@ def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
             "required": required, "additionalProperties": False}
 
 
-@router.post("")
-async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
-    meeting_id = (payload.meeting_id or "").strip()
-    effort = (payload.reasoning_effort or "").strip()
+def _resolve_run_input(
+    *, meeting_id: str, input_type: str, input_data: str, reasoning_effort: str,
+) -> tuple[str, str, str, str]:
+    """Validate effort + resolve input exactly like create_run.
+
+    Returns (input_type, input_data, effort, task_title). Raises the same
+    HTTPException create_run would (422 for bad effort/blank input/bad
+    type, 404/503 from get_scrubbed_transcript). No OpenRouter, no writes.
+    """
+    effort = (reasoning_effort or "").strip()
     if effort and effort not in REASONING_EFFORTS:
         raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+    mid = (meeting_id or "").strip()
     task_title = ""
-    if meeting_id:
+    if mid:
         # meeting_id wins: server re-fetches the transcript and scrubs it —
         # client-sent input_data/input_type are ignored entirely.
-        _task, scrubbed = get_scrubbed_transcript(meeting_id)  # 404/503 propagate
-        input_type, input_data = "transcription", scrubbed
+        _task, scrubbed = get_scrubbed_transcript(mid)  # 404/503 propagate
+        resolved_type, resolved_data = "transcription", scrubbed
         try:
             task_title = str((_task.get("title") or "")).strip()
         except Exception:
             task_title = ""
     else:
-        if not (payload.input_data or "").strip():
+        if not (input_data or "").strip():
             raise HTTPException(422, "input_data must be non-blank or provide meeting_id")
-        if payload.input_type not in ("transcription", "messages", "mail"):
+        if input_type not in ("transcription", "messages", "mail"):
             raise HTTPException(422, "input_type must be transcription|messages|mail")
-        input_type, input_data = payload.input_type, payload.input_data
-    filters = payload.filters if isinstance(payload.filters, dict) else {}
-    agents = db.query(Agent).filter(Agent.id.in_(payload.agent_ids)).all() if payload.agent_ids else []
-    if payload.agent_ids and not agents:
+        resolved_type, resolved_data = input_type, input_data
+    return resolved_type, resolved_data, effort, task_title
+
+
+def _load_run_agents(db: Session, agent_ids: list[str]) -> list[Agent]:
+    """Load agents exactly like create_run (404 when ids match nothing)."""
+    agents = db.query(Agent).filter(Agent.id.in_(agent_ids)).all() if agent_ids else []
+    if agent_ids and not agents:
         raise HTTPException(404, "no matching agents")
-    wall_start = perf_counter()
-    outputs: dict = {}
+    return agents
+
+
+def _build_agent_requests(
+    db: Session, *, agents: list[Agent], input_data: str,
+    model: str, reasoning_effort: str,
+) -> tuple[dict, dict]:
+    """Build (snapshots, requests) exactly like create_run's loop prelude.
+
+    Pure DB reads + prompt building. No OpenRouter call, no writes.
+    requests[agent.id] is the exact payload_body create_run would POST.
+    """
+    effort = (reasoning_effort or "").strip()
     snapshots: dict = {}
-    per_agent: dict = {}
     requests: dict = {}
-    total_in = 0
-    total_out = 0
-    total_in_reasoning = 0
     for agent in agents:
         attrs = _attrs_for_agent(db, agent.id)
         snapshots[agent.id] = {
@@ -387,11 +406,6 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                             "object_properties": _snapshot_props(a),
                             "array_items": _snapshot_array_items(a)} for a in attrs],
         }
-        agent_start = perf_counter()
-        prompt_tokens = 0
-        completion_tokens = 0
-        total_tokens = 0
-        reasoning_tokens = 0
         user_content = input_data
         if is_identifier(agent):
             # Router path: candidate roster (name + description + examples),
@@ -400,16 +414,108 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             system_content = _identifier_system_content(agent, candidates)
             schema: dict | None = build_identifier_schema()
             payload_body = build_chat_payload(
-                model=payload.model, system=system_content, user=user_content,
+                model=model, system=system_content, user=user_content,
                 json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
                 reasoning_effort=effort)
         else:
             system_content = _agent_system_content(agent, attrs)
             schema = build_extraction_schema(attrs)
             payload_body = build_chat_payload(
-                model=payload.model, system=system_content, user=user_content, json_schema=schema,
+                model=model, system=system_content, user=user_content, json_schema=schema,
                 reasoning_effort=effort)
         requests[agent.id] = copy.deepcopy(payload_body)
+    return snapshots, requests
+
+
+def _plan_run(
+    db: Session, *, meeting_id: str, input_type: str, input_data: str,
+    agent_ids: list[str], model: str, reasoning_effort: str,
+) -> tuple[str, str, str, str, list[Agent], dict, dict]:
+    """Resolve input + agents + per-agent request bodies without side effects.
+
+    Returns (input_type, input_data, effort, task_title, agents,
+    snapshots, requests). Raises the same HTTPException create_run would.
+    """
+    resolved_type, resolved_data, effort, task_title = _resolve_run_input(
+        meeting_id=meeting_id, input_type=input_type,
+        input_data=input_data, reasoning_effort=reasoning_effort)
+    agents = _load_run_agents(db, agent_ids)
+    snapshots, requests = _build_agent_requests(
+        db, agents=agents, input_data=resolved_data,
+        model=model, reasoning_effort=effort)
+    return resolved_type, resolved_data, effort, task_title, agents, snapshots, requests
+
+
+def _find_existing_log(
+    db: Session, *, model: str, reasoning_effort: str, expected_requests: dict,
+) -> RunLog | None:
+    """Newest RunLog with this model/effort whose requests messages match.
+
+    - SQL filter on model + reasoning_effort, newest first, limit 200.
+    - set(log.requests keys) must equal set(expected agent ids).
+    - every agent's stored messages must equal the would-be-sent messages.
+    - not every output may carry _error (at least one success required).
+    """
+    effort = (reasoning_effort or "").strip()
+    rows = (
+        db.query(RunLog)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .order_by(RunLog.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    expected_ids = set(expected_requests.keys())
+    for log in rows:
+        stored_reqs = log.requests or {}
+        if not isinstance(stored_reqs, dict):
+            continue
+        if set(stored_reqs.keys()) != expected_ids:
+            continue
+        same = True
+        for aid, expected_body in expected_requests.items():
+            stored_body = stored_reqs.get(aid)
+            if not isinstance(stored_body, dict) or not isinstance(expected_body, dict):
+                same = False
+                break
+            if stored_body.get("messages") != expected_body.get("messages"):
+                same = False
+                break
+        if not same:
+            continue
+        outs = log.outputs or {}
+        if not isinstance(outs, dict) or not outs:
+            continue
+        all_errored = True
+        for v in outs.values():
+            if not isinstance(v, dict) or "_error" not in v:
+                all_errored = False
+                break
+        if all_errored:
+            continue
+        return log
+    return None
+
+
+@router.post("")
+async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
+    input_type, input_data, effort, task_title, agents, snapshots, requests = _plan_run(
+        db, meeting_id=payload.meeting_id, input_type=payload.input_type,
+        input_data=payload.input_data, agent_ids=payload.agent_ids,
+        model=payload.model, reasoning_effort=payload.reasoning_effort)
+    filters = payload.filters if isinstance(payload.filters, dict) else {}
+    wall_start = perf_counter()
+    outputs: dict = {}
+    per_agent: dict = {}
+    total_in = 0
+    total_out = 0
+    total_in_reasoning = 0
+    for agent in agents:
+        agent_start = perf_counter()
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        reasoning_tokens = 0
+        payload_body = copy.deepcopy(requests[agent.id])
         try:
             parsed, usage = await complete_json_payload(payload_body)
             outputs[agent.id] = parsed
@@ -564,6 +670,36 @@ def _cell_is_rated(fb: dict, agent_name: str, attribute_name: str) -> bool:
     cell = _cell_existing(fb, agent_name or "agent", attribute_name or "attribute")
     rating = cell.get("rating", "")
     return isinstance(rating, str) and bool(rating.strip())
+
+
+@router.post("/check-existing", response_model=CheckExistingOut)
+def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
+    # Resolve the input once (same errors as create_run: 422/404/503).
+    # Efforts are already validated by CheckModelSlot; use the first slot's
+    # effort for input resolution (resolution is effort-independent).
+    first_effort = (payload.models[0].reasoning_effort or "").strip()
+    resolved_type, resolved_data, _, _ = _resolve_run_input(
+        meeting_id=payload.meeting_id, input_type=payload.input_type,
+        input_data=payload.input_data, reasoning_effort=first_effort)
+    agents = _load_run_agents(db, payload.agent_ids)
+    matches: list[dict] = []
+    for slot in payload.models:
+        model = slot.model
+        if not isinstance(model, str) or not model.strip():
+            raise HTTPException(422, "model must be non-blank")
+        effort = (slot.reasoning_effort or "").strip()
+        if effort and effort not in REASONING_EFFORTS:
+            raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        _, expected_requests = _build_agent_requests(
+            db, agents=agents, input_data=resolved_data,
+            model=model, reasoning_effort=effort)
+        log = _find_existing_log(
+            db, model=model, reasoning_effort=effort,
+            expected_requests=expected_requests)
+        if log is not None:
+            matches.append({"model": model, "reasoning_effort": effort,
+                            "log": _out(log)})
+    return {"matches": matches}
 
 
 @router.post("/feedback-batch")

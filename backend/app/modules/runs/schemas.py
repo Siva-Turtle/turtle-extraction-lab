@@ -60,6 +60,47 @@ class RunCreate(BaseModel):
         return s
 
 
+class CheckModelSlot(BaseModel):
+    model: str
+    reasoning_effort: str = ""
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _coerce_reasoning_effort(cls, v):
+        s = v.strip() if isinstance(v, str) else ""
+        if s and s not in REASONING_EFFORTS:
+            raise ValueError(
+                "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        return s
+
+
+class CheckExistingIn(BaseModel):
+    input_type: str = ""
+    input_data: str = ""
+    meeting_id: str = ""
+    agent_ids: list[str] = Field(default_factory=list)
+    filters: dict = Field(default_factory=dict)
+    client: str = ""
+    meeting_type: str = ""
+    meeting_title: str = ""
+    models: list[CheckModelSlot] = Field(min_length=1, max_length=4)
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def _coerce_filters(cls, v):
+        return v if isinstance(v, dict) else {}
+
+
+class CheckExistingMatch(BaseModel):
+    model: str
+    reasoning_effort: str = ""
+    log: dict = Field(default_factory=dict)
+
+
+class CheckExistingOut(BaseModel):
+    matches: list[CheckExistingMatch] = Field(default_factory=list)
+
+
 class RunOut(BaseModel):
     id: str
     input_type: str
