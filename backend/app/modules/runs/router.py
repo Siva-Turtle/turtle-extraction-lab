@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.modules.logs.router import _out
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import (
-    BatchFeedbackIn, CheckExistingIn, CheckExistingOut,
+    BatchFeedbackIn, CheckExistingAutoOut, CheckExistingIn, CheckExistingOut,
     FeedbackCreate, FeedbackOut, RetryAgentIn, ReuseRunIn, RunCreate, RunDetail, RunOut,
 )
 
@@ -433,7 +433,7 @@ def compute_consistency(identifier_output, outputs, agents_by_id, attrs_by_agent
         1.0 if total_union == 0 else total_inter / total_union)
     if not agents_out:
         overall = None
-    return {"score": overall, "identifier_agent_id": identifier_agent_id, "agents": agents_out}
+    return {"auto": True, "score": overall, "identifier_agent_id": identifier_agent_id, "agents": agents_out}
 
 
 def apply_auto_feedback(feedback, consistency) -> dict:
@@ -1656,6 +1656,24 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
             _reuse_cons = {}
     except Exception:
         _reuse_cons = {}
+    # Auto logs carry auto feedback forward (manual ratings are not copied);
+    # non-auto logs start empty (unchanged behaviour).
+    try:
+        _reuse_fb: dict = {}
+        if isinstance(_reuse_cons, dict) and _reuse_cons.get("auto") is True:
+            _src_fb = getattr(source, "feedback", None) or {}
+            if isinstance(_src_fb, dict):
+                for _ag_name, _attr_map in _src_fb.items():
+                    if not isinstance(_attr_map, dict):
+                        continue
+                    _kept: dict = {}
+                    for _at_name, _cell in _attr_map.items():
+                        if isinstance(_cell, dict) and _cell.get("auto") is True:
+                            _kept[_at_name] = copy.deepcopy(_cell)
+                    if _kept:
+                        _reuse_fb[_ag_name] = _kept
+    except Exception:
+        _reuse_fb = {}
     try:
         agent_ids = list(agent_snapshot.keys()) if isinstance(agent_snapshot, dict) else []
     except Exception:
@@ -1673,7 +1691,7 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
         agent_snapshot=agent_snapshot,
         attribute_snapshot=attribute_snapshot,
         outputs=outputs,
-        feedback={},
+        feedback=_reuse_fb,
         usage=usage,
         filters=filters,
         requests=requests,
@@ -1737,6 +1755,104 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
             })
         slots.append({"model": model, "reasoning_effort": effort,
                       "agents": slot_agents})
+    return {"slots": slots}
+
+
+def _find_existing_auto_log(
+    db: Session, *, model: str, reasoning_effort: str,
+    identifier_id: str, expected_messages,
+) -> RunLog | None:
+    """Newest auto RunLog (same model+effort) matching the identifier request.
+
+    - SQL filter on model + reasoning_effort, newest first, limit 300.
+    - ``consistency`` must be a dict with ``auto is True``.
+    - ``requests[identifier_id]["messages"]`` must equal the would-be-sent
+      identifier messages (other agents in the log do not matter).
+    - ``outputs[identifier_id]`` must exist, be a dict, and have no "_error".
+    """
+    effort = (reasoning_effort or "").strip()
+    rows = (
+        db.query(RunLog)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .order_by(RunLog.created_at.desc())
+        .limit(300)
+        .all()
+    )
+    for log in rows:
+        try:
+            cons = getattr(log, "consistency", None)
+        except Exception:
+            cons = None
+        if not isinstance(cons, dict) or cons.get("auto") is not True:
+            continue
+        iid = cons.get("identifier_agent_id")
+        if not isinstance(iid, str) or not iid:
+            iid = identifier_id
+        stored_reqs = getattr(log, "requests", None) or {}
+        if not isinstance(stored_reqs, dict):
+            continue
+        stored_body = stored_reqs.get(iid)
+        if not isinstance(stored_body, dict):
+            # Fall back to the current identifier id (identifier recreation).
+            if iid != identifier_id:
+                stored_body = stored_reqs.get(identifier_id)
+            if not isinstance(stored_body, dict):
+                continue
+        if stored_body.get("messages") != expected_messages:
+            continue
+        outs = getattr(log, "outputs", None) or {}
+        if not isinstance(outs, dict):
+            continue
+        out = outs.get(iid)
+        if not isinstance(out, dict):
+            if iid != identifier_id:
+                out = outs.get(identifier_id)
+            if not isinstance(out, dict):
+                continue
+        if "_error" in out:
+            continue
+        return log
+    return None
+
+
+@router.post("/check-existing-auto", response_model=CheckExistingAutoOut)
+def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db)):
+    """Auto-run variant of check-existing (agent_ids ignored).
+
+    For each model slot (same order): find the newest auto RunLog with the
+    same model + reasoning_effort whose identifier request messages equal
+    the identifier request /runs/auto would send now, and whose identifier
+    output has no "_error".
+    """
+    first_effort = (payload.models[0].reasoning_effort or "").strip()
+    _, resolved_data, _, _ = _resolve_run_input(
+        meeting_id=payload.meeting_id, input_type=payload.input_type,
+        input_data=payload.input_data, reasoning_effort=first_effort)
+    identifier = (
+        db.query(Agent).filter(Agent.kind == IDENTIFIER_KIND)
+        .order_by(Agent.name.asc()).first()
+    )
+    if identifier is None:
+        raise HTTPException(400, "No agent identifier defined")
+    ident_id = identifier.id
+    slots: list[dict] = []
+    for slot in payload.models:
+        model = slot.model
+        if not isinstance(model, str) or not model.strip():
+            raise HTTPException(422, "model must be non-blank")
+        effort = (slot.reasoning_effort or "").strip()
+        if effort and effort not in REASONING_EFFORTS:
+            raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        _, expected_requests = _build_agent_requests(
+            db, agents=[identifier], input_data=resolved_data,
+            model=model, reasoning_effort=effort)
+        exp_body = expected_requests.get(ident_id)
+        exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
+        log = _find_existing_auto_log(
+            db, model=model, reasoning_effort=effort,
+            identifier_id=ident_id, expected_messages=exp_msgs)
+        slots.append({"model": model, "reasoning_effort": effort,
+                      "log": _out(log) if log is not None else None})
     return {"slots": slots}
 
 
@@ -1813,7 +1929,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         requests = requests_ident
         agents = [identifier]
         agent_ids = [ident_id]
-        consistency = {"score": None, "identifier_agent_id": ident_id, "agents": {}}
+        consistency = {"auto": True, "score": None, "identifier_agent_id": ident_id, "agents": {}}
         feedback: dict = {}
     else:
         raw_selected = parsed_ident.get("selected_agents", []) if isinstance(parsed_ident, dict) else []

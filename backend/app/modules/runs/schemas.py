@@ -119,6 +119,16 @@ class CheckExistingOut(BaseModel):
     slots: list[CheckExistingSlot] = Field(default_factory=list)
 
 
+class CheckExistingAutoSlot(BaseModel):
+    model: str
+    reasoning_effort: str = ""
+    log: dict | None = None
+
+
+class CheckExistingAutoOut(BaseModel):
+    slots: list[CheckExistingAutoSlot] = Field(default_factory=list)
+
+
 class ReuseRunIn(BaseModel):
     log_id: str = ""
     run_group_id: str = ""
