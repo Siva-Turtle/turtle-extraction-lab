@@ -92,7 +92,7 @@ def test_complete_json_picks_up_reasoning_tokens(monkeypatch):
     _, usage = asyncio.run(openrouter.complete_json(model="m", system="s", user="u"))
     assert usage["reasoning_tokens"] == 17
     assert usage == {"prompt_tokens": 3, "completion_tokens": 9, "total_tokens": 12,
-                     "reasoning_tokens": 17}
+                     "reasoning_tokens": 17, "provider": ""}
 
 
 def _make_agent(client):

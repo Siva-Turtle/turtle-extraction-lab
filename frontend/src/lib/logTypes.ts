@@ -48,6 +48,8 @@ export type AgentUsage = {
   output_cost_usd?: number | null;
   duration_ms: number;
   model: string;
+  // Actually-served OpenRouter provider ("" when unknown / old rows).
+  provider?: string;
   reused_from_log_id?: string;
   reused_from_created_at?: string | null;
 };
@@ -55,6 +57,8 @@ export type AgentUsage = {
 export type RunUsage = AgentUsage & {
   per_agent: Record<string, AgentUsage>;
   reused_agents?: Record<string, { log_id: string; created_at: string }>;
+  // Requested provider ("" = Auto).
+  provider_requested?: string;
 };
 
 export type LogFilters = {
@@ -85,6 +89,8 @@ export type LogRow = {
   meeting_title?: string;
   // Denormalized snapshot ("" on old rows).
   reasoning_effort?: string;
+  // Requested OpenRouter provider ("" = Auto, "" on old rows).
+  provider?: string;
   created_at: string;
   // Multi-model compare: the backend always ships a string ("" on old rows).
   run_group_id: string;
@@ -94,7 +100,7 @@ export type LogRow = {
   reused_from_created_at?: string | null;
 };
 
-export type ModelSlot = { model: string; effort: string };
+export type ModelSlot = { model: string; effort: string; provider: string };
 
 export type ColumnStatus = "queued" | "running" | "done" | "partial" | "error";
 
@@ -102,6 +108,7 @@ export type CompareColumn = {
   key: string;
   model: string;
   effort: string;
+  provider: string;
   status: ColumnStatus;
   startedAt?: number;
   error?: string;

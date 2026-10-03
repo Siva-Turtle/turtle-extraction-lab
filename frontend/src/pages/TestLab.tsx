@@ -362,7 +362,15 @@ function loadSlots(): ModelSlot[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isSlotLike).map((s) => ({ model: s.model, effort: s.effort }));
+    return parsed
+      .filter(isSlotLike)
+      .map((s) => ({
+        model: s.model,
+        effort: s.effort,
+        provider: typeof (s as { provider?: unknown }).provider === "string"
+          ? ((s as { provider?: string }).provider as string)
+          : "",
+      }));
   } catch {
     return [];
   }
@@ -389,12 +397,14 @@ type CheckExistingAgent = {
 type CheckExistingSlot = {
   model?: unknown;
   reasoning_effort?: unknown;
+  provider?: unknown;
   agents?: unknown;
 };
 
 type CheckExistingAutoSlot = {
   model?: unknown;
   reasoning_effort?: unknown;
+  provider?: unknown;
   log?: unknown;
   agents?: unknown;
 };
@@ -474,7 +484,9 @@ function ColumnBlock({
   return (
     <div className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
       <div className="flex flex-wrap items-center gap-2">
-        <CardTitle title={column.model}>{modelLabel(column.model, column.effort)}</CardTitle>
+        <CardTitle title={column.model}>
+          {modelLabel(column.model, column.effort, column.provider ?? column.log?.provider ?? "")}
+        </CardTitle>
         <StatusBadge status={column.status} />
         {column.status === "running" && (
           <span className="inline-flex items-center gap-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
@@ -701,7 +713,11 @@ export default function TestLab() {
       api
         .post("/runs/check-existing-auto", {
           ...basePayload,
-          models: currentSlots.map((s) => ({ model: s.model, reasoning_effort: s.effort })),
+          models: currentSlots.map((s) => ({
+            model: s.model,
+            reasoning_effort: s.effort,
+            provider: s.provider ?? "",
+          })),
         })
         .then(
           (res) => {
@@ -715,7 +731,9 @@ export default function TestLab() {
               multi.start(currentSlots, basePayload, { auto: true });
               return;
             }
-            const validKeys = new Set(currentSlots.map((s) => `${s.model}|${s.effort}`));
+            const validKeys = new Set(
+              currentSlots.map((s) => `${s.model}|${s.effort}|${s.provider ?? ""}`),
+            );
             const logs: Record<string, LogRow> = {};
             const reuseLogs: Record<string, string> = {};
             const reuse: Record<string, Record<string, string>> = {};
@@ -725,7 +743,9 @@ export default function TestLab() {
               if (!entry || typeof entry.model !== "string") continue;
               const effort =
                 typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : "";
-              const k = `${entry.model}|${effort}`;
+              const prov =
+                typeof entry.provider === "string" ? entry.provider : "";
+              const k = `${entry.model}|${effort}|${prov}`;
               // Only keep entries for currently requested slots.
               if (!validKeys.has(k)) continue;
               if (!(k in logs)) {
@@ -771,7 +791,7 @@ export default function TestLab() {
             }
             // Whole auto run does not exist, but some always-run agents do.
             for (const s of currentSlots) {
-              const k = `${s.model}|${s.effort}`;
+              const k = `${s.model}|${s.effort}|${s.provider ?? ""}`;
               if (!(k in details)) details[k] = [];
             }
             if (anyReusableAgents) {
@@ -792,7 +812,11 @@ export default function TestLab() {
     api
       .post("/runs/check-existing", {
         ...basePayload,
-        models: currentSlots.map((s) => ({ model: s.model, reasoning_effort: s.effort })),
+        models: currentSlots.map((s) => ({
+          model: s.model,
+          reasoning_effort: s.effort,
+          provider: s.provider ?? "",
+        })),
       })
       .then(
         (res) => {
@@ -811,9 +835,11 @@ export default function TestLab() {
             if (!entry || typeof entry.model !== "string") continue;
             const effort =
               typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : "";
-            const k = `${entry.model}|${effort}`;
+            const prov =
+              typeof entry.provider === "string" ? entry.provider : "";
+            const k = `${entry.model}|${effort}|${prov}`;
             // Only keep entries for currently requested slots.
-            if (!currentSlots.some((s) => `${s.model}|${s.effort}` === k)) continue;
+            if (!currentSlots.some((s) => `${s.model}|${s.effort}|${s.provider ?? ""}` === k)) continue;
             const rawAgents = Array.isArray(entry.agents) ? entry.agents : [];
             const clean: ExistingAgent[] = [];
             for (const raw of rawAgents as CheckExistingAgent[]) {
@@ -843,7 +869,7 @@ export default function TestLab() {
           // Every requested slot gets a details entry so the modal can show
           // "will run fresh" for slots with no reusable output.
           for (const s of currentSlots) {
-            const k = `${s.model}|${s.effort}`;
+            const k = `${s.model}|${s.effort}|${s.provider ?? ""}`;
             if (!(k in details)) details[k] = [];
           }
           if (!anyReusable) {
@@ -951,7 +977,11 @@ export default function TestLab() {
     for (const s of slots) {
       const pricing =
         (modelsMeta?.models ?? []).find((m) => m.id === s.model)?.pricing ?? null;
-      out[`${s.model}|${s.effort}`] = estimateRunCost({ transcriptChars, agentPrompts, pricing });
+      out[`${s.model}|${s.effort}|${s.provider ?? ""}`] = estimateRunCost({
+        transcriptChars,
+        agentPrompts,
+        pricing,
+      });
     }
     return out;
   }, [transcriptChars, selected, slots, modelsMeta, previewPending, previewFailed, previewData]);
@@ -1136,7 +1166,7 @@ export default function TestLab() {
           <div className="grid gap-3">
             <ul className="grid gap-2">
               {pendingRun.slots.map((s) => {
-                const k = `${s.model}|${s.effort}`;
+                const k = `${s.model}|${s.effort}|${s.provider ?? ""}`;
                 const reusable = pendingRun.details[k] ?? [];
                 const freshIds = pendingRun.selectedIds.filter(
                   (id) => !reusable.some((r) => r.agent_id === id),
@@ -1154,7 +1184,7 @@ export default function TestLab() {
                         className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                         title={s.model}
                       >
-                        {modelLabel(s.model, s.effort)}
+                        {modelLabel(s.model, s.effort, s.provider ?? "")}
                       </span>
                       <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
                     </li>
@@ -1169,7 +1199,7 @@ export default function TestLab() {
                       className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                       title={s.model}
                     >
-                      {modelLabel(s.model, s.effort)}
+                      {modelLabel(s.model, s.effort, s.provider ?? "")}
                     </span>
                     <ul className="grid gap-1">
                       {reusable.map((r) => (
@@ -1237,7 +1267,7 @@ export default function TestLab() {
             </p>
             <ul className="grid gap-2">
               {pendingAutoRun.slots.map((s) => {
-                const k = `${s.model}|${s.effort}`;
+                const k = `${s.model}|${s.effort}|${s.provider ?? ""}`;
                 const log = pendingAutoRun.logs[k];
                 if (!log) {
                   return (
@@ -1249,7 +1279,7 @@ export default function TestLab() {
                         className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                         title={s.model}
                       >
-                        {modelLabel(s.model, s.effort)}
+                        {modelLabel(s.model, s.effort, s.provider ?? "")}
                       </span>
                       <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
                     </li>
@@ -1267,7 +1297,7 @@ export default function TestLab() {
                       className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                       title={s.model}
                     >
-                      {modelLabel(s.model, s.effort)}
+                      {modelLabel(s.model, s.effort, s.provider ?? "")}
                     </span>
                     <span
                       className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
@@ -1314,7 +1344,7 @@ export default function TestLab() {
           <div className="grid gap-3">
             <ul className="grid gap-2">
               {pendingAutoAgents.slots.map((s) => {
-                const k = `${s.model}|${s.effort}`;
+                const k = `${s.model}|${s.effort}|${s.provider ?? ""}`;
                 const reusable = pendingAutoAgents.details[k] ?? [];
                 if (reusable.length === 0) {
                   return (
@@ -1326,7 +1356,7 @@ export default function TestLab() {
                         className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                         title={s.model}
                       >
-                        {modelLabel(s.model, s.effort)}
+                        {modelLabel(s.model, s.effort, s.provider ?? "")}
                       </span>
                       <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
                     </li>
@@ -1341,10 +1371,10 @@ export default function TestLab() {
                       className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                       title={s.model}
                     >
-                      {modelLabel(s.model, s.effort)}
+                      {modelLabel(s.model, s.effort, s.provider ?? "")}
                     </span>
                     <span className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                      These agents were already extracted for {modelLabel(s.model, s.effort)}
+                      These agents were already extracted for {modelLabel(s.model, s.effort, s.provider ?? "")}
                     </span>
                     <ul className="grid gap-1">
                       {reusable.map((r) => (

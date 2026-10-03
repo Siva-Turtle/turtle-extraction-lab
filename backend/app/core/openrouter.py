@@ -148,6 +148,7 @@ def build_chat_payload(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
     schema_name: str = "meeting_extraction",
     reasoning_effort: str | None = None,
+    provider: str | None = None,
 ) -> dict:
     """Build the EXACT JSON body POSTed to OpenRouter chat-completions.
 
@@ -160,6 +161,9 @@ def build_chat_payload(
     ``{"type": "json_object"}`` mode. When ``reasoning_effort`` is a
     non-blank string, ``{"reasoning": {"effort": value}}`` is added;
     None/blank leaves the payload byte-identical (no ``reasoning`` key).
+    When ``provider`` is a non-blank string, ``{"provider": {"order":
+    [value], "allow_fallbacks": False}}`` is added; None/blank leaves the
+    payload byte-identical (no ``provider`` key).
 
     Anthropic union-limit fallback: when ``json_schema`` is given AND the
     model is ``anthropic/*`` AND ``count_union_params(json_schema)`` exceeds
@@ -200,6 +204,9 @@ def build_chat_payload(
     effort = reasoning_effort.strip() if isinstance(reasoning_effort, str) else ""
     if effort:
         payload["reasoning"] = {"effort": effort}
+    prov = provider.strip() if isinstance(provider, str) else ""
+    if prov:
+        payload["provider"] = {"order": [prov], "allow_fallbacks": False}
     return payload
 
 
@@ -207,8 +214,10 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
     """POST a prebuilt payload and return (parsed_json, usage).
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
-    "total_tokens": int, "reasoning_tokens": int}; missing/partial OpenRouter
-    ``usage`` blocks become zeros and never raise.
+    "total_tokens": int, "reasoning_tokens": int, "provider": str};
+    missing/partial OpenRouter ``usage`` blocks become zeros and never raise.
+    ``provider`` is the top-level OpenRouter response ``provider`` string
+    ("" when absent).
     """
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
@@ -240,12 +249,19 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
 
     content = data["choices"][0]["message"]["content"]
     parsed = _parse_json_content(content)
-    return parsed, _extract_usage(data.get("usage"))
+    usage = _extract_usage(data.get("usage"))
+    try:
+        prov = data.get("provider") if isinstance(data, dict) else ""
+    except Exception:
+        prov = ""
+    usage["provider"] = prov if isinstance(prov, str) else ""
+    return parsed, usage
 
 
 async def complete_json(
     *, model: str, system: str, user: str, json_schema: dict | None = None,
     reasoning_effort: str | None = None,
+    provider: str | None = None,
 ) -> tuple[dict, dict]:
     """Call OpenRouter and return (parsed_json, usage).
 
@@ -253,8 +269,8 @@ async def complete_json(
     existing call sites/tests keep working.
 
     usage is always {"prompt_tokens": int, "completion_tokens": int,
-    "total_tokens": int, "reasoning_tokens": int}; missing/partial OpenRouter
-    ``usage`` blocks become zeros and never raise.
+    "total_tokens": int, "reasoning_tokens": int, "provider": str};
+    missing/partial OpenRouter ``usage`` blocks become zeros and never raise.
 
     ``json_schema`` is the inner OpenAPI-compatible object schema
     (``{"type": "object", "properties": {...}, ...}``). When given, the call
@@ -263,7 +279,7 @@ async def complete_json(
     """
     return await complete_json_payload(
         build_chat_payload(model=model, system=system, user=user, json_schema=json_schema,
-                           reasoning_effort=reasoning_effort)
+                           reasoning_effort=reasoning_effort, provider=provider)
     )
 
 
@@ -422,3 +438,138 @@ async def fetch_models() -> tuple[list[dict], bool]:
         return models, True
     except Exception:
         return [{**m, "pricing": None} for m in CURATED_MODELS], False
+
+
+# --- Model endpoints (OpenRouter providers), 1h per-model in-process cache ---
+
+_ENDPOINTS_TTL_S = 3600
+_endpoints_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def clear_endpoints_cache() -> None:
+    """Reset the in-process endpoints cache (tests)."""
+    global _endpoints_cache
+    _endpoints_cache = {}
+
+
+def _parse_float_or_none(v: object) -> float | None:
+    try:
+        if v is None:
+            return None
+        f = float(v)  # type: ignore[arg-type]
+        return f
+    except Exception:
+        return None
+
+
+def _parse_int_or_none(v: object) -> int | None:
+    try:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        return int(v)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def _endpoint_entry(e: dict) -> dict:
+    """Normalize one OpenRouter /models/{id}/endpoints entry."""
+    try:
+        provider_name = e.get("provider_name")
+    except Exception:
+        provider_name = ""
+    if not isinstance(provider_name, str) or not provider_name:
+        try:
+            fallback = e.get("name")
+        except Exception:
+            fallback = ""
+        provider_name = fallback if isinstance(fallback, str) else ""
+    try:
+        tag_raw = e.get("tag")
+    except Exception:
+        tag_raw = ""
+    tag = tag_raw if isinstance(tag_raw, str) and tag_raw else ""
+    slug = tag if tag else (provider_name.lower() if isinstance(provider_name, str) else "")
+    try:
+        quant_raw = e.get("quantization")
+    except Exception:
+        quant_raw = None
+    quantization = quant_raw if isinstance(quant_raw, str) and quant_raw else None
+    try:
+        pricing_raw = e.get("pricing") if isinstance(e.get("pricing"), dict) else {}
+    except Exception:
+        pricing_raw = {}
+    return {
+        "slug": slug,
+        "name": provider_name,
+        "tag": tag,
+        "quantization": quantization,
+        "context_length": _parse_int_or_none(e.get("context_length")),
+        "pricing": {
+            "prompt": _parse_price(pricing_raw.get("prompt")),
+            "completion": _parse_price(pricing_raw.get("completion")),
+        },
+        "uptime_last_30m": _parse_float_or_none(e.get("uptime_last_30m")),
+        "status": _parse_int_or_none(e.get("status")),
+    }
+
+
+async def fetch_model_endpoints(model_id: str) -> list[dict]:
+    """Return normalized provider endpoints for one model, or [].
+
+    GET {base}/models/{model_id}/endpoints (model_id keeps its
+    "author/slug" slash as part of the path). Entries come from response
+    data.endpoints. Cached per model in-process for 1 hour. On any failure
+    (or when not configured) returns [] and never raises.
+    """
+    global _endpoints_cache
+    try:
+        mid = (model_id or "").strip()
+        if not mid:
+            return []
+        if not is_configured():
+            return []
+        now = time.time()
+        cached = _endpoints_cache.get(mid)
+        if cached is not None:
+            try:
+                expires_at, items = cached
+            except Exception:
+                expires_at, items = 0.0, []
+            if now < expires_at and isinstance(items, list):
+                return items
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"{settings.openrouter_base_url.rstrip('/')}/models/{mid}/endpoints",
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        items_raw: object = []
+        try:
+            if isinstance(body, dict):
+                data = body.get("data")
+                if isinstance(data, dict) and isinstance(data.get("endpoints"), list):
+                    items_raw = data.get("endpoints") or []
+                elif isinstance(data, list):
+                    items_raw = data
+                elif isinstance(body.get("endpoints"), list):
+                    items_raw = body.get("endpoints") or []
+        except Exception:
+            items_raw = []
+        out: list[dict] = []
+        try:
+            for e in items_raw or []:
+                if not isinstance(e, dict):
+                    continue
+                try:
+                    out.append(_endpoint_entry(e))
+                except Exception:
+                    continue
+        except Exception:
+            return []
+        _endpoints_cache[mid] = (now + _ENDPOINTS_TTL_S, out)
+        return out
+    except Exception:
+        return []

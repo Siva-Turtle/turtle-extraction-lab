@@ -919,6 +919,7 @@ def _build_agent_requests(
     db: Session, *, agents: list[Agent], input_data: str,
     model: str, reasoning_effort: str,
     attr_subsets: dict | None = None,
+    provider: str = "",
 ) -> tuple[dict, dict]:
     """Build (snapshots, requests) exactly like create_run's loop prelude.
 
@@ -931,6 +932,7 @@ def _build_agent_requests(
     every other caller byte-identical for extraction agents.
     """
     effort = (reasoning_effort or "").strip()
+    prov = (provider or "").strip() if isinstance(provider, str) else ""
     snapshots: dict = {}
     requests: dict = {}
     for agent in agents:
@@ -966,13 +968,13 @@ def _build_agent_requests(
             payload_body = build_chat_payload(
                 model=model, system=system_content, user=user_content,
                 json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
-                reasoning_effort=effort)
+                reasoning_effort=effort, provider=prov)
         else:
             system_content = _agent_system_content(agent, attrs)
             schema = build_extraction_schema(attrs)
             payload_body = build_chat_payload(
                 model=model, system=system_content, user=user_content, json_schema=schema,
-                reasoning_effort=effort)
+                reasoning_effort=effort, provider=prov)
         requests[agent.id] = copy.deepcopy(payload_body)
     return snapshots, requests
 
@@ -980,6 +982,7 @@ def _build_agent_requests(
 def _plan_run(
     db: Session, *, meeting_id: str, input_type: str, input_data: str,
     agent_ids: list[str], model: str, reasoning_effort: str,
+    provider: str = "",
 ) -> tuple[str, str, str, str, list[Agent], dict, dict]:
     """Resolve input + agents + per-agent request bodies without side effects.
 
@@ -992,7 +995,7 @@ def _plan_run(
     agents = _load_run_agents(db, agent_ids)
     snapshots, requests = _build_agent_requests(
         db, agents=agents, input_data=resolved_data,
-        model=model, reasoning_effort=effort)
+        model=model, reasoning_effort=effort, provider=provider)
     return resolved_type, resolved_data, effort, task_title, agents, snapshots, requests
 
 
@@ -1000,7 +1003,8 @@ async def _call_single_payload(payload_body: dict):
     """One OpenRouter call + timing (shared by create_run/retry/auto).
 
     Returns (parsed, prompt_tokens, completion_tokens, total_tokens,
-    reasoning_tokens, duration_ms). Errors become ({"_error": ...}, zeros).
+    reasoning_tokens, duration_ms, served_provider). Errors become
+    ({"_error": ...}, zeros, "").
     """
     agent_start = perf_counter()
     try:
@@ -1020,15 +1024,22 @@ async def _call_single_payload(payload_body: dict):
             total_tokens = 0
         if reasoning_tokens < 0:
             reasoning_tokens = 0
+        try:
+            served = usage.get("provider", "") if isinstance(usage, dict) else ""
+        except Exception:
+            served = ""
+        if not isinstance(served, str):
+            served = ""
         duration_ms = (perf_counter() - agent_start) * 1000.0
-        return parsed, prompt_tokens, completion_tokens, total_tokens, reasoning_tokens, duration_ms
+        return parsed, prompt_tokens, completion_tokens, total_tokens, reasoning_tokens, duration_ms, served
     except Exception as exc:
         duration_ms = (perf_counter() - agent_start) * 1000.0
-        return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms
+        return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms, ""
 
 
 def _per_agent_entry(prompt_tokens: int, completion_tokens: int, total_tokens: int,
-                     reasoning_tokens: int, duration_ms: float, model: str) -> dict:
+                     reasoning_tokens: int, duration_ms: float, model: str,
+                     provider: str = "") -> dict:
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
@@ -1039,6 +1050,7 @@ def _per_agent_entry(prompt_tokens: int, completion_tokens: int, total_tokens: i
         "output_cost_usd": None,
         "duration_ms": duration_ms,
         "model": model,
+        "provider": provider if isinstance(provider, str) else "",
     }
 
 
@@ -1127,7 +1139,8 @@ def _totals_from_per_agent(per_agent: dict, prompt_price=None, completion_price=
 
 
 def _build_usage(per_agent: dict, model: str, totals: dict, duration_ms: float,
-                 reused_agents: dict | None = None) -> dict:
+                 reused_agents: dict | None = None,
+                 provider_requested: str = "") -> dict:
     return {
         "prompt_tokens": totals["prompt_tokens"],
         "completion_tokens": totals["completion_tokens"],
@@ -1138,6 +1151,7 @@ def _build_usage(per_agent: dict, model: str, totals: dict, duration_ms: float,
         "output_cost_usd": totals["output_cost_usd"],
         "duration_ms": duration_ms,
         "model": model,
+        "provider_requested": provider_requested if isinstance(provider_requested, str) else "",
         "per_agent": per_agent,
         "reused_agents": reused_agents or {},
     }
@@ -1150,15 +1164,15 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     Identifier outputs are normalised to 11 yes/no answers.
     """
     async def _run_one(agent, payload_body):
-        parsed, pt, ct, tt, rt, dur = await _call_single_payload(copy.deepcopy(payload_body))
-        return (agent.id, parsed, pt, ct, tt, rt, dur)
+        parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(copy.deepcopy(payload_body))
+        return (agent.id, parsed, pt, ct, tt, rt, dur, served)
 
     bodies = [(a, copy.deepcopy(requests[a.id])) for a in agents if a.id in (requests or {})]
     results = await asyncio.gather(*[_run_one(a, b) for a, b in bodies])
     agents_by_id = {a.id: a for a in agents}
     outputs: dict = {}
     per_agent: dict = {}
-    for aid, parsed, pt, ct, tt, rt, dur in results:
+    for aid, parsed, pt, ct, tt, rt, dur, served in results:
         agent_row = agents_by_id.get(aid)
         if agent_row is not None and is_identifier(agent_row):
             try:
@@ -1166,7 +1180,7 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
             except Exception:
                 pass
         outputs[aid] = parsed
-        per_agent[aid] = _per_agent_entry(pt, ct, tt, rt, dur, model)
+        per_agent[aid] = _per_agent_entry(pt, ct, tt, rt, dur, model, served)
     return outputs, per_agent
 
 
@@ -1302,23 +1316,31 @@ def _source_agent_info(log: RunLog, agent_id: str) -> tuple[str, float | None, f
 def _find_existing_log_for_agent(
     db: Session, *, model: str, reasoning_effort: str,
     agent_id: str, expected_messages,
+    provider: str = "",
 ) -> RunLog | None:
-    """Newest RunLog (same model+effort) with a usable output for one agent.
+    """Newest RunLog (same model+effort+provider) with a usable output for one agent.
 
-    - SQL filter on model + reasoning_effort, newest first, limit 300.
+    - SQL filter on model + reasoning_effort + provider, newest first, limit 300.
     - ``log.requests[agent_id]["messages"]`` must equal the would-be-sent
       messages. Other agents in the log do not matter (any agent mix).
     - ``log.outputs[agent_id]`` must exist, be a dict, and have no "_error".
     """
     effort = (reasoning_effort or "").strip()
+    prov = (provider or "").strip() if isinstance(provider, str) else ""
     rows = (
         db.query(RunLog)
-        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort,
+                RunLog.provider == prov)
         .order_by(RunLog.created_at.desc())
         .limit(300)
         .all()
     )
     for log in rows:
+        try:
+            if (getattr(log, "provider", None) or "") != prov:
+                continue
+        except Exception:
+            continue
         stored_reqs = log.requests or {}
         if not isinstance(stored_reqs, dict):
             continue
@@ -1342,12 +1364,16 @@ def _find_existing_log_for_agent(
 def _is_valid_reuse_source(
     source: RunLog, *, agent_id: str, model: str,
     reasoning_effort: str, expected_messages,
+    provider: str = "",
 ) -> bool:
     """Same rule as per-agent matching (server-side reuse validation)."""
     try:
         if (getattr(source, "model", None) or "") != model:
             return False
         if (getattr(source, "reasoning_effort", None) or "") != (reasoning_effort or ""):
+            return False
+        prov = (provider or "").strip() if isinstance(provider, str) else ""
+        if (getattr(source, "provider", None) or "") != prov:
             return False
         stored_reqs = getattr(source, "requests", None) or {}
         if not isinstance(stored_reqs, dict):
@@ -1387,6 +1413,11 @@ def _build_reused_per_agent(source: RunLog, agent_id: str) -> tuple[dict, str, s
     raw = per.get(agent_id)
     if isinstance(raw, dict):
         entry = copy.deepcopy(raw)
+        try:
+            if "provider" not in entry or not isinstance(entry.get("provider"), str):
+                entry["provider"] = ""
+        except Exception:
+            pass
     else:
         entry = {
             "prompt_tokens": 0,
@@ -1398,6 +1429,7 @@ def _build_reused_per_agent(source: RunLog, agent_id: str) -> tuple[dict, str, s
             "output_cost_usd": None,
             "duration_ms": 0.0,
             "model": getattr(source, "model", None) or "",
+            "provider": "",
         }
     existing_id = entry.get("reused_from_log_id")
     existing_at = entry.get("reused_from_created_at")
@@ -1424,24 +1456,32 @@ def _build_reused_per_agent(source: RunLog, agent_id: str) -> tuple[dict, str, s
 
 def _find_existing_log(
     db: Session, *, model: str, reasoning_effort: str, expected_requests: dict,
+    provider: str = "",
 ) -> RunLog | None:
-    """Newest RunLog with this model/effort whose requests messages match.
+    """Newest RunLog with this model/effort/provider whose requests messages match.
 
-    - SQL filter on model + reasoning_effort, newest first, limit 200.
+    - SQL filter on model + reasoning_effort + provider, newest first, limit 200.
     - set(log.requests keys) must equal set(expected agent ids).
     - every agent's stored messages must equal the would-be-sent messages.
     - not every output may carry _error (at least one success required).
     """
     effort = (reasoning_effort or "").strip()
+    prov = (provider or "").strip() if isinstance(provider, str) else ""
     rows = (
         db.query(RunLog)
-        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort,
+                RunLog.provider == prov)
         .order_by(RunLog.created_at.desc())
         .limit(200)
         .all()
     )
     expected_ids = set(expected_requests.keys())
     for log in rows:
+        try:
+            if (getattr(log, "provider", None) or "") != prov:
+                continue
+        except Exception:
+            continue
         stored_reqs = log.requests or {}
         if not isinstance(stored_reqs, dict):
             continue
@@ -1474,10 +1514,12 @@ def _find_existing_log(
 
 @router.post("")
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
+    provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
     input_type, input_data, effort, task_title, agents, snapshots, requests = _plan_run(
         db, meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, agent_ids=payload.agent_ids,
-        model=payload.model, reasoning_effort=payload.reasoning_effort)
+        model=payload.model, reasoning_effort=payload.reasoning_effort,
+        provider=provider_requested)
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     wall_start = perf_counter()
 
@@ -1489,6 +1531,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         completion_tokens = 0
         total_tokens = 0
         reasoning_tokens = 0
+        served_provider = ""
         try:
             parsed, usage = await complete_json_payload(payload_body)
             try:
@@ -1506,13 +1549,19 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                 total_tokens = 0
             if reasoning_tokens < 0:
                 reasoning_tokens = 0
+            try:
+                served_provider = usage.get("provider", "") if isinstance(usage, dict) else ""
+            except Exception:
+                served_provider = ""
+            if not isinstance(served_provider, str):
+                served_provider = ""
             duration_ms = (perf_counter() - agent_start) * 1000.0
             return (agent.id, parsed, prompt_tokens, completion_tokens,
-                    total_tokens, reasoning_tokens, duration_ms, model)
+                    total_tokens, reasoning_tokens, duration_ms, model, served_provider)
         except Exception as exc:
             duration_ms = (perf_counter() - agent_start) * 1000.0
             return (agent.id, {"_error": str(exc)}, 0, 0, 0, 0,
-                    duration_ms, model)
+                    duration_ms, model, "")
 
     # --- Per-agent reuse: validate each reuse entry server-side ---------------
     # Same rule as matching (messages equal, output present without _error,
@@ -1540,6 +1589,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         if not _is_valid_reuse_source(
             source, agent_id=agent.id, model=payload.model,
             reasoning_effort=effort, expected_messages=fresh_msgs,
+            provider=provider_requested,
         ):
             continue
         valid_reuse[agent.id] = source
@@ -1582,7 +1632,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             pass
     agents_by_id = {a.id: a for a in agents}
     for (aid, parsed, prompt_tokens, completion_tokens,
-         total_tokens, reasoning_tokens, duration_ms, model) in results:
+         total_tokens, reasoning_tokens, duration_ms, model, served) in results:
         agent_row = agents_by_id.get(aid)
         if agent_row is not None and is_identifier(agent_row):
             try:
@@ -1603,6 +1653,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             "output_cost_usd": None,
             "duration_ms": duration_ms,
             "model": model,
+            "provider": served if isinstance(served, str) else "",
         }
     if fresh_agents or not valid_reuse:
         try:
@@ -1698,6 +1749,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         "output_cost_usd": total_output_cost,
         "duration_ms": usage_duration_ms,
         "model": payload.model,
+        "provider_requested": provider_requested,
         "per_agent": per_agent,
         "reused_agents": reused_agents,
     }
@@ -1741,7 +1793,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
                   usage=usage, filters=filters, requests=requests,
                   client=client, meeting_type=meeting_type, meeting_title=meeting_title,
-                  reasoning_effort=effort, run_group_id=payload.run_group_id or "",
+                  reasoning_effort=effort, provider=provider_requested,
+                  run_group_id=payload.run_group_id or "",
                   reused_from_log_id=log_reused_id or "",
                   reused_from_created_at=log_reused_at, consistency={})
     db.add(log)
@@ -1868,6 +1921,7 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
         meeting_type=getattr(source, "meeting_type", None) or "",
         meeting_title=getattr(source, "meeting_title", None) or "",
         reasoning_effort=getattr(source, "reasoning_effort", None) or "",
+        provider=getattr(source, "provider", None) or "",
         run_group_id=payload.run_group_id or "",
         reused_from_log_id=original_id,
         reused_from_created_at=original_created_at,
@@ -1899,18 +1953,20 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
         effort = (slot.reasoning_effort or "").strip()
         if effort and effort not in REASONING_EFFORTS:
             raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        prov = (slot.provider or "").strip() if isinstance(slot.provider, str) else ""
         # Per-slot request bodies (messages may differ per model, e.g. the
         # Anthropic fallback appends the schema to the system message).
         _, expected_requests = _build_agent_requests(
             db, agents=agents, input_data=resolved_data,
-            model=model, reasoning_effort=effort)
+            model=model, reasoning_effort=effort, provider=prov)
         slot_agents: list[dict] = []
         for agent in agents:
             exp_body = expected_requests.get(agent.id)
             exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
             log = _find_existing_log_for_agent(
                 db, model=model, reasoning_effort=effort,
-                agent_id=agent.id, expected_messages=exp_msgs)
+                agent_id=agent.id, expected_messages=exp_msgs,
+                provider=prov)
             if log is None:
                 continue
             created_iso, cost, duration = _source_agent_info(log, agent.id)
@@ -1923,6 +1979,7 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
                 "duration_ms": duration,
             })
         slots.append({"model": model, "reasoning_effort": effort,
+                      "provider": prov,
                       "agents": slot_agents})
     return {"slots": slots}
 
@@ -1930,24 +1987,32 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
 def _find_existing_auto_log(
     db: Session, *, model: str, reasoning_effort: str,
     identifier_id: str, expected_messages,
+    provider: str = "",
 ) -> RunLog | None:
-    """Newest auto RunLog (same model+effort) matching the identifier request.
+    """Newest auto RunLog (same model+effort+provider) matching the identifier request.
 
-    - SQL filter on model + reasoning_effort, newest first, limit 300.
+    - SQL filter on model + reasoning_effort + provider, newest first, limit 300.
     - ``consistency`` must be a dict with ``auto is True``.
     - ``requests[identifier_id]["messages"]`` must equal the would-be-sent
       identifier messages (other agents in the log do not matter).
     - ``outputs[identifier_id]`` must exist, be a dict, and have no "_error".
     """
     effort = (reasoning_effort or "").strip()
+    prov = (provider or "").strip() if isinstance(provider, str) else ""
     rows = (
         db.query(RunLog)
-        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort,
+                RunLog.provider == prov)
         .order_by(RunLog.created_at.desc())
         .limit(300)
         .all()
     )
     for log in rows:
+        try:
+            if (getattr(log, "provider", None) or "") != prov:
+                continue
+        except Exception:
+            continue
         try:
             cons = getattr(log, "consistency", None)
         except Exception:
@@ -2040,20 +2105,22 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
         effort = (slot.reasoning_effort or "").strip()
         if effort and effort not in REASONING_EFFORTS:
             raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        prov = (slot.provider or "").strip() if isinstance(slot.provider, str) else ""
         _, expected_requests = _build_agent_requests(
             db, agents=[identifier], input_data=resolved_data,
-            model=model, reasoning_effort=effort)
+            model=model, reasoning_effort=effort, provider=prov)
         exp_body = expected_requests.get(ident_id)
         exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
         log = _find_existing_auto_log(
             db, model=model, reasoning_effort=effort,
-            identifier_id=ident_id, expected_messages=exp_msgs)
+            identifier_id=ident_id, expected_messages=exp_msgs,
+            provider=prov)
         slot_agents: list[dict] = []
         try:
             if always_agents:
                 _, always_requests = _build_agent_requests(
                     db, agents=always_agents, input_data=resolved_data,
-                    model=model, reasoning_effort=effort,
+                    model=model, reasoning_effort=effort, provider=prov,
                     attr_subsets=always_subsets)
                 for ag in always_agents:
                     try:
@@ -2061,7 +2128,8 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
                         exp_m = exp_b.get("messages") if isinstance(exp_b, dict) else None
                         found = _find_existing_log_for_agent(
                             db, model=model, reasoning_effort=effort,
-                            agent_id=ag.id, expected_messages=exp_m)
+                            agent_id=ag.id, expected_messages=exp_m,
+                            provider=prov)
                     except Exception:
                         found = None
                     if found is None:
@@ -2081,6 +2149,7 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
         except Exception:
             slot_agents = []
         slots.append({"model": model, "reasoning_effort": effort,
+                      "provider": prov,
                       "log": _out(log) if log is not None else None,
                       "agents": slot_agents})
     return {"slots": slots}
@@ -2131,6 +2200,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     POST /runs.
     """
     wall_start = perf_counter()
+    provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
     resolved_type, resolved_data, effort, task_title = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=payload.reasoning_effort)
@@ -2147,15 +2217,15 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         meeting_type = ""
     snapshots_ident, requests_ident = _build_agent_requests(
         db, agents=[identifier], input_data=resolved_data,
-        model=payload.model, reasoning_effort=effort)
+        model=payload.model, reasoning_effort=effort, provider=provider_requested)
     ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
-    parsed_ident, ipt, ict, itt, irt, idur = await _call_single_payload(ident_body)
+    parsed_ident, ipt, ict, itt, irt, idur, iserved = await _call_single_payload(ident_body)
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
         try:
             parsed_ident = normalize_identifier_output(parsed_ident)
         except Exception:
             pass
-    per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model)
+    per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model, iserved)
     ident_errored = not isinstance(parsed_ident, dict) or "_error" in parsed_ident
     if ident_errored:
         answers = _all_false_answers()
@@ -2187,7 +2257,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         attr_subsets = {}
     snapshots_sel, requests_sel = _build_agent_requests(
         db, agents=planned_agents, input_data=resolved_data,
-        model=payload.model, reasoning_effort=effort,
+        model=payload.model, reasoning_effort=effort, provider=provider_requested,
         attr_subsets=attr_subsets)
     snapshots = {**snapshots_ident, **snapshots_sel}
     requests = {**requests_ident, **requests_sel}
@@ -2215,6 +2285,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         if not _is_valid_reuse_source(
             source, agent_id=ag.id, model=payload.model,
             reasoning_effort=effort, expected_messages=fresh_msgs,
+            provider=provider_requested,
         ):
             continue
         valid_reuse[ag.id] = source
@@ -2297,7 +2368,8 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
                 wall_ms = float(d)
     except Exception:
         pass
-    usage = _build_usage(per_agent, payload.model, totals, wall_ms, reused_agents)
+    usage = _build_usage(per_agent, payload.model, totals, wall_ms, reused_agents,
+                       provider_requested=provider_requested)
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     client_name = (payload.client or "").strip()
     meeting_title = (payload.meeting_title or "").strip() or task_title
@@ -2311,7 +2383,8 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback=feedback,
                   usage=usage, filters=filters, requests=requests,
                   client=client_name, meeting_type=meeting_type, meeting_title=meeting_title,
-                  reasoning_effort=effort, run_group_id=payload.run_group_id or "",
+                  reasoning_effort=effort, provider=provider_requested,
+                  run_group_id=payload.run_group_id or "",
                   reused_from_log_id="", reused_from_created_at=None,
                   consistency=consistency)
     db.add(log)
@@ -2334,7 +2407,7 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
     if not agent_id or not isinstance(stored_requests.get(agent_id), dict):
         raise HTTPException(400, "agent_id has no stored request")
     stored_body = copy.deepcopy(stored_requests[agent_id])
-    parsed, pt, ct, tt, rt, dur = await _call_single_payload(stored_body)
+    parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(stored_body)
     # Identifier normalisation when the retried agent is the identifier.
     try:
         snap_kind = ""
@@ -2367,7 +2440,7 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
         prompt_price, completion_price = await get_model_pricing(log.model or "")
     except Exception:
         prompt_price, completion_price = None, None
-    entry = _per_agent_entry(pt, ct, tt, rt, dur, log.model or "")
+    entry = _per_agent_entry(pt, ct, tt, rt, dur, log.model or "", served)
     _fill_pricing({agent_id: entry}, prompt_price, completion_price)
     # Drop any reused markers on the retried agent.
     for k in ("reused_from_log_id", "reused_from_created_at"):
@@ -2402,6 +2475,11 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
     usage["reused_agents"] = reused_agents
     if "model" not in usage:
         usage["model"] = log.model or ""
+    if "provider_requested" not in usage:
+        try:
+            usage["provider_requested"] = getattr(log, "provider", None) or ""
+        except Exception:
+            usage["provider_requested"] = ""
     log.usage = usage
     flag_modified(log, "usage")
     # Clear feedback for the retried agent (it rated the old output).

@@ -166,10 +166,32 @@ export function shortModel(id: string): string {
 }
 
 /** Model label with reasoning effort: `short:effort`, or just short when effort is blank. */
-export function modelLabel(model: string, effort: string): string {
+export function modelLabel(model: string, effort: string, provider?: string): string {
   const short = shortModel(model);
   const e = (effort ?? "").trim();
-  return e === "" ? short : `${short}:${e}`;
+  const base = e === "" ? short : `${short}:${e}`;
+  if (provider === undefined) return base;
+  const p = (provider ?? "").trim();
+  return p === "" ? `${base} · Auto` : `${base} · ${p}`;
+}
+
+/** Requested-provider display ("Auto" when blank). */
+export function providerDisplay(provider: string | null | undefined): string {
+  const p = (provider ?? "").trim();
+  return p === "" ? "Auto" : p;
+}
+
+/** Full slot label: `short · effort · provider` (effort omitted when blank). */
+export function modelSlotLabel(model: string, effort: string, provider: string): string {
+  const short = shortModel(model);
+  const e = (effort ?? "").trim();
+  const p = providerDisplay(provider);
+  return e === "" ? `${short} · ${p}` : `${short} · ${e} · ${p}`;
+}
+
+/** Slot identity key (model + effort + provider) for compare columns. */
+export function slotKeyOf(model: string, effort: string, provider: string): string {
+  return `${model}|${effort}|${provider ?? ""}`;
 }
 
 /** Relative run time, e.g. "just now", "5 min ago", "3 h ago", "2 d ago". Falls back to fmt(). */

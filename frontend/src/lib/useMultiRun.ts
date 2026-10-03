@@ -29,8 +29,8 @@ function statusOf(log: LogRow): CompareColumn["status"] {
   return "partial";
 }
 
-function slotKey(model: string, effort: string): string {
-  return `${model}|${effort}`;
+function slotKey(model: string, effort: string, provider: string): string {
+  return `${model}|${effort}|${provider ?? ""}`;
 }
 
 export function agentRunningKey(colKey: string, agentId: string): string {
@@ -131,7 +131,7 @@ export function useMultiRun(): {
     // Every column POSTs /runs with `reuse` for that slot ({} = fresh).
     const reuseForColumn: Record<string, Record<string, string>> = {};
     const cols: CompareColumn[] = slots.map((s) => {
-      const k = slotKey(s.model, s.effort);
+      const k = slotKey(s.model, s.effort, s.provider ?? "");
       const m = reuse[k];
       const clean: Record<string, string> = {};
       if (m && typeof m === "object") {
@@ -146,6 +146,7 @@ export function useMultiRun(): {
         key: k,
         model: s.model,
         effort: s.effort,
+        provider: s.provider ?? "",
         status: "running",
         startedAt: now,
         log: null,
@@ -174,6 +175,7 @@ export function useMultiRun(): {
             ...stripAgentIds(basePayload),
             model: col.model,
             reasoning_effort: col.effort,
+            provider: col.provider ?? "",
             run_group_id: gid,
             reuse: reuseForColumn[col.key] ?? {},
           }
@@ -181,6 +183,7 @@ export function useMultiRun(): {
             ...basePayload,
             model: col.model,
             reasoning_effort: col.effort,
+            provider: col.provider ?? "",
             run_group_id: gid,
             reuse: reuseForColumn[col.key] ?? {},
           };
@@ -213,12 +216,14 @@ export function useMultiRun(): {
           ...stripAgentIds(payloadRef.current),
           model: target.model,
           reasoning_effort: target.effort,
+          provider: target.provider ?? "",
           run_group_id: gid,
         }
       : {
           ...payloadRef.current,
           model: target.model,
           reasoning_effort: target.effort,
+          provider: target.provider ?? "",
           run_group_id: gid,
           reuse: reuseRef.current[key] ?? {},
         };

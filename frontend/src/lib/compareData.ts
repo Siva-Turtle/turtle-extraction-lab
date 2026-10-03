@@ -29,7 +29,8 @@ export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
   for (const log of logs) {
     const model = typeof log.model === "string" ? log.model : "";
     const effort = typeof log.reasoning_effort === "string" ? log.reasoning_effort : "";
-    const k = `${model}|${effort}`;
+    const provider = typeof log.provider === "string" ? log.provider : "";
+    const k = `${model}|${effort}|${provider}`;
     if (!latest.has(k)) order.push(k);
     const cur = latest.get(k);
     // Later in input order wins ties (invalid timestamps sink to -Infinity).
@@ -41,6 +42,7 @@ export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
       key: log.id,
       model: typeof log.model === "string" ? log.model : "",
       effort: typeof log.reasoning_effort === "string" ? log.reasoning_effort : "",
+      provider: typeof log.provider === "string" ? log.provider : "",
       status: statusOf(log),
       log,
     };

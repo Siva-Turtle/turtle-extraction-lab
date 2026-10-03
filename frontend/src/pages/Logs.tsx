@@ -149,7 +149,7 @@ function byCreatedAtAsc(a: LogRow, b: LogRow): number {
 function attemptLabels(rows: LogRow[]): Map<string, string> {
   const groups = new Map<string, LogRow[]>();
   for (const r of rows) {
-    const k = `${r.model ?? ""}|${r.reasoning_effort ?? ""}`;
+    const k = `${r.model ?? ""}|${r.reasoning_effort ?? ""}|${r.provider ?? ""}`;
     const list = groups.get(k);
     if (list) list.push(r);
     else groups.set(k, [r]);
@@ -447,10 +447,13 @@ export default function Logs() {
                           {fmt(g.createdAt)}
                         </td>
                         {single ? (
-                          <td className="px-4 py-3" title={first.model}>
+                          <td
+                            className="px-4 py-3"
+                            title={`${first.model}${first.provider ? ` · ${first.provider}` : " · Auto"}`}
+                          >
                             <span className="inline-flex max-w-56 items-center gap-1.5">
                               <span className="max-w-48 truncate font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                                {modelLabel(first.model, first.reasoning_effort ?? "")}
+                                {modelLabel(first.model, first.reasoning_effort ?? "", first.provider ?? "")}
                                 {reusedSuffix(first)}
                               </span>
                               {isFullyReused(first) && <ReusedBadge log={first} />}
@@ -462,12 +465,12 @@ export default function Logs() {
                         ) : (
                           <td
                             className="px-4 py-3"
-                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "")}${reusedSuffix(r)} — ${rowCostText(r)}`).join("\n")}
+                            title={g.rows.map((r) => `${modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}${reusedSuffix(r)} — ${rowCostText(r)}`).join("\n")}
                           >
                             <span className="inline-flex max-w-56 flex-wrap items-center gap-1">
                               {g.rows.slice(0, 3).map((r) => (
-                                <span key={r.id} title={r.model}>
-                                  <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "")}{reusedSuffix(r)}</Badge>
+                                <span key={r.id} title={`${r.model}${r.provider ? ` · ${r.provider}` : " · Auto"}`}>
+                                  <Badge tone="neutral">{modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}{reusedSuffix(r)}</Badge>
                                 </span>
                               ))}
                               {g.rows.length > 3 && (
@@ -512,7 +515,7 @@ export default function Logs() {
                                   .map((r) => (
                                     <span
                                       key={r.id}
-                                      title={`${modelLabel(r.model, r.reasoning_effort ?? "")}: Identifier's predicted attributes vs what the agents actually extracted`}
+                                      title={`${modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}: Identifier's predicted attributes vs what the agents actually extracted`}
                                     >
                                       <Badge tone="neutral">
                                         {consistencyText(r) as string}
@@ -739,13 +742,19 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
           const full = isFullyReused(r);
           const { reused: partialCount } = reusedCounts(r);
           const partial = !full && partialCount > 0;
-          const label = `${modelLabel(r.model, r.reasoning_effort ?? "")}${reusedSuffix(r)}`;
+          const label = `${modelLabel(r.model, r.reasoning_effort ?? "", r.provider ?? "")}${reusedSuffix(r)}`;
           return (
             <button
               key={r.id}
               role="tab"
               aria-selected={isSel}
-              title={attempt ? `${label} · ${attempt} (${r.created_at})` : full ? `${label} (${r.model})` : r.model}
+              title={
+                attempt
+                  ? `${label} · ${attempt} (${r.created_at})`
+                  : full
+                    ? `${label} (${r.model})`
+                    : `${r.model}${r.provider ? ` · ${r.provider}` : " · Auto"}`
+              }
               onClick={() => setSelectedId(r.id)}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
@@ -837,6 +846,21 @@ function PrettyPanel({
     ["Client", (log.client ?? "").trim() || "Unknown"],
     ["Meeting type", logMeetingType(log) || "Unknown"],
   ];
+  const requestedProvider = (log.provider ?? "").trim();
+  const servedProviders = React.useMemo(() => {
+    try {
+      const per = log.usage?.per_agent;
+      if (!per || typeof per !== "object") return [];
+      const set = new Set<string>();
+      for (const u of Object.values(per)) {
+        const p = (u as { provider?: unknown }).provider;
+        if (typeof p === "string" && p.trim() !== "") set.add(p.trim());
+      }
+      return [...set];
+    } catch {
+      return [];
+    }
+  }, [log]);
   return (
     <div className="grid min-w-0 max-w-full gap-4" role="tabpanel">
       <div className="min-w-0 max-w-full">
@@ -890,6 +914,15 @@ function PrettyPanel({
           Showing all {rows.length} models of this run
         </p>
       )}
+      {!multi && (
+        <p
+          className="font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+          title={`${log.model}${requestedProvider ? ` · ${requestedProvider}` : " · Auto"}`}
+        >
+          {modelLabel(log.model, log.reasoning_effort ?? "", log.provider ?? "")}
+          {servedProviders.length > 0 && ` · served ${servedProviders.join(", ")}`}
+        </p>
+      )}
       {multi ? (
         <ComparisonMatrix
           columns={columns}
@@ -933,7 +966,13 @@ function PerAgentTable({
           </tr>
         </thead>
         <tbody>
-          {entries.map(({ key, agentName, model, u }) => (
+          {entries.map(({ key, agentName, model, u }) => {
+            const served =
+              typeof (u as { provider?: unknown }).provider === "string"
+                ? ((u as { provider?: string }).provider as string)
+                : "";
+            const modelText = served ? `${model} · ${served}` : model;
+            return (
             <tr
               key={key}
               className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
@@ -941,7 +980,12 @@ function PerAgentTable({
               <td className="max-w-40 break-words px-3 py-2 font-heading font-bold">
                 {agentName}
               </td>
-              <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]">{model}</td>
+              <td
+                className="max-w-40 break-all px-3 py-2 font-mono text-[11px]"
+                title={served ? `Served by ${served}` : undefined}
+              >
+                {modelText}
+              </td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.prompt_tokens)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens(u.completion_tokens)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtTokens((u as unknown as { reasoning_tokens?: unknown }).reasoning_tokens)}</td>
@@ -950,7 +994,8 @@ function PerAgentTable({
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtCostBoth(u.cost_usd)}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{fmtMs(u.duration_ms)}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -968,9 +1013,14 @@ function AnalyticsSingle({
   chips: string[];
   fbCount: number;
 }) {
+  const requestedProvider =
+    (log.provider ?? "").trim() ||
+    ((usage as { provider_requested?: unknown } | null)?.provider_requested as string) ||
+    "";
   const stats: [string, string][] = [
     ["Model", usage?.model ?? log.model ?? "—"],
     ["Reasoning effort", (log.reasoning_effort ?? "").trim() || "Default"],
+    ["Provider", requestedProvider || "Auto"],
     ["Input tokens", fmtTokens(usage?.prompt_tokens)],
     ["Output tokens", fmtTokens(usage?.completion_tokens)],
     ["Thought tokens", fmtTokens(usage?.reasoning_tokens)],
@@ -1155,10 +1205,13 @@ function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }
                     key={col.key}
                     className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]"
                   >
-                    <td className="max-w-40 break-all px-3 py-2 font-mono text-[11px]" title={l.model}>
+                    <td
+                      className="max-w-40 break-all px-3 py-2 font-mono text-[11px]"
+                      title={`${l.model}${l.provider ? ` · ${l.provider}` : " · Auto"}`}
+                    >
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         <span>
-                          {modelLabel(l.model, l.reasoning_effort ?? "")}
+                          {modelLabel(l.model, l.reasoning_effort ?? "", l.provider ?? "")}
                           {reusedSuffix(l)}
                         </span>
                         {full && <ReusedBadge log={l} />}

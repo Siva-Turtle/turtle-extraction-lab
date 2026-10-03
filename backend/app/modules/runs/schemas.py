@@ -29,6 +29,8 @@ class RunCreate(BaseModel):
     meeting_title: str = ""
     # OpenRouter reasoning effort ("" = not sent, model default).
     reasoning_effort: str = ""
+    # Requested OpenRouter provider ("" = Auto).
+    provider: str = ""
     # Multi-model compare group key: "" (single) or 32 lowercase hex chars.
     run_group_id: str = ""
     # Per-agent reuse: {"<agent_id>": "<source log_id>"} — agents listed here
@@ -68,10 +70,16 @@ class RunCreate(BaseModel):
                 "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
         return s
 
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _coerce_provider(cls, v):
+        return v.strip() if isinstance(v, str) else ""
+
 
 class CheckModelSlot(BaseModel):
     model: str
     reasoning_effort: str = ""
+    provider: str = ""
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -81,6 +89,11 @@ class CheckModelSlot(BaseModel):
             raise ValueError(
                 "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
         return s
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _coerce_provider(cls, v):
+        return v.strip() if isinstance(v, str) else ""
 
 
 class CheckExistingIn(BaseModel):
@@ -112,6 +125,7 @@ class CheckExistingAgentEntry(BaseModel):
 class CheckExistingSlot(BaseModel):
     model: str
     reasoning_effort: str = ""
+    provider: str = ""
     agents: list[CheckExistingAgentEntry] = Field(default_factory=list)
 
 
@@ -122,6 +136,7 @@ class CheckExistingOut(BaseModel):
 class CheckExistingAutoSlot(BaseModel):
     model: str
     reasoning_effort: str = ""
+    provider: str = ""
     log: dict | None = None
     agents: list[CheckExistingAgentEntry] = Field(default_factory=list)
 

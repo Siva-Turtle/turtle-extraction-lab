@@ -71,6 +71,7 @@ def _out(r: RunLog) -> dict:
             "meeting_type": getattr(r, "meeting_type", None) or "",
             "meeting_title": getattr(r, "meeting_title", None) or "",
             "reasoning_effort": getattr(r, "reasoning_effort", None) or "",
+            "provider": getattr(r, "provider", None) or "",
             "run_group_id": getattr(r, "run_group_id", None) or "",
             "reused_from_log_id": getattr(r, "reused_from_log_id", None) or "",
             "reused_from_created_at": reused_at_out,

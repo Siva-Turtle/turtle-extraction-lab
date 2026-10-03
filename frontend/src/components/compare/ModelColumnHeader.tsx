@@ -101,10 +101,10 @@ export function ModelColumnHeader({
       <div className="grid min-w-0 gap-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span
-            title={column.model}
+            title={`${column.model}${column.provider ? ` · ${column.provider}` : " · Auto"}`}
             className="min-w-0 flex-1 break-words font-mono text-xs font-bold text-[#1d1d1d] [overflow-wrap:anywhere] dark:text-[#F0EFEC]"
           >
-            {modelLabel(column.model, column.effort)}
+            {modelLabel(column.model, column.effort, column.provider ?? column.log?.provider ?? "")}
           </span>
           {column.log && fullyReused && <ReusedBadge log={column.log} />}
           {column.log && partiallyReused && (

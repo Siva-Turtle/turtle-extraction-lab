@@ -50,6 +50,17 @@ export type ModelInfo = {
   pricing?: ModelPricing | null;
 };
 
+export type ModelEndpoint = {
+  slug: string;
+  name: string;
+  tag?: string;
+  quantization?: string | null;
+  context_length?: number | null;
+  pricing?: ModelPricing | null;
+  uptime_last_30m?: number | null;
+  status?: number | null;
+};
+
 export type AgentKind = "extraction" | "identifier";
 
 export type Agent = {

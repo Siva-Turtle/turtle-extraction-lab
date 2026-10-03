@@ -24,3 +24,9 @@ def get_config():
 async def list_models():
     models, live = await openrouter.fetch_models()
     return {"live": live, "models": models}
+
+
+@router.get("/models/endpoints")
+async def list_model_endpoints(model: str = ""):
+    endpoints = await openrouter.fetch_model_endpoints(model)
+    return {"model": model, "endpoints": endpoints}

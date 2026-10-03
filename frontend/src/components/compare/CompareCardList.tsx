@@ -201,10 +201,10 @@ export function CompareCardList({
               className="min-w-36 shrink-0 rounded-2xl border border-[#e5e7eb] bg-white p-2.5 dark:border-white/10 dark:bg-[#1a1a1a]"
             >
               <p
-                title={col.model}
+                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
                 className="truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
               >
-                {modelLabel(col.model, col.effort)}
+                {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
               </p>
               {col.log && isReused(col.log) && (
                 <span className="mt-1 inline-flex">
@@ -356,8 +356,11 @@ export function CompareCardList({
                         if (!col.log) {
                           return (
                             <li key={col.key} className="flex items-center gap-2">
-                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {modelLabel(col.model, col.effort)}
+                              <span
+                                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                              >
+                                {modelLabel(col.model, col.effort, col.provider ?? "")}
                               </span>
                               {col.status === "error" ? (
                                 <span className="flex-1 font-sans text-[11px] text-[#b91c1c] dark:text-[#f87171]">
@@ -381,8 +384,11 @@ export function CompareCardList({
                         if (isRunning(col.key, row.agentId)) {
                           return (
                             <li key={col.key} className="flex items-center gap-2">
-                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {modelLabel(col.model, col.effort)}
+                              <span
+                                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                              >
+                                {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
                               </span>
                               <span className="inline-flex flex-1 items-center gap-1 font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -394,8 +400,11 @@ export function CompareCardList({
                         if (cell?.canon === NOT_SELECTED_CANON) {
                           return (
                             <li key={col.key} className="flex items-center gap-2">
-                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {modelLabel(col.model, col.effort)}
+                              <span
+                                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                              >
+                                {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
                               </span>
                               <span className="flex-1 font-sans text-[11px] italic text-[#8a8f98]">
                                 not selected
@@ -407,8 +416,11 @@ export function CompareCardList({
                           const canRetryAgent = !!onRetryAgent && !!col.log;
                           return (
                             <li key={col.key} className="flex items-center gap-2">
-                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                                {modelLabel(col.model, col.effort)}
+                              <span
+                                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                              >
+                                {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
                               </span>
                               <span className="flex-1 font-sans text-[11px] text-[#b91c1c] dark:text-[#f87171]">
                                 Agent failed{cell?.error ? ` · ${cell.error}` : ""}
@@ -449,8 +461,11 @@ export function CompareCardList({
                         const evidenceText = typeof cell.evidence === "string" ? cell.evidence : "";
                         return (
                           <li key={col.key} className="flex items-start gap-2">
-                            <span title={col.model} className="w-20 shrink-0 truncate pt-0.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                              {modelLabel(col.model, col.effort)}
+                            <span
+                              title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                              className="w-20 shrink-0 truncate pt-0.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                            >
+                              {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
                             </span>
                             <button
                               type="button"
