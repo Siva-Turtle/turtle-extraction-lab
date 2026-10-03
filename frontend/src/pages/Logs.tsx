@@ -1,14 +1,15 @@
 import * as React from "react";
 import { useState } from "react";
 import { BarChart3, Braces, ChevronDown, ChevronLeft, ChevronRight, Copy, Sparkles } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { LogsQueryParams } from "../lib/api";
 import { fmt, fmtCostBoth, fmtMs, fmtTokens, modelLabel, serverDetail } from "../lib/format";
 import type { AgentUsage, LogFilters, LogRow, RunUsage } from "../lib/logTypes";
 import { buildRows, columnStats } from "../lib/compare";
-import { agentsFromLog, columnsFromLogs } from "../lib/compareData";
+import { agentsFromLog, columnsFromLogs, unionAgentsFromLogs } from "../lib/compareData";
+import { agentRunningKey } from "../lib/useMultiRun";
 import { groupLogs } from "../lib/logGroups";
 import type { LogGroup } from "../lib/logGroups";
 import { cn } from "../lib/cn";
@@ -99,6 +100,13 @@ function reusedSuffix(r: LogRow): string {
 /** True when a log has any reused agents (full or partial). */
 function hasAnyReuse(r: LogRow): boolean {
   return isFullyReused(r) || reusedCounts(r).reused > 0;
+}
+
+/** Consistency score text ("Consistency X%") or null when absent. */
+function consistencyText(r: LogRow): string | null {
+  const s = r.consistency?.score;
+  if (typeof s !== "number" || !Number.isFinite(s)) return null;
+  return `Consistency ${Math.round(s * 100)}%`;
 }
 
 /** Sum of finite numbers, or null when none qualify. */
@@ -487,7 +495,31 @@ export default function Logs() {
                           {g.agreePct === null ? "—" : `${Math.round(g.agreePct)}%`}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 font-heading text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                          👍{g.up} 👎{g.down}
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            <span>
+                              👍{g.up} 👎{g.down}
+                            </span>
+                            {single
+                              ? consistencyText(first) && (
+                                  <span
+                                    title="Identifier's predicted attributes vs what the agents actually extracted"
+                                  >
+                                    <Badge tone="neutral">{consistencyText(first) as string}</Badge>
+                                  </span>
+                                )
+                              : g.rows
+                                  .filter((r) => consistencyText(r) !== null)
+                                  .map((r) => (
+                                    <span
+                                      key={r.id}
+                                      title={`${modelLabel(r.model, r.reasoning_effort ?? "")}: Identifier's predicted attributes vs what the agents actually extracted`}
+                                    >
+                                      <Badge tone="neutral">
+                                        {consistencyText(r) as string}
+                                      </Badge>
+                                    </span>
+                                  ))}
+                          </span>
                         </td>
                         <td
                           className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]"
@@ -756,9 +788,49 @@ function PrettyPanel({
 }) {
   const log = rows[0] as LogRow;
   const [inputOpen, setInputOpen] = useState(false);
+  const qc = useQueryClient();
+  const [agentRunning, setAgentRunning] = useState<Record<string, boolean>>({});
   const columns = React.useMemo(() => columnsFromLogs(rows), [rows]);
-  const agents = React.useMemo(() => agentsFromLog(log), [log, rows]);
+  const agents = React.useMemo(() => {
+    const colLogs = columns
+      .map((c) => c.log)
+      .filter((l): l is LogRow => !!l);
+    const union = unionAgentsFromLogs(colLogs.length > 0 ? colLogs : rows);
+    if (union.length > 0) return union;
+    return agentsFromLog(log);
+  }, [columns, rows, log]);
   const multi = rows.length > 1;
+
+  function retryAgent(colKey: string, agentId: string) {
+    const target = columns.find((c) => c.key === colKey);
+    const logId = target?.log?.id ?? (multi ? undefined : log.id);
+    if (!logId) return;
+    const k = agentRunningKey(colKey, agentId);
+    setAgentRunning((prev) => ({ ...prev, [k]: true }));
+    api
+      .post(`/runs/logs/${logId}/retry-agent`, { agent_id: agentId })
+      .then(
+        () => {
+          setAgentRunning((prev) => {
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+          qc.invalidateQueries({ queryKey: ["logs"] });
+          qc.invalidateQueries({ queryKey: ["logs-all"] });
+          qc.invalidateQueries({ queryKey: ["log-group"] });
+          toast.success("Agent retried");
+        },
+        (e: unknown) => {
+          setAgentRunning((prev) => {
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+          toast.error(serverDetail(e));
+        },
+      );
+  }
   const showAllNote = listRowCount !== null && rows.length > listRowCount;
   // Denormalized snapshot details — "" on old rows degrades to "Unknown".
   const meetingDetails: [string, string][] = [
@@ -819,9 +891,21 @@ function PrettyPanel({
         </p>
       )}
       {multi ? (
-        <ComparisonMatrix columns={columns} agents={agents} editable showDoneBadge={false} />
+        <ComparisonMatrix
+          columns={columns}
+          agents={agents}
+          editable
+          showDoneBadge={false}
+          onRetryAgent={retryAgent}
+          agentRunning={agentRunning}
+        />
       ) : (
-        <SingleModelTable log={log} />
+        <SingleModelTable
+          log={log}
+          onRetryAgent={(agentId) => retryAgent(columns[0]?.key ?? log.id, agentId)}
+          runningAgents={agentRunning}
+          colKey={columns[0]?.key ?? log.id}
+        />
       )}
     </div>
   );
@@ -968,7 +1052,12 @@ function AnalyticsSingle({
 function AnalyticsPanel({ rows, groupKey }: { rows: LogRow[]; groupKey: string }) {
   const log = rows[0] as LogRow;
   const columns = React.useMemo(() => columnsFromLogs(rows), [rows]);
-  const agents = React.useMemo(() => agentsFromLog(log), [log, rows]);
+  const agents = React.useMemo(() => {
+    const colLogs = columns.map((c) => c.log).filter((l): l is LogRow => !!l);
+    const union = unionAgentsFromLogs(colLogs.length > 0 ? colLogs : rows);
+    if (union.length > 0) return union;
+    return agentsFromLog(log);
+  }, [columns, rows, log]);
   const built = React.useMemo(() => buildRows(agents, columns), [agents, columns]);
 
   if (rows.length === 1) {

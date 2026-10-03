@@ -171,7 +171,26 @@ export function AttributeCompareDrawer({
         {columns.map((col) => {
           const cell = row.cells[col.key];
           if (!cell || !col.log) return null;
+          if (cell.canon === "__not_selected__") {
+            return (
+              <section
+                key={col.key}
+                className="rounded-2xl border border-[#e5e7eb] p-3 dark:border-white/10"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    title={col.model}
+                    className="max-w-48 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                  >
+                    {modelLabel(col.model, col.effort)}
+                  </span>
+                </div>
+                <p className="mt-2 font-sans text-xs italic text-[#8a8f98]">not selected</p>
+              </section>
+            );
+          }
           const rating = model.effectiveRating(row, col.key);
+          const auto = model.isAutoFeedback(row, col.key);
           const remarks = model.getRemarksText(row, col.key);
           const canRemark = rating !== null;
           const confText =
@@ -211,6 +230,14 @@ export function AttributeCompareDrawer({
                 </p>
               )}
               <div className="relative mt-2 flex items-center justify-end gap-1.5">
+                {auto && (
+                  <span
+                    title="Automatically flagged: identifier listed it but the agent returned nothing, or vice versa"
+                    className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+                  >
+                    Auto
+                  </span>
+                )}
                 {remarks.trim() !== "" && (
                   <span
                     className="min-w-0 max-w-48 flex-1 truncate text-left font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"

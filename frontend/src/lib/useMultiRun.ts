@@ -11,6 +11,10 @@ type RunResponse = {
   log?: LogRow | null;
 };
 
+type RetryAgentResponse = {
+  log: LogRow;
+};
+
 /** done when no agent failed, partial when some did, error when all did. */
 function statusOf(log: LogRow): CompareColumn["status"] {
   const outputs = (log.outputs ?? {}) as Record<string, unknown>;
@@ -29,33 +33,45 @@ function slotKey(model: string, effort: string): string {
   return `${model}|${effort}`;
 }
 
+export function agentRunningKey(colKey: string, agentId: string): string {
+  return `${colKey}|${agentId}`;
+}
+
+function stripAgentIds(payload: Record<string, unknown>): Record<string, unknown> {
+  const { agent_ids: _omit, reuse: _reuseOmit, ...rest } = payload;
+  return rest;
+}
+
 /**
- * Fire one `POST /runs` per model slot sharing a `run_group_id`, all at
- * once. Columns stay in picker order and fill in as each call settles.
- * Pass `{ reuse }` for per-agent reuse: every column POSTs /runs with
- * `reuse` for that slot (`{agent_id: source_log_id}`), so reused agents
- * are copied server-side while the rest run fresh. Single-model runs use
- * the same path.
+ * Fire one `POST /runs` (or `/runs/auto`) per model slot sharing a
+ * `run_group_id`, all at once. Columns stay in picker order and fill in as
+ * each call settles. Pass `{ reuse }` for per-agent reuse (non-auto only);
+ * pass `{ auto: true }` to post `/runs/auto` per slot (payload minus
+ * agent_ids). Single-model runs use the same path.
  */
 export function useMultiRun(): {
   groupId: string;
   columns: CompareColumn[];
   running: boolean;
+  agentRunning: Record<string, boolean>;
   start: (
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { reuse?: Record<string, Record<string, string>> },
+    opts?: { reuse?: Record<string, Record<string, string>>; auto?: boolean },
   ) => void;
   retry: (key: string) => void;
+  retryAgent: (colKey: string, agentId: string) => void;
 } {
   const qc = useQueryClient();
   const [groupId, setGroupId] = React.useState("");
   const [columns, setColumns] = React.useState<CompareColumn[]>([]);
+  const [agentRunning, setAgentRunning] = React.useState<Record<string, boolean>>({});
   const payloadRef = React.useRef<Record<string, unknown>>({});
   const groupRef = React.useRef("");
   // Per-column reuse map so retry() re-posts /runs with the same reuse map
   // for that column.
   const reuseRef = React.useRef<Record<string, Record<string, string>>>({});
+  const autoRef = React.useRef(false);
 
   const invalidate = React.useCallback(() => {
     qc.invalidateQueries({ queryKey: ["logs"] });
@@ -86,11 +102,12 @@ export function useMultiRun(): {
   function start(
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { reuse?: Record<string, Record<string, string>> },
+    opts?: { reuse?: Record<string, Record<string, string>>; auto?: boolean },
   ) {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
-    const reuse = opts?.reuse ?? {};
+    const auto = opts?.auto === true;
+    const reuse = auto ? {} : (opts?.reuse ?? {});
     // Every column POSTs /runs with `reuse` for that slot ({} = fresh).
     const reuseForColumn: Record<string, Record<string, string>> = {};
     const cols: CompareColumn[] = slots.map((s) => {
@@ -115,26 +132,34 @@ export function useMultiRun(): {
       };
     });
     reuseRef.current = reuseForColumn;
+    autoRef.current = auto;
     groupRef.current = gid;
     payloadRef.current = { ...basePayload };
     setGroupId(gid);
     setColumns(cols);
+    setAgentRunning({});
     if (cols.length === 0) {
       return;
     }
     const jobs = cols.map((col) => {
-      return api
-        .post("/runs", {
-          ...basePayload,
-          model: col.model,
-          reasoning_effort: col.effort,
-          run_group_id: gid,
-          reuse: reuseForColumn[col.key] ?? {},
-        })
-        .then(
-          (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
-          (e: unknown) => applyHttpError(col.key, e),
-        );
+      const body = auto
+        ? {
+            ...stripAgentIds(basePayload),
+            model: col.model,
+            reasoning_effort: col.effort,
+            run_group_id: gid,
+          }
+        : {
+            ...basePayload,
+            model: col.model,
+            reasoning_effort: col.effort,
+            run_group_id: gid,
+            reuse: reuseForColumn[col.key] ?? {},
+          };
+      return api.post(auto ? "/runs/auto" : "/runs", body).then(
+        (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
+        (e: unknown) => applyHttpError(col.key, e),
+      );
     });
     void Promise.all(jobs).then((statuses) => {
       const ok = statuses.filter((s) => s === "done" || s === "partial").length;
@@ -149,26 +174,71 @@ export function useMultiRun(): {
     const target = columns.find((c) => c.key === key);
     const gid = groupRef.current;
     if (!target || !gid) return;
+    const auto = autoRef.current;
     setColumns((prev) =>
       prev.map((c) =>
         c.key === key ? { ...c, status: "running" as const, error: undefined, startedAt: Date.now() } : c,
       ),
     );
+    const body = auto
+      ? {
+          ...stripAgentIds(payloadRef.current),
+          model: target.model,
+          reasoning_effort: target.effort,
+          run_group_id: gid,
+        }
+      : {
+          ...payloadRef.current,
+          model: target.model,
+          reasoning_effort: target.effort,
+          run_group_id: gid,
+          reuse: reuseRef.current[key] ?? {},
+        };
     api
-      .post("/runs", {
-        ...payloadRef.current,
-        model: target.model,
-        reasoning_effort: target.effort,
-        run_group_id: gid,
-        reuse: reuseRef.current[key] ?? {},
-      })
+      .post(auto ? "/runs/auto" : "/runs", body)
       .then(
         (res) => applySuccess(key, (res.data as RunResponse).log ?? null),
         (e: unknown) => applyHttpError(key, e),
       );
   }
 
-  const running = columns.some((c) => c.status === "running");
+  function retryAgent(colKey: string, agentId: string) {
+    const target = columns.find((c) => c.key === colKey);
+    const logId = target?.log?.id;
+    if (!target || !logId) return;
+    const k = agentRunningKey(colKey, agentId);
+    setAgentRunning((prev) => ({ ...prev, [k]: true }));
+    api
+      .post(`/runs/logs/${logId}/retry-agent`, { agent_id: agentId })
+      .then(
+        (res) => {
+          const log = (res.data as RetryAgentResponse).log ?? null;
+          setAgentRunning((prev) => {
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+          if (log) {
+            applySuccess(colKey, log);
+            toast.success("Agent retried");
+          } else {
+            invalidate();
+            toast.error("No log in response");
+          }
+        },
+        (e: unknown) => {
+          setAgentRunning((prev) => {
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+          invalidate();
+          toast.error(serverDetail(e));
+        },
+      );
+  }
 
-  return { groupId, columns, running, start, retry };
+  const running = columns.some((c) => c.status === "running") || Object.keys(agentRunning).length > 0;
+
+  return { groupId, columns, running, agentRunning, start, retry, retryAgent };
 }

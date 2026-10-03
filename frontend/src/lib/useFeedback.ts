@@ -34,14 +34,20 @@ export function useFeedback(): {
     runId: string,
     agent: string,
     attr: string,
-    saved: { rating: string; remarks: string } | null,
+    saved: { rating: string; remarks: string; auto?: boolean } | null,
   ) => "up" | "down" | null;
   getRemarks: (
     runId: string,
     agent: string,
     attr: string,
-    saved: { rating: string; remarks: string } | null,
+    saved: { rating: string; remarks: string; auto?: boolean } | null,
   ) => string;
+  isAuto: (
+    runId: string,
+    agent: string,
+    attr: string,
+    saved: { rating: string; remarks: string; auto?: boolean } | null,
+  ) => boolean;
   rate: (items: FeedbackRateItem[]) => Promise<void>;
   saveRemarks: (
     runId: string,
@@ -59,12 +65,26 @@ export function useFeedback(): {
   const remarksOverlayRef = React.useRef(remarksOverlay);
   remarksOverlayRef.current = remarksOverlay;
 
+  const isAuto = React.useCallback(
+    (
+      runId: string,
+      agent: string,
+      attr: string,
+      saved: { rating: string; remarks: string; auto?: boolean } | null,
+    ): boolean => {
+      const k = overlayKey(runId, agent, attr);
+      if (k in overlay) return false;
+      return saved?.auto === true;
+    },
+    [overlay],
+  );
+
   const getRating = React.useCallback(
     (
       runId: string,
       agent: string,
       attr: string,
-      saved: { rating: string; remarks: string } | null,
+      saved: { rating: string; remarks: string; auto?: boolean } | null,
     ): "up" | "down" | null => {
       const k = overlayKey(runId, agent, attr);
       if (k in overlay) {
@@ -82,7 +102,7 @@ export function useFeedback(): {
       runId: string,
       agent: string,
       attr: string,
-      saved: { rating: string; remarks: string } | null,
+      saved: { rating: string; remarks: string; auto?: boolean } | null,
     ): string => {
       const k = overlayKey(runId, agent, attr);
       if (k in remarksOverlay) return remarksOverlay[k] ?? "";
@@ -167,5 +187,5 @@ export function useFeedback(): {
     [qc],
   );
 
-  return { getRating, getRemarks, rate, saveRemarks };
+  return { getRating, getRemarks, isAuto, rate, saveRemarks };
 }

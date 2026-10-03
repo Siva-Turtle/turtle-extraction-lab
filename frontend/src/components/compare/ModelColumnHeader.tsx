@@ -69,6 +69,11 @@ export function ModelColumnHeader({
 
   const usage = column.log?.usage;
   const cost = costDisplay(usage?.cost_usd);
+  const consistencyScore = column.log?.consistency?.score;
+  const consistencyText =
+    typeof consistencyScore === "number" && Number.isFinite(consistencyScore)
+      ? `Consistency ${Math.round(consistencyScore * 100)}%`
+      : null;
   const wall = usage ? fmtMs(usage.duration_ms) : "—";
   const tokens =
     usage && typeof usage.prompt_tokens === "number" && typeof usage.completion_tokens === "number"
@@ -188,6 +193,14 @@ export function ModelColumnHeader({
           <span title="Rated rows out of total rows">
             rated {rated}/{total}
           </span>
+          {consistencyText && (
+            <>
+              {" · "}
+              <span title="Identifier's predicted attributes vs what the agents actually extracted">
+                {consistencyText}
+              </span>
+            </>
+          )}
         </div>
       </div>
     </th>

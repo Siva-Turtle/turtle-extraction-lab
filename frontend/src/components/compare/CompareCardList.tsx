@@ -1,9 +1,16 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
 import { fmtMs, formatValue, modelLabel } from "../../lib/format";
-import { NOT_FOUND_CANON, canonicalKey, emptyRowCount, groupAgreementPct } from "../../lib/compare";
+import {
+  NOT_FOUND_CANON,
+  NOT_SELECTED_CANON,
+  canonicalKey,
+  emptyRowCount,
+  groupAgreementPct,
+} from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
+import { agentRunningKey } from "../../lib/useMultiRun";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import { Badge } from "../ui/Badge";
 import { CompareToolbar } from "./CompareToolbar";
@@ -130,12 +137,16 @@ export function CompareCardList({
   agents,
   editable,
   onRetry,
+  onRetryAgent,
+  agentRunning,
   showDoneBadge = true,
 }: {
   columns: CompareColumn[];
   agents: CompareAgent[];
   editable: boolean;
   onRetry?: (key: string) => void;
+  onRetryAgent?: (colKey: string, agentId: string) => void;
+  agentRunning?: Record<string, boolean>;
   focusColumnKey?: string;
   showDoneBadge?: boolean;
 }): React.JSX.Element {
@@ -150,10 +161,16 @@ export function CompareCardList({
     toggleAgent,
     perCol,
     effectiveRating,
+    isAutoFeedback,
     hasRemarks,
     attrDescription,
     handleCellRate,
   } = model;
+
+  function isRunning(colKey: string, agentId: string): boolean {
+    if (!agentRunning) return false;
+    return agentRunning[agentRunningKey(colKey, agentId)] === true;
+  }
 
   const [drawerRow, setDrawerRow] = React.useState<CompareRow | null>(null);
   const drawerAgent = React.useMemo(() => {
@@ -329,7 +346,33 @@ export function CompareCardList({
                             </li>
                           );
                         }
+                        if (isRunning(col.key, row.agentId)) {
+                          return (
+                            <li key={col.key} className="flex items-center gap-2">
+                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                                {modelLabel(col.model, col.effort)}
+                              </span>
+                              <span className="inline-flex flex-1 items-center gap-1 font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                Retrying agent…
+                              </span>
+                            </li>
+                          );
+                        }
+                        if (cell?.canon === NOT_SELECTED_CANON) {
+                          return (
+                            <li key={col.key} className="flex items-center gap-2">
+                              <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                                {modelLabel(col.model, col.effort)}
+                              </span>
+                              <span className="flex-1 font-sans text-[11px] italic text-[#8a8f98]">
+                                not selected
+                              </span>
+                            </li>
+                          );
+                        }
                         if (!cell || cell.canon === PENDING_CANON || cell.canon === ERROR_CANON || cell.error) {
+                          const canRetryAgent = !!onRetryAgent && !!col.log;
                           return (
                             <li key={col.key} className="flex items-center gap-2">
                               <span title={col.model} className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
@@ -337,12 +380,32 @@ export function CompareCardList({
                               </span>
                               <span className="flex-1 font-sans text-[11px] text-[#b91c1c] dark:text-[#f87171]">
                                 Agent failed{cell?.error ? ` · ${cell.error}` : ""}
+                                {canRetryAgent ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onRetryAgent(col.key, row.agentId)}
+                                    className="ml-2 font-heading font-bold underline"
+                                  >
+                                    Retry
+                                  </button>
+                                ) : (
+                                  onRetry && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onRetry(col.key)}
+                                      className="ml-2 font-heading font-bold underline"
+                                    >
+                                      Retry
+                                    </button>
+                                  )
+                                )}
                               </span>
                             </li>
                           );
                         }
                         const notFound = cell.canon === NOT_FOUND_CANON;
                         const rating = effectiveRating(row, col.key);
+                        const auto = isAutoFeedback(row, col.key);
                         const confText =
                           typeof cell.confidence === "number" && Number.isFinite(cell.confidence)
                             ? cell.confidence.toFixed(2)
@@ -388,6 +451,14 @@ export function CompareCardList({
                                 aria-label="Has remarks"
                                 className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#1d1d1d] dark:bg-[#F0EFEC]"
                               />
+                            )}
+                            {auto && (
+                              <span
+                                title="Automatically flagged: identifier listed it but the agent returned nothing, or vice versa"
+                                className="mt-1 shrink-0 rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+                              >
+                                Auto
+                              </span>
                             )}
                             {editable && (
                               <span className="flex shrink-0 items-center">

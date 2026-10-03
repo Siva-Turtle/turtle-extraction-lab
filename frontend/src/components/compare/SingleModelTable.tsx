@@ -65,7 +65,7 @@ function savedFeedback(
   log: LogRow,
   agentName: string,
   attr: string,
-): { rating: string; remarks: string } | null {
+): { rating: string; remarks: string; auto?: boolean } | null {
   try {
     const fb = log.feedback;
     if (!fb || typeof fb !== "object") return null;
@@ -75,13 +75,52 @@ function savedFeedback(
     if (!entry || typeof entry !== "object") return null;
     const r = (entry as { rating?: unknown }).rating;
     const m = (entry as { remarks?: unknown }).remarks;
+    const a = (entry as { auto?: unknown }).auto;
     return {
       rating: typeof r === "string" ? r : "",
       remarks: typeof m === "string" ? m : "",
+      ...(a === true ? { auto: true as const } : {}),
     };
   } catch {
     return null;
   }
+}
+
+function AutoTag(): React.JSX.Element {
+  return (
+    <span
+      title="Automatically flagged: identifier listed it but the agent returned nothing, or vice versa"
+      className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+    >
+      Auto
+    </span>
+  );
+}
+
+/** Consistency line for one agent card ("Consistency X% · missed: … · unexpected: …"). */
+function ConsistencyLine({
+  log,
+  agentId,
+}: {
+  log: LogRow;
+  agentId: string;
+}): React.JSX.Element | null {
+  const entry = log.consistency?.agents?.[agentId];
+  if (!entry) return null;
+  const pct = Math.round(entry.score * 100);
+  const missed = (entry.missed ?? []).filter((s) => s.trim() !== "");
+  const unexpected = (entry.unexpected ?? []).filter((s) => s.trim() !== "");
+  const parts: string[] = [`Consistency ${pct}%`];
+  if (missed.length > 0) parts.push(`missed: ${missed.join(", ")}`);
+  if (unexpected.length > 0) parts.push(`unexpected: ${unexpected.join(", ")}`);
+  return (
+    <p
+      className="mt-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+      title="Identifier's predicted attributes vs what the agents actually extracted"
+    >
+      {parts.join(" · ")}
+    </p>
+  );
 }
 
 function IdentifierFeedback({
@@ -91,7 +130,7 @@ function IdentifierFeedback({
 }: {
   log: LogRow;
   agentName: string;
-  saved: { rating: string; remarks: string } | null;
+  saved: { rating: string; remarks: string; auto?: boolean } | null;
 }) {
   const qc = useQueryClient();
   const [rating, setRating] = React.useState<"up" | "down" | null>(
@@ -138,6 +177,7 @@ function IdentifierFeedback({
   return (
     <div className="mt-2 flex max-w-full flex-wrap items-center gap-2">
       <ThumbButtons value={rating} onChange={handleThumb} />
+      {saved?.auto === true && <AutoTag />}
       <span
         className={cn(
           "min-w-0 max-w-60 flex-1 truncate font-sans text-xs",
@@ -192,7 +232,7 @@ function AttrRow({
   agentName: string;
   attr: string;
   r: PrettyAttr;
-  saved: { rating: string; remarks: string } | null;
+  saved: { rating: string; remarks: string; auto?: boolean } | null;
   sn: number;
 }) {
   const qc = useQueryClient();
@@ -270,6 +310,7 @@ function AttrRow({
       <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
         <div className="flex flex-wrap items-center gap-1.5">
           <ThumbButtons value={rating} onChange={handleThumb} />
+          {saved?.auto === true && <AutoTag />}
         </div>
       </td>
       <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
@@ -322,11 +363,31 @@ function AttrRow({
 
 /**
  * Today's single-model per-agent table (extracted from Logs.tsx PrettyPanel;
- * markup and classes unchanged). One column => this table.
+ * markup and classes unchanged). One column => this table. Supports per-agent
+ * retry (`onRetryAgent`) with `runningAgents` (`Record<`${colKey}|${agentId}`, true>`
+ * or `Record<agentId, true>`; `colKey` scopes the lookup when provided) and
+ * shows consistency + Auto tags for auto-select runs.
  */
-export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
+export function SingleModelTable({
+  log,
+  onRetryAgent,
+  runningAgents,
+  colKey,
+}: {
+  log: LogRow;
+  onRetryAgent?: (agentId: string) => void;
+  runningAgents?: Record<string, boolean>;
+  colKey?: string;
+}): React.JSX.Element {
   const reused = isReused(log);
   const reusedWhen = reused ? reusedFromLabel(log) : null;
+
+  function isRunning(agentId: string): boolean {
+    if (!runningAgents) return false;
+    if (colKey && runningAgents[`${colKey}|${agentId}`] === true) return true;
+    return runningAgents[agentId] === true;
+  }
+
   return (
     <div className="grid min-w-0 max-w-full gap-3">
       {reused && (
@@ -341,6 +402,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
         const agentName = agentDisplayName(log, agentId);
         if (out && typeof out === "object" && "_error" in (out as Record<string, unknown>)) {
           const err = (out as Record<string, unknown>)._error;
+          const running = isRunning(agentId);
           return (
             <div
               key={agentId}
@@ -348,8 +410,15 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
             >
               <AgentTitle log={log} agentId={agentId} name={agentName} />
               <p className="mt-1 break-words font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
-                Agent failed: {String(err)}
+                {running ? "Retrying agent…" : `Agent failed: ${String(err)}`}
               </p>
+              {!running && onRetryAgent && (
+                <div className="mt-2">
+                  <Button variant="secondary" size="sm" onClick={() => onRetryAgent(agentId)}>
+                    Retry
+                  </Button>
+                </div>
+              )}
             </div>
           );
         }
@@ -401,6 +470,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
         return (
           <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
             <AgentTitle log={log} agentId={agentId} name={agentName} />
+            <ConsistencyLine log={log} agentId={agentId} />
             {entries.length === 0 ? (
               <p className="mt-2 font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
             ) : (

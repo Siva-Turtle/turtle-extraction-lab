@@ -48,7 +48,7 @@ export type CellState = {
   evidence?: unknown;
   canon: string;
   error?: string;
-  feedback: { rating: string; remarks: string } | null;
+  feedback: { rating: string; remarks: string; auto?: boolean } | null;
 };
 
 export type ElementDiff =
@@ -80,6 +80,12 @@ const ERROR_CANON = "__error__";
 
 /** Missing-value sentinel shared with the matrix UI ("— not found"). */
 export const NOT_FOUND_CANON = "∅";
+
+/**
+ * Agent a model did not select (auto-select runs). Muted "not selected"
+ * cells, excluded from agreement like pending/error.
+ */
+export const NOT_SELECTED_CANON = "__not_selected__";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -152,7 +158,7 @@ function cellFeedback(
   log: LogRow,
   agentName: string,
   attr: string,
-): { rating: string; remarks: string } | null {
+): { rating: string; remarks: string; auto?: boolean } | null {
   try {
     const fb = log.feedback;
     if (!fb || typeof fb !== "object") return null;
@@ -162,9 +168,11 @@ function cellFeedback(
     if (!entry || typeof entry !== "object") return null;
     const r = (entry as { rating?: unknown }).rating;
     const m = (entry as { remarks?: unknown }).remarks;
+    const a = (entry as { auto?: unknown }).auto;
     return {
       rating: typeof r === "string" ? r : "",
       remarks: typeof m === "string" ? m : "",
+      ...(a === true ? { auto: true as const } : {}),
     };
   } catch {
     return null;
@@ -180,6 +188,18 @@ function agentOutput(
   const byId = outs[agentId];
   if (byId !== undefined && byId !== null) return byId;
   return outs[agentName];
+}
+
+/** True when the log ran this agent (output present by id or name). */
+function hasAgentOutput(log: LogRow, agentId: string, agentName: string): boolean {
+  try {
+    const outs = (log.outputs ?? {}) as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(outs, agentId)) return true;
+    if (agentName !== agentId && Object.prototype.hasOwnProperty.call(outs, agentName)) return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /** Split one agent output object into the cell for one attribute. */
@@ -292,7 +312,13 @@ function finalizeRow(
   const groups = new Map<string, string[]>();
   for (const col of columns) {
     const canon = cells[col.key]?.canon;
-    if (!canon || canon === PENDING_CANON || canon === ERROR_CANON) continue;
+    if (
+      !canon ||
+      canon === PENDING_CANON ||
+      canon === ERROR_CANON ||
+      canon === NOT_SELECTED_CANON
+    )
+      continue;
     const list = groups.get(canon);
     if (list) list.push(col.key);
     else groups.set(canon, [col.key]);
@@ -329,7 +355,12 @@ function finalizeRow(
   for (const col of columns) {
     const cell = cells[col.key];
     if (!cell) continue;
-    if (cell.canon === PENDING_CANON || cell.canon === ERROR_CANON) continue;
+    if (
+      cell.canon === PENDING_CANON ||
+      cell.canon === ERROR_CANON ||
+      cell.canon === NOT_SELECTED_CANON
+    )
+      continue;
     comparedList.push({ key: col.key, cell });
   }
   const allEmpty =
@@ -451,6 +482,10 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
       };
       continue;
     }
+    if (!hasAgentOutput(log, agent.id, agent.name)) {
+      selCells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
+      continue;
+    }
     const out = agentOutput(log, agent.id, agent.name);
     const agentErr = hasAgentError(out);
     if (agentErr !== null) {
@@ -483,6 +518,10 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
           error: col.error,
           feedback: null,
         };
+        continue;
+      }
+      if (!hasAgentOutput(log, agent.id, agent.name)) {
+        cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
         continue;
       }
       const out = agentOutput(log, agent.id, agent.name);
@@ -550,6 +589,10 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
           };
           continue;
         }
+        if (!hasAgentOutput(log, agent.id, agent.name)) {
+          cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
+          continue;
+        }
         const out = agentOutput(log, agent.id, agent.name);
         const agentErr = hasAgentError(out);
         if (agentErr !== null) {
@@ -586,7 +629,13 @@ function comparedValues(row: CompareRow): { keys: string[]; values: unknown[] } 
   const keys: string[] = [];
   const values: unknown[] = [];
   for (const [k, cell] of Object.entries(row.cells)) {
-    if (!cell || cell.canon === PENDING_CANON || cell.canon === ERROR_CANON) continue;
+    if (
+      !cell ||
+      cell.canon === PENDING_CANON ||
+      cell.canon === ERROR_CANON ||
+      cell.canon === NOT_SELECTED_CANON
+    )
+      continue;
     keys.push(k);
     values.push(cell.canon === NOT_FOUND_CANON ? undefined : cell.value);
   }
@@ -627,7 +676,13 @@ export function columnStats(
 /** Other columns holding the same canonical value in this row. */
 export function linkedTargets(_rows: CompareRow[], row: CompareRow, colKey: string): string[] {
   const cell = row.cells[colKey];
-  if (!cell || cell.canon === PENDING_CANON || cell.canon === ERROR_CANON) return [];
+  if (
+    !cell ||
+    cell.canon === PENDING_CANON ||
+    cell.canon === ERROR_CANON ||
+    cell.canon === NOT_SELECTED_CANON
+  )
+    return [];
   const group = row.groups.get(cell.canon);
   if (!group) return [];
   return group.filter((k) => k !== colKey);

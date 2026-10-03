@@ -2,9 +2,24 @@
 
 export type Rating = "up" | "down";
 
-export type FeedbackEntry = { rating: Rating | ""; remarks: string };
+export type FeedbackEntry = { rating: Rating | ""; remarks: string; auto?: boolean };
 
 export type FeedbackMap = Record<string, Record<string, FeedbackEntry>>;
+
+export type ConsistencyAgent = {
+  agent_name: string;
+  predicted: string[];
+  extracted: string[];
+  missed: string[];
+  unexpected: string[];
+  score: number;
+};
+
+export type Consistency = {
+  score: number | null;
+  identifier_agent_id?: string;
+  agents: Record<string, ConsistencyAgent>;
+};
 
 export type AgentUsage = {
   prompt_tokens: number;
@@ -43,7 +58,8 @@ export type LogRow = {
   attribute_snapshot?: Record<string, unknown>;
   outputs: Record<string, unknown>;
   requests?: Record<string, unknown>;
-  feedback: Record<string, Record<string, { rating: string; remarks: string }>>;
+  feedback: Record<string, Record<string, { rating: string; remarks: string; auto?: boolean }>>;
+  consistency?: Consistency | null;
   usage?: RunUsage;
   filters?: LogFilters;
   // Denormalized meeting snapshot (plain strings, "" on old rows).

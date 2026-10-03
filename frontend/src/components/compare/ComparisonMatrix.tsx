@@ -1,9 +1,16 @@
 import * as React from "react";
+import { Loader2 } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { NOT_FOUND_CANON, emptyRowCount, groupAgreementPct } from "../../lib/compare";
+import {
+  NOT_FOUND_CANON,
+  NOT_SELECTED_CANON,
+  emptyRowCount,
+  groupAgreementPct,
+} from "../../lib/compare";
 import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { useIsNarrow } from "../../lib/useIsNarrow";
+import { agentRunningKey } from "../../lib/useMultiRun";
 import { Button } from "../ui/Button";
 import { Modal } from "../ui/Modal";
 import { RemarksPopover } from "../ui/RemarksPopover";
@@ -49,12 +56,16 @@ export function ComparisonMatrix({
   agents,
   editable,
   onRetry,
+  onRetryAgent,
+  agentRunning,
   showDoneBadge = true,
 }: {
   columns: CompareColumn[];
   agents: CompareAgent[];
   editable: boolean;
   onRetry?: (key: string) => void;
+  onRetryAgent?: (colKey: string, agentId: string) => void;
+  agentRunning?: Record<string, boolean>;
   focusColumnKey?: string;
   showDoneBadge?: boolean;
 }): React.JSX.Element {
@@ -73,12 +84,18 @@ export function ComparisonMatrix({
     cheapestKey,
     fastestKey,
     effectiveRating,
+    isAutoFeedback,
     hasRemarks,
     getRemarksText,
     attrDescription,
     handleCellRate,
     saveRemarksFor,
   } = model;
+
+  function isAgentRunning(colKey: string, agentId: string): boolean {
+    if (!agentRunning) return false;
+    return agentRunning[agentRunningKey(colKey, agentId)] === true;
+  }
 
   const [drawerRow, setDrawerRow] = React.useState<CompareRow | null>(null);
   const [remarksFor, setRemarksFor] = React.useState<string | null>(null);
@@ -177,7 +194,13 @@ export function ComparisonMatrix({
     const col = columns.find((c) => c.key === colKey);
     const cell = row.cells[colKey];
     if (!col?.log || !col.log.run_id) return false;
-    if (!cell || cell.canon === PENDING_CANON || cell.canon === ERROR_CANON) return false;
+    if (
+      !cell ||
+      cell.canon === PENDING_CANON ||
+      cell.canon === ERROR_CANON ||
+      cell.canon === NOT_SELECTED_CANON
+    )
+      return false;
     return true;
   }
 
@@ -273,7 +296,15 @@ export function ComparisonMatrix({
 
   if (narrow) {
     return (
-      <CompareCardList columns={columns} agents={agents} editable={editable} onRetry={onRetry} showDoneBadge={showDoneBadge} />
+      <CompareCardList
+        columns={columns}
+        agents={agents}
+        editable={editable}
+        onRetry={onRetry}
+        onRetryAgent={onRetryAgent}
+        agentRunning={agentRunning}
+        showDoneBadge={showDoneBadge}
+      />
     );
   }
 
@@ -451,8 +482,44 @@ export function ComparisonMatrix({
                                 </td>
                               );
                             }
+                            // Per-agent retry running: only that agent's cells show running.
+                            if (isAgentRunning(col.key, row.agentId)) {
+                              return (
+                                <td
+                                  key={col.key}
+                                  {...focusProps}
+                                  className={cn(
+                                    "break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
+                                    focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
+                                  )}
+                                >
+                                  <p className="inline-flex items-center gap-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                    Retrying agent…
+                                  </p>
+                                </td>
+                              );
+                            }
+                            // Agent was not selected by this model (auto-select): muted, excluded.
+                            if (cell?.canon === NOT_SELECTED_CANON) {
+                              return (
+                                <td
+                                  key={col.key}
+                                  {...focusProps}
+                                  className={cn(
+                                    "break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
+                                    focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
+                                  )}
+                                >
+                                  <p className="font-sans text-xs italic text-[#8a8f98]">
+                                    not selected
+                                  </p>
+                                </td>
+                              );
+                            }
                             // Agent-level failure for a finished column.
                             if (!cell || cell.canon === ERROR_CANON || cell.error) {
+                              const canRetryAgent = !!onRetryAgent && !!col.log;
                               return (
                                 <td
                                   key={col.key}
@@ -465,12 +532,24 @@ export function ComparisonMatrix({
                                   <p className="break-words font-sans text-xs text-[#b91c1c] [overflow-wrap:anywhere] dark:text-[#f87171]">
                                     Agent failed{cell?.error ? ` · ${cell.error}` : ""}
                                   </p>
-                                  {onRetry && (
+                                  {canRetryAgent ? (
                                     <div className="mt-1.5">
-                                      <Button variant="secondary" size="sm" onClick={() => onRetry(col.key)}>
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => onRetryAgent(col.key, row.agentId)}
+                                      >
                                         Retry
                                       </Button>
                                     </div>
+                                  ) : (
+                                    onRetry && (
+                                      <div className="mt-1.5">
+                                        <Button variant="secondary" size="sm" onClick={() => onRetry(col.key)}>
+                                          Retry
+                                        </Button>
+                                      </div>
+                                    )
                                   )}
                                 </td>
                               );
@@ -504,7 +583,12 @@ export function ComparisonMatrix({
                               if (other.key === col.key) continue;
                               const otherCell = row.cells[other.key];
                               if (!otherCell) continue;
-                              if (otherCell.canon === PENDING_CANON || otherCell.canon === ERROR_CANON) continue;
+                              if (
+                                otherCell.canon === PENDING_CANON ||
+                                otherCell.canon === ERROR_CANON ||
+                                otherCell.canon === NOT_SELECTED_CANON
+                              )
+                                continue;
                               if (otherCell.canon !== cell.canon && effectiveRating(row, other.key) === "up") {
                                 notAccepted = true;
                                 break;
@@ -533,6 +617,7 @@ export function ComparisonMatrix({
                                   evidence={cell.evidence}
                                   detail={detail}
                                   rating={rating}
+                                  auto={isAutoFeedback(row, col.key)}
                                   onRate={(n) => handleCellRate(row, col.key, n)}
                                   editable={editable}
                                   hasRemarks={hasRemarks(row, col.key)}

@@ -101,6 +101,7 @@ export function useCompareModel(
   allFinished: boolean;
   feedback: ReturnType<typeof useFeedback>;
   effectiveRating: (row: CompareRow, colKey: string) => "up" | "down" | null;
+  isAutoFeedback: (row: CompareRow, colKey: string) => boolean;
   getRemarksText: (row: CompareRow, colKey: string) => string;
   hasRemarks: (row: CompareRow, colKey: string) => boolean;
   cellIdentity: (row: CompareRow, colKey: string) => CellIdentity | null;
@@ -130,6 +131,19 @@ export function useCompareModel(
       if (!log || !log.run_id) return null;
       const agentName = snapshotAgentName(log, row.agentId, row.agentName);
       return feedback.getRating(log.run_id, agentName, row.attr, row.cells[colKey]?.feedback ?? null);
+    },
+    [columns, feedback],
+  );
+
+  const isAutoFeedback = React.useCallback(
+    (row: CompareRow, colKey: string): boolean => {
+      const col = columns.find((c) => c.key === colKey);
+      const log = col?.log;
+      if (!log || !log.run_id) {
+        return row.cells[colKey]?.feedback?.auto === true;
+      }
+      const agentName = snapshotAgentName(log, row.agentId, row.agentName);
+      return feedback.isAuto(log.run_id, agentName, row.attr, row.cells[colKey]?.feedback ?? null);
     },
     [columns, feedback],
   );
@@ -371,6 +385,7 @@ export function useCompareModel(
     allFinished,
     feedback,
     effectiveRating,
+    isAutoFeedback,
     getRemarksText,
     hasRemarks,
     cellIdentity,

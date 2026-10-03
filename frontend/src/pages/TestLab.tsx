@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, fmtRelative, modelLabel, serverDetail } from "../lib/format";
-import { agentsFromLog } from "../lib/compareData";
+import { unionAgentsFromLogs } from "../lib/compareData";
 import { estimateRunCost } from "../lib/estimate";
 import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
@@ -223,10 +223,12 @@ function AgentsMultiSelect({
   agents,
   selected,
   onChange,
+  disabled,
 }: {
   agents: Agent[];
   selected: string[];
   onChange: (ids: string[]) => void;
+  disabled?: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   const [filter, setFilter] = React.useState("");
@@ -248,11 +250,14 @@ function AgentsMultiSelect({
         : `${orderedNames[0]} + ${orderedNames.length - 1} other${orderedNames.length - 1 === 1 ? "" : "s"}`;
 
   return (
-    <div>
+    <div className={cn(disabled && "opacity-50")}>
       <div className="relative">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            if (!disabled) setOpen((o) => !o);
+          }}
+          disabled={disabled}
           aria-expanded={open}
           aria-haspopup="listbox"
           aria-label="Agents to run"
@@ -260,6 +265,7 @@ function AgentsMultiSelect({
             "flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-[#e5e7eb] bg-white py-2 pl-3 pr-2 font-sans text-sm",
             "hover:border-[#1d1d1d] focus:border-transparent focus-visible:outline-2 focus-visible:outline-[#1d1d1d] focus-visible:outline-offset-1",
             "dark:border-white/10 dark:bg-[#2e2e2e] dark:hover:border-white/40 dark:focus-visible:outline-[#2fdebf]",
+            "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
           <span
@@ -334,6 +340,15 @@ function AgentsMultiSelect({
 }
 
 const SLOTS_KEY = "lab:last-model-slots";
+const AUTO_KEY = "lab:auto-select";
+
+function loadAutoSelect(): boolean {
+  try {
+    return localStorage.getItem(AUTO_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function isSlotLike(v: unknown): v is ModelSlot {
   if (!v || typeof v !== "object") return false;
@@ -385,8 +400,8 @@ function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
 }
 
 /**
- * Compare agents for the matrix: from the first finished column's
- * `log.agent_snapshot` via the shared agentsFromLog helper; before anything
+ * Compare agents for the matrix: union of agents across finished columns
+ * (auto-select runs may pick a different subset per model); before anything
  * finishes, from the selected agents with empty attributes so section
  * headers + skeletons show.
  */
@@ -395,11 +410,11 @@ function buildCompareAgents(
   selectedIds: string[],
   allAgents: { id: string; name: string; kind: string }[],
 ): CompareAgent[] {
-  const first = columns.find(
-    (c) => c.log && (c.status === "done" || c.status === "partial"),
-  );
-  if (first?.log) {
-    const out = agentsFromLog(first.log);
+  const finishedLogs = columns
+    .filter((c) => c.log && (c.status === "done" || c.status === "partial"))
+    .map((c) => c.log as NonNullable<CompareColumn["log"]>);
+  if (finishedLogs.length > 0) {
+    const out = unionAgentsFromLogs(finishedLogs);
     if (out.length > 0) return out;
   }
   return selectedIds.map((id) => {
@@ -428,9 +443,13 @@ function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | nul
 function ColumnBlock({
   column,
   onRetry,
+  onRetryAgent,
+  agentRunning,
 }: {
   column: CompareColumn;
   onRetry: (key: string) => void;
+  onRetryAgent?: (colKey: string, agentId: string) => void;
+  agentRunning?: Record<string, boolean>;
 }): React.JSX.Element {
   return (
     <div className="rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
@@ -470,7 +489,14 @@ function ColumnBlock({
       )}
       {column.log && (
         <div className="mt-3">
-          <SingleModelTable log={column.log} />
+          <SingleModelTable
+            log={column.log}
+            onRetryAgent={
+              onRetryAgent ? (agentId) => onRetryAgent(column.key, agentId) : undefined
+            }
+            runningAgents={agentRunning}
+            colKey={column.key}
+          />
         </div>
       )}
     </div>
@@ -479,6 +505,7 @@ function ColumnBlock({
 
 export default function TestLab() {
   const [slots, setSlots] = React.useState<ModelSlot[]>(loadSlots);
+  const [autoSelect, setAutoSelect] = React.useState<boolean>(loadAutoSelect);
   const [selected, setSelected] = React.useState<string[]>([]);
   const [clientId, setClientId] = React.useState("");
   const [selectedMeetingTypes, setSelectedMeetingTypes] = React.useState<string[]>([]);
@@ -503,6 +530,14 @@ export default function TestLab() {
       // ignore persistence failures (private mode, quota)
     }
   }, [slots]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_KEY, autoSelect ? "1" : "0");
+    } catch {
+      // ignore persistence failures (private mode, quota)
+    }
+  }, [autoSelect]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
@@ -629,6 +664,10 @@ export default function TestLab() {
     const basePayload = buildBasePayload();
     const currentSlots = [...slots];
     const currentSelected = [...selected];
+    if (autoSelect) {
+      multi.start(currentSlots, basePayload, { auto: true });
+      return;
+    }
     setChecking(true);
     api
       .post("/runs/check-existing", {
@@ -712,7 +751,7 @@ export default function TestLab() {
     if (transcriptQuery.isFetching || transcriptQuery.isLoading) return "Transcript still loading…";
     if (!transcriptQuery.data?.transcription?.trim()) return "Transcript still loading…";
     if (slots.length === 0) return "Add a model first";
-    if (selected.length === 0) return "Select at least one agent";
+    if (!autoSelect && selected.length === 0) return "Select at least one agent";
     return null;
   }
 
@@ -895,8 +934,27 @@ export default function TestLab() {
             />
           </div>
           <div className={fieldLabel}>
-            <div className="mt-1.5">
-              <AgentsMultiSelect agents={enabledAgents} selected={selected} onChange={setSelected} />
+            <div className="mt-1.5 grid gap-2">
+              <label className="flex cursor-pointer items-center gap-2 font-sans text-sm font-normal normal-case tracking-normal text-[#1d1d1d] dark:text-[#F0EFEC]">
+                <input
+                  type="checkbox"
+                  checked={autoSelect}
+                  onChange={(e) => setAutoSelect(e.target.checked)}
+                  aria-label="Auto Select Agents"
+                />
+                <span>Auto Select Agents</span>
+              </label>
+              <AgentsMultiSelect
+                agents={enabledAgents}
+                selected={selected}
+                onChange={setSelected}
+                disabled={autoSelect}
+              />
+              {autoSelect && (
+                <p className="font-sans text-xs font-normal normal-case tracking-normal text-[#4a5058] dark:text-[#C3C2B7]">
+                  Agent identifier picks agents per model
+                </p>
+              )}
             </div>
           </div>
           <div className="flex justify-end gap-2">
@@ -1069,11 +1127,19 @@ export default function TestLab() {
               agents={compareAgents}
               editable
               onRetry={multi.retry}
+              onRetryAgent={multi.retryAgent}
+              agentRunning={multi.agentRunning}
             />
           ) : (
             <div className="grid gap-3">
               {multi.columns.map((column) => (
-                <ColumnBlock key={column.key} column={column} onRetry={multi.retry} />
+                <ColumnBlock
+                  key={column.key}
+                  column={column}
+                  onRetry={multi.retry}
+                  onRetryAgent={multi.retryAgent}
+                  agentRunning={multi.agentRunning}
+                />
               ))}
             </div>
           )}

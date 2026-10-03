@@ -121,6 +121,7 @@ export function CompareCell({
   evidence,
   detail,
   rating,
+  auto,
   onRate,
   editable,
   hasRemarks,
@@ -138,6 +139,7 @@ export function CompareCell({
   evidence?: unknown;
   detail: CompareDetail;
   rating: "up" | "down" | null;
+  auto?: boolean;
   onRate: (next: "up" | "down" | null) => void;
   editable: boolean;
   hasRemarks: boolean;
@@ -191,6 +193,14 @@ export function CompareCell({
         </span>
       )}
       <div className="flex items-center justify-end gap-1.5">
+        {auto && (
+          <span
+            title="Automatically flagged: identifier listed it but the agent returned nothing, or vice versa"
+            className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+          >
+            Auto
+          </span>
+        )}
         {notAccepted && (
           <span
             title="Another model with a different value is rated up"

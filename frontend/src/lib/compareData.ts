@@ -54,6 +54,37 @@ function timeOf(ts: string): number {
 }
 
 /**
+ * Union of compare agents across logs (auto-select: each model may select a
+ * different subset). Merged by agent id; attributes merged by name
+ * (first-seen order). Never throws.
+ */
+export function unionAgentsFromLogs(logs: LogRow[]): CompareAgent[] {
+  const byId = new Map<string, CompareAgent>();
+  for (const log of logs) {
+    for (const a of agentsFromLog(log)) {
+      const existing = byId.get(a.id);
+      if (!existing) {
+        byId.set(a.id, {
+          id: a.id,
+          name: a.name,
+          kind: a.kind,
+          attributes: [...a.attributes],
+        });
+      } else {
+        const seen = new Set(existing.attributes.map((x) => x.name));
+        for (const attr of a.attributes) {
+          if (!seen.has(attr.name)) {
+            seen.add(attr.name);
+            existing.attributes.push(attr);
+          }
+        }
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
  * Compare agents from one log's `agent_snapshot` (real shape: per agent id
  * {name, kind, attributes [{name, type, description, group}]}). Never throws;
  * [] when the snapshot is missing or malformed.
