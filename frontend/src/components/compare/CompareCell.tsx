@@ -4,6 +4,7 @@ import { canonicalKey } from "../../lib/compare";
 import type { ElementDiff } from "../../lib/compare";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import type { CompareDetail } from "./CompareToolbar";
+import { UnwrappedListTable } from "./UnwrappedListTable";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -26,12 +27,15 @@ function keysAgreeOf(diff: ElementDiff | undefined): Map<string, boolean> | null
   return m;
 }
 
-function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): React.JSX.Element {
+function ValueView({ value, diff, unwrapped }: { value: unknown; diff?: ElementDiff; unwrapped?: boolean }): React.JSX.Element {
   if (value === null || value === undefined) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
   if (typeof value === "string" && value.trim() === "") {
     return <span className="italic text-[#8a8f98]">— not found</span>;
+  }
+  if (unwrapped && Array.isArray(value)) {
+    return <UnwrappedListTable value={value} />;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) {
@@ -132,6 +136,7 @@ export function CompareCell({
   remarksOpen,
   canRemark,
   diff,
+  unwrapped,
 }: {
   value: unknown;
   confidence?: unknown;
@@ -150,6 +155,7 @@ export function CompareCell({
   remarksOpen?: boolean;
   canRemark?: boolean;
   diff?: ElementDiff;
+  unwrapped?: boolean;
 }): React.JSX.Element {
   const confText =
     typeof confidence === "number" && Number.isFinite(confidence) ? confidence.toFixed(2) : "?";
@@ -162,7 +168,7 @@ export function CompareCell({
   const valueNode = notFound ? (
     <span className="italic text-[#8a8f98]">— not found</span>
   ) : (
-    <ValueView value={value} diff={diff} />
+    <ValueView value={value} diff={diff} unwrapped={unwrapped} />
   );
 
   return (
@@ -179,12 +185,12 @@ export function CompareCell({
       ) : (
         valueNode
       )}
-      {detail !== "value" && !notFound && (
+      {detail !== "value" && !notFound && !unwrapped && (
         <span className="break-words font-mono text-[11px] text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
           conf {confText} · {confTypeText}
         </span>
       )}
-      {detail === "evidence" && !notFound && evidenceText.trim() !== "" && (
+      {detail === "evidence" && !notFound && !unwrapped && evidenceText.trim() !== "" && (
         <span
           className="break-words font-sans text-[11px] italic text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]"
           title={evidenceText}

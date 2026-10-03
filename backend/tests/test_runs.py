@@ -125,7 +125,7 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
                           "description": "Extracted value for mood"},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 "confidence_type": {"type": "string",
-                                    "enum": ["quoted", "inferred", "normalized", "not_found"]},
+                                    "enum": ["quoted", "inferred", "normalized", "calculated", "not_found"]},
                 "evidence": {"type": ["string", "null"]},
             },
             "required": ["value", "confidence", "confidence_type", "evidence"],
@@ -145,7 +145,8 @@ def test_run_shared_attribute_reaches_both_agents(client, monkeypatch):
         {"name": "mood", "type": "enum", "description": "Caller mood",
          "group": "",
          "enum_values": ["good", "bad"], "object_properties": [],
-         "array_items": {"kind": "string", "properties": []}}]
+         "array_items": {"kind": "string", "properties": []},
+         "wrap_result": True}]
     assert "prompt" not in snap[aid1]  # dormant column never snapshotted
 
 
@@ -186,7 +187,7 @@ def test_build_extraction_schema_mapping():
         assert prop["required"] == ["value", "confidence", "confidence_type", "evidence"]
         assert prop["properties"]["confidence"] == {"type": "number", "minimum": 0, "maximum": 1}
         assert prop["properties"]["confidence_type"] == {
-            "type": "string", "enum": ["quoted", "inferred", "normalized", "not_found"]}
+            "type": "string", "enum": ["quoted", "inferred", "normalized", "calculated", "not_found"]}
         assert prop["properties"]["evidence"] == {"type": ["string", "null"]}
         assert prop["additionalProperties"] is False
     # No $refs anywhere in the envelope.
@@ -315,7 +316,7 @@ def _wrap(name, value_schema, description):
             "value": value_schema,
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
             "confidence_type": {"type": "string",
-                                "enum": ["quoted", "inferred", "normalized", "not_found"]},
+                                "enum": ["quoted", "inferred", "normalized", "calculated", "not_found"]},
             "evidence": {"type": ["string", "null"]},
         },
         "required": ["value", "confidence", "confidence_type", "evidence"],

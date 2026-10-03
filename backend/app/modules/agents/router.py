@@ -12,6 +12,7 @@ from app.modules.runs.router import (
     _agent_system_content,
     _attrs_for_agent,
     _identifier_system_content,
+    _is_unwrapped,
     _snapshot_array_items,
     _snapshot_props,
     build_extraction_schema,
@@ -133,7 +134,8 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
                         "group": getattr(a, "group_name", "") or "",
                         "enum_values": a.enum_values or [],
                         "object_properties": _snapshot_props(a),
-                        "array_items": _snapshot_array_items(a)} for a in attrs],
+                        "array_items": _snapshot_array_items(a),
+                        "wrap_result": (False if _is_unwrapped(a) else True)} for a in attrs],
     }
 
 

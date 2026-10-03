@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
+import sqlalchemy as sa
 from sqlalchemy import Column, ForeignKey, JSON, Boolean, DateTime, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -51,7 +52,7 @@ class Attribute(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     enum_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Ordered sub-fields for type=="object": [{name, type, null_allowed}].
-    # type in [string, number, boolean, array]; kept [] for all other types.
+    # type in [string, number, integer, boolean, array]; kept [] for all other types.
     object_properties: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Free-text grouping label (CSV Group column). Column is `group_name`
     # because `group` is SQL-reserved; API field is `group`.
@@ -61,6 +62,12 @@ class Attribute(Base):
     # kind string|number keeps properties []; kind object requires non-empty
     # properties. Kept as default string-kind for all other types (ignored).
     array_items: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # When False, the extraction output returns the raw value (for the 7 v2
+    # list attributes: the JSON array itself) instead of the result-contract
+    # wrapper {value, confidence, confidence_type, evidence}.
+    wrap_result: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=sa.true()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

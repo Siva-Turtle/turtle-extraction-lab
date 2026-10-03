@@ -137,7 +137,7 @@ def parse_object_properties(inner: str) -> list[dict]:
             sub_type = "string"
         else:
             t = _strip_quotes(type_raw).lower()
-            sub_type = t if t in ("string", "number", "boolean", "array") else "string"
+            sub_type = t if t in ("string", "number", "integer", "boolean", "array") else "string"
         props.append({"name": name, "type": sub_type, "null_allowed": True,
                       "enum": [], "description": ""})
     return props

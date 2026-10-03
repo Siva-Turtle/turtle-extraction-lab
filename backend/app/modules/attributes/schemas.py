@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 ATTRIBUTE_TYPES = ("string", "number", "boolean", "enum", "array", "object")
 
 # Allowed sub-field types for type=="object" (dict properties table in the UI).
-OBJECT_SUB_TYPES = ("string", "number", "boolean", "array")
+OBJECT_SUB_TYPES = ("string", "number", "integer", "boolean", "array")
 
 
 class ObjectProperty(BaseModel):
@@ -33,6 +33,7 @@ class AttributeCreate(BaseModel):
     enum_values: list[str] = Field(default_factory=list)
     object_properties: list[ObjectProperty] = Field(default_factory=list)
     array_items: ArrayItems | dict = Field(default_factory=lambda: ArrayItems())
+    wrap_result: bool = True
 
 
 class AttributeUpdate(BaseModel):
@@ -44,6 +45,7 @@ class AttributeUpdate(BaseModel):
     enum_values: list[str] | None = None
     object_properties: list[ObjectProperty] | None = None
     array_items: ArrayItems | dict | None = None
+    wrap_result: bool | None = None
 
 
 class AttributeOut(BaseModel):
@@ -56,3 +58,4 @@ class AttributeOut(BaseModel):
     enum_values: list[str] = Field(default_factory=list)
     object_properties: list[ObjectProperty] = Field(default_factory=list)
     array_items: ArrayItems = Field(default_factory=lambda: ArrayItems())
+    wrap_result: bool = True

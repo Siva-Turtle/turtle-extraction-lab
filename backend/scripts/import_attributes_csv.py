@@ -33,6 +33,20 @@ from app.modules.attributes.csv_import import (  # noqa: E402
 )
 
 
+def _parse_wrap_result(raw: object) -> bool:
+    """wrap_result CSV column: missing/blank = True (backward compatible)."""
+    if raw is None:
+        return True
+    s = str(raw).strip().lower()
+    if s == "":
+        return True
+    if s in ("0", "false", "no", "n", "f"):
+        return False
+    if s in ("1", "true", "yes", "y", "t"):
+        return True
+    return True
+
+
 def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
     existing: dict[str, object] = {a.name: a for a in db.query(Attribute).all()}
     taken: set[str] = set(existing.keys())
@@ -73,6 +87,16 @@ def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
             total += 1
             original = prop.strip()
             parsed = parse_row(group, prop, typ, desc, enum_raw)
+            # Optional wrap_result column (missing = True for backward compat).
+            wrap_raw = None
+            try:
+                for _k in ("wrap_result", "Wrap result", "wrap result", "Wrap_result"):
+                    if _k in (row or {}):
+                        wrap_raw = row.get(_k)
+                        break
+            except Exception:
+                wrap_raw = None
+            parsed["wrap_result"] = _parse_wrap_result(wrap_raw)
             base = parsed["name"]
             if original in marker_to_name:
                 # Idempotent re-run: same original already imported -> upsert.
@@ -96,6 +120,7 @@ def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
                     enum_values=parsed["enum_values"],
                     object_properties=parsed["object_properties"],
                     array_items=parsed["array_items"],
+                    wrap_result=parsed.get("wrap_result", True),
                 )
                 db.add(row_obj)
                 db.flush()
@@ -108,6 +133,10 @@ def import_csv(csv_path: str, db, agent_name: str | None = None) -> dict:
                 row_obj.enum_values = parsed["enum_values"]
                 row_obj.object_properties = parsed["object_properties"]
                 row_obj.array_items = parsed["array_items"]
+                try:
+                    row_obj.wrap_result = parsed.get("wrap_result", True)
+                except Exception:
+                    pass
                 updated += 1
             if agent is not None:
                 link = db.execute(

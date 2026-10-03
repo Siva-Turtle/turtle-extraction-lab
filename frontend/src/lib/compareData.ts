@@ -110,11 +110,13 @@ export function agentsFromLog(log: LogRow): CompareAgent[] {
         const rec = a as Record<string, unknown>;
         const n = typeof rec.name === "string" ? rec.name : "";
         if (n.trim() === "") continue;
+        const wrapRaw = (rec as Record<string, unknown>).wrap_result;
         attrs.push({
           name: n,
           type: typeof rec.type === "string" ? rec.type : "",
           description: typeof rec.description === "string" ? rec.description : "",
           group: typeof rec.group === "string" ? rec.group : "",
+          ...(typeof wrapRaw === "boolean" ? { wrap_result: wrapRaw } : {}),
         });
       }
     }

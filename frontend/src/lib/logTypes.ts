@@ -119,5 +119,5 @@ export type CompareAgent = {
   id: string;
   name: string;
   kind: string;
-  attributes: { name: string; type: string; description: string; group: string }[];
+  attributes: { name: string; type: string; description: string; group: string; wrap_result?: boolean }[];
 };

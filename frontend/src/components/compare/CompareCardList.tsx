@@ -15,6 +15,7 @@ import { ThumbButtons } from "../ui/ThumbButtons";
 import { Badge } from "../ui/Badge";
 import { CompareToolbar } from "./CompareToolbar";
 import { AttributeCompareDrawer } from "./AttributeCompareDrawer";
+import { UnwrappedListTable } from "./UnwrappedListTable";
 import { agreementMark, useCompareModel } from "./useCompareModel";
 import { ReusedBadge, isReused } from "./ReusedBadge";
 import type { CompareRow, ElementDiff } from "../../lib/compare";
@@ -41,12 +42,15 @@ function costText(costUsd: unknown): string {
   return `₹${(costUsd * 100).toFixed(2)}`;
 }
 
-function CompactValue({ value, diff }: { value: unknown; diff?: ElementDiff }): React.JSX.Element {
+function CompactValue({ value, diff, unwrapped }: { value: unknown; diff?: ElementDiff; unwrapped?: boolean }): React.JSX.Element {
   if (value === null || value === undefined) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
   if (typeof value === "string" && value.trim() === "") {
     return <span className="italic text-[#8a8f98]">— not found</span>;
+  }
+  if (unwrapped && Array.isArray(value)) {
+    return <UnwrappedListTable value={value} />;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) {
@@ -476,14 +480,14 @@ export function CompareCardList({
                               {notFound ? (
                                 <span className="italic font-sans text-xs text-[#8a8f98]">— not found</span>
                               ) : (
-                                <CompactValue value={cell.value} diff={row.elementDiff} />
+                                <CompactValue value={cell.value} diff={row.elementDiff} unwrapped={cell.unwrapped} />
                               )}
-                              {detail !== "value" && !notFound && (
+                              {detail !== "value" && !notFound && !cell.unwrapped && (
                                 <span className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                                   conf {confText} · {confTypeText}
                                 </span>
                               )}
-                              {detail === "evidence" && !notFound && evidenceText.trim() !== "" && (
+                              {detail === "evidence" && !notFound && !cell.unwrapped && evidenceText.trim() !== "" && (
                                 <span
                                   className="break-words font-sans text-[11px] italic text-[#4a5058] dark:text-[#C3C2B7]"
                                   title={evidenceText}

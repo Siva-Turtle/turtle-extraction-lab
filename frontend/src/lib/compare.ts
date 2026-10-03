@@ -49,7 +49,21 @@ export type CellState = {
   canon: string;
   error?: string;
   feedback: { rating: string; remarks: string; auto?: boolean } | null;
+  /** True when the attribute returns its raw list (no wrapper). */
+  unwrapped?: boolean;
 };
+
+/** True when an attribute is unwrapped (raw list). Uses the snapshot's
+ * wrap_result; falls back to "value is a list and not a dict" detection. */
+export function isUnwrappedAttr(
+  attrMeta: { wrap_result?: boolean } | undefined,
+  rawEntry: unknown,
+): boolean {
+  if (attrMeta && typeof attrMeta.wrap_result === "boolean") {
+    return attrMeta.wrap_result === false;
+  }
+  return Array.isArray(rawEntry);
+}
 
 export type ElementDiff =
   | { items: { value: string; count: number }[]; total: number }
@@ -667,7 +681,8 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
       }
     }
     for (const attr of [...attrNames, ...extras]) {
-      const attrType = agent.attributes.find((a) => a.name === attr)?.type;
+      const attrMeta = agent.attributes.find((a) => a.name === attr);
+      const attrType = attrMeta?.type;
       const cells: Record<string, CellState> = {};
       for (const col of columns) {
         const log = col.log;
@@ -690,6 +705,11 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
           cells[col.key] = { value: undefined, canon: ERROR_CANON, error: agentErr, feedback: null };
           continue;
         }
+        const rawEntry =
+          out && typeof out === "object" && !Array.isArray(out)
+            ? (out as Record<string, unknown>)[attr]
+            : undefined;
+        const unwrapped = isUnwrappedAttr(attrMeta, rawEntry);
         const part = extractCell(out, agent.kind, attr);
         const canon = canonicalKey(
           part.value,
@@ -703,6 +723,7 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
           evidence: part.evidence,
           canon,
           feedback: cellFeedback(log, lookupName, attr),
+          ...(unwrapped ? { unwrapped: true as const } : {}),
         };
       }
       rows.push(finalizeRow(agent.id, agent.name, attr, attrType, cells, columns));

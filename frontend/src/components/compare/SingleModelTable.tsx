@@ -17,19 +17,89 @@ import { Button } from "../ui/Button";
 import { CardTitle } from "../ui/Card";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import { ReusedBadge, isReused, reusedFromLabel } from "./ReusedBadge";
+import { UnwrappedListTable } from "./UnwrappedListTable";
 
 type PrettyAttr = {
   value?: unknown;
   confidence?: unknown;
   confidence_type?: unknown;
   evidence?: unknown;
+  /** Raw entry when the attribute is unwrapped (no wrapper). */
+  raw?: unknown;
+  unwrapped?: boolean;
 };
 
-function prettyEntries(out: unknown): [string, PrettyAttr][] {
+function snapshotWrapResult(log: LogRow, agentId: string, attr: string): boolean | undefined {
+  try {
+    const snap = (log.agent_snapshot ?? {})[agentId] as
+      | { attributes?: { name?: unknown; wrap_result?: unknown }[] }
+      | undefined;
+    const attrs = snap?.attributes;
+    if (!Array.isArray(attrs)) {
+      const attrSnap = (log.attribute_snapshot ?? {}) as Record<string, unknown>;
+      const byAgent = attrSnap[agentId] as
+        | { attributes?: { name?: unknown; wrap_result?: unknown }[] }
+        | undefined;
+      if (byAgent && Array.isArray(byAgent.attributes)) {
+        for (const a of byAgent.attributes) {
+          if (a && typeof a === "object" && (a as { name?: unknown }).name === attr) {
+            const w = (a as { wrap_result?: unknown }).wrap_result;
+            if (typeof w === "boolean") return w;
+          }
+        }
+      }
+      return undefined;
+    }
+    for (const a of attrs) {
+      if (a && typeof a === "object" && (a as { name?: unknown }).name === attr) {
+        const w = (a as { wrap_result?: unknown }).wrap_result;
+        if (typeof w === "boolean") return w;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+function isUnwrappedEntry(log: LogRow, agentId: string, attr: string, raw: unknown): boolean {
+  const w = snapshotWrapResult(log, agentId, attr);
+  if (typeof w === "boolean") return w === false;
+  return Array.isArray(raw);
+}
+
+function prettyEntries(
+  out: unknown,
+  log?: LogRow,
+  agentId?: string,
+): [string, PrettyAttr][] {
   if (!out || typeof out !== "object") return [];
   return (Object.entries(out as Record<string, unknown>) as [string, unknown][])
     .filter(([k]) => k !== "_error")
-    .map(([k, v]) => [k, (v && typeof v === "object" ? v : {}) as PrettyAttr]);
+    .map(([k, v]) => {
+      if (Array.isArray(v)) {
+        const unwrapped =
+          log && agentId ? isUnwrappedEntry(log, agentId, k, v) : true;
+        if (unwrapped) {
+          return [k, { raw: v, unwrapped: true } as PrettyAttr];
+        }
+        return [k, { value: v } as PrettyAttr];
+      }
+      if (v && typeof v === "object" && !Array.isArray(v) && "value" in (v as Record<string, unknown>)) {
+        return [k, v as PrettyAttr];
+      }
+      if (Array.isArray(v)) {
+        return [k, { value: v } as PrettyAttr];
+      }
+      // Raw object without wrapper (should not happen for wrapped, but keep).
+      if (v && typeof v === "object") {
+        const maybeUnwrapped = log && agentId ? isUnwrappedEntry(log, agentId, k, v) : false;
+        if (maybeUnwrapped) {
+          return [k, { raw: v, unwrapped: true } as PrettyAttr];
+        }
+      }
+      return [k, (v && typeof v === "object" ? v : {}) as PrettyAttr];
+    });
 }
 
 /** Per-agent reuse info from usage.per_agent (null when fresh/unknown). */
@@ -322,8 +392,77 @@ function AttrRow({
     save.mutate({ rating, remarks: remarksText }, { onSuccess: () => setEditingRemarks(false) });
   }
 
-  const valueText = formatValue(r.value);
+  const unwrapped = (r as PrettyAttr).unwrapped === true;
+  const rawList = unwrapped ? (r as PrettyAttr).raw : undefined;
+  const valueText = unwrapped ? formatValue(rawList) : formatValue(r.value);
   const evidenceText = typeof r.evidence === "string" ? r.evidence : "";
+
+  if (unwrapped) {
+    return (
+      <tr className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]">
+        <td className="break-words px-3 py-2 font-mono text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
+          {sn}
+        </td>
+        <td className="break-words px-3 py-2 font-heading font-bold [overflow-wrap:anywhere]">{attr}</td>
+        <td className="break-words px-3 py-2 [overflow-wrap:anywhere]" colSpan={3}>
+          <UnwrappedListTable value={rawList} />
+        </td>
+        <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
+          <span className="italic text-[#8a8f98]">—</span>
+        </td>
+        <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ThumbButtons value={rating} onChange={handleThumb} />
+            {saved?.auto === true && <AutoTag />}
+          </div>
+        </td>
+        <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
+          <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+            <span
+              className={cn(
+                "block min-w-0 flex-1 break-words [overflow-wrap:anywhere]",
+                remarksText ? "" : "text-[#8a8f98]",
+              )}
+              title={remarksText || undefined}
+            >
+              {remarksText || "—"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditingRemarks((e) => !e)}
+              aria-label={`Edit remarks for ${agentName} / ${attr}`}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#4a5058] transition-colors hover:bg-[#f1f2f3] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:bg-white/10 dark:hover:text-[#F0EFEC]"
+            >
+              <Pencil className="h-3 w-3" aria-hidden="true" />
+            </button>
+          </div>
+          {editingRemarks && (
+            <div className="mt-1.5 grid gap-1.5">
+              <input
+                value={remarksText}
+                onChange={(e) => setRemarksText(e.target.value)}
+                placeholder="Remarks…"
+                aria-label="Remarks"
+                className="h-8 w-full min-w-0 rounded-lg border border-[#e5e7eb] bg-white px-2 font-sans text-xs text-[#1d1d1d] placeholder:text-[#8a8f98] hover:border-[#1d1d1d] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#F0EFEC]"
+              />
+              <div className="flex gap-1.5">
+                <Button variant="secondary" size="sm" loading={save.isPending} onClick={handleRemarksSave}>
+                  Save
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setEditingRemarks(false)}
+                  className="px-1 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </td>
+      </tr>
+    );
+  }
 
   return (
     <tr className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]">
@@ -532,7 +671,7 @@ export function SingleModelTable({
             </div>
           );
         }
-        const entries = prettyEntries(out);
+        const entries = prettyEntries(out, log, agentId);
         return (
           <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
             <AgentTitle log={log} agentId={agentId} name={agentName} />

@@ -675,6 +675,7 @@ export function ComparisonMatrix({
                                   remarksOpen={remarksFor === ck}
                                   canRemark={rating !== null}
                                   diff={row.elementDiff}
+                                  unwrapped={cell.unwrapped}
                                 />
                                 {remarksFor === ck && (
                                   <RemarksPopover

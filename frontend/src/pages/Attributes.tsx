@@ -19,7 +19,7 @@ export type AttributeType = "string" | "number" | "boolean" | "enum" | "array" |
 /** Sub-field of a type=="object" attribute (dict in code comments, "object" in the UI). */
 export type AttributeObjectProperty = {
   name: string;
-  type: "string" | "number" | "boolean" | "array";
+  type: "string" | "number" | "integer" | "boolean" | "array";
   null_allowed: boolean;
   enum?: string[];
   description?: string;
@@ -35,10 +35,11 @@ export type LabAttribute = {
   enum_values: string[];
   object_properties: AttributeObjectProperty[];
   array_items: AttributeArrayItems;
+  wrap_result?: boolean;
 };
 
 const TYPES: AttributeType[] = ["string", "number", "boolean", "enum", "array", "object"];
-const SUB_TYPES: AttributeObjectProperty["type"][] = ["string", "number", "boolean", "array"];
+const SUB_TYPES: AttributeObjectProperty["type"][] = ["string", "number", "integer", "boolean", "array"];
 const ARRAY_KINDS: AttributeArrayKind[] = ["string", "number", "object"];
 const EMPTY_ARRAY_ITEMS: AttributeArrayItems = { kind: "string", properties: [] };
 const EMPTY: {
@@ -49,7 +50,8 @@ const EMPTY: {
   enum_values: string[];
   object_properties: AttributeObjectProperty[];
   array_items: AttributeArrayItems;
-} = { name: "", type: "string", description: "", group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] } };
+  wrap_result: boolean;
+} = { name: "", type: "string", description: "", group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] }, wrap_result: true };
 
 /** v2 single-select for attribute type — mirrors FilterCombobox styling. */
 function TypeCombobox({
@@ -477,6 +479,7 @@ export default function Attributes() {
         enum_values: v.type === "enum" ? cleaned : [],
         object_properties: v.type === "object" ? cleanedProps : [],
         array_items: v.type === "array" ? cleanedItems : { kind: "string", properties: [] },
+        wrap_result: (v as { wrap_result?: boolean }).wrap_result !== false,
       };
       return v.id
         ? (await api.patch(`/attributes/${v.id}`, body)).data
@@ -500,7 +503,7 @@ export default function Attributes() {
   });
 
   function startNew() {
-    setEditing({ ...EMPTY, group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] } });
+    setEditing({ ...EMPTY, group: "", enum_values: [], object_properties: [], array_items: { ...EMPTY_ARRAY_ITEMS, properties: [] }, wrap_result: true });
   }
 
   function agentNames(r: LabAttribute): string {
@@ -572,6 +575,7 @@ export default function Attributes() {
         : r.array_items?.kind === "number"
           ? { kind: "number", properties: [] }
           : { kind: "string", properties: [] },
+      wrap_result: (r as { wrap_result?: boolean }).wrap_result !== false,
     });
   }
 
@@ -787,6 +791,21 @@ export default function Attributes() {
               </div>
             </div>
           )}
+          <label className="mt-3 flex cursor-pointer items-center gap-2 font-sans text-sm text-[#1d1d1d] dark:text-[#F0EFEC]">
+            <input
+              type="checkbox"
+              checked={(editing as { wrap_result?: boolean }).wrap_result !== false}
+              onChange={(e) => setEditing({ ...editing, wrap_result: e.target.checked })}
+              aria-label="Wrap result (value / confidence / evidence)"
+              className="h-5 w-5 shrink-0 accent-[#0d5c4a] dark:accent-[#2fdebf]"
+            />
+            <span>
+              Wrap result (value / confidence / evidence)
+              <span className="block text-xs font-normal text-[#8a8f98]">
+                Off returns the list directly — confidence lives per item (v2 list attributes).
+              </span>
+            </span>
+          </label>
           <div className="mt-5 flex justify-end gap-2">
             <Button loading={save.isPending} onClick={trySave}>
               Save

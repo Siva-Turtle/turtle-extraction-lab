@@ -436,6 +436,11 @@ def _valid_attr_names(value) -> list[str]:
 
 
 def _is_filled_entry(entry) -> bool:
+    # Unwrapped list attributes return the raw JSON array (no {value,...}
+    # wrapper): filled when it is a non-empty list. Wrapped attributes
+    # use the {value, confidence_type} contract as before.
+    if isinstance(entry, (list, tuple)):
+        return len(entry) > 0
     if isinstance(entry, dict) and "value" in entry:
         if entry.get("confidence_type") == "not_found":
             return False
@@ -676,10 +681,30 @@ def apply_auto_feedback(feedback, consistency) -> dict:
     return fb
 
 
+def _is_unwrapped(a) -> bool:
+    """True when this attribute returns its raw value (no wrapper).
+
+    Backward compatible: missing/None wrap_result means wrapped (True).
+    Dict snapshots (logs) are also accepted.
+    """
+    try:
+        if isinstance(a, dict):
+            v = a.get("wrap_result", True)
+        else:
+            v = getattr(a, "wrap_result", True)
+    except Exception:
+        return False
+    if v is None:
+        return False
+    return bool(v) is False
+
+
 def _attr_line(a: Attribute) -> str:
     base = f"- {a.name} ({a.type}): {a.description}"
     if a.type == "enum" and (a.enum_values or []):
         base += f" [{' | '.join(a.enum_values)}]"
+    if _is_unwrapped(a):
+        base += " (return the list directly - no value/confidence wrapper; confidence, confidence_type and evidence are per item)"
     return base
 
 
@@ -721,6 +746,8 @@ def _sub_schema(sub_type: str, null_allowed: bool,
             base = "array"
         elif sub_type == "number":
             base = "number"
+        elif sub_type == "integer":
+            base = "integer"
         elif sub_type == "boolean":
             base = "boolean"
         else:
@@ -744,6 +771,8 @@ def _sub_schema(sub_type: str, null_allowed: bool,
                "items": {"type": "string"}}
     elif sub_type == "number":
         out = {"type": (["number", "null"] if null_allowed else "number")}
+    elif sub_type == "integer":
+        out = {"type": (["integer", "null"] if null_allowed else "integer")}
     elif sub_type == "boolean":
         out = {"type": (["boolean", "null"] if null_allowed else "boolean")}
     else:
@@ -873,32 +902,47 @@ def _value_schema_for_attribute(a: Attribute) -> dict:
     return value_schema
 
 
+WRAPPER_CONFIDENCE_TYPES = ["quoted", "inferred", "normalized", "calculated", "not_found"]
+
+
 def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
     """OpenAI-compatible structured-output object schema for this run's attributes.
 
-    Each attribute becomes ``{"value", "confidence", "confidence_type",
-    "evidence"}`` with all four required. Top-level ``required`` lists every
-    attribute name (missing = null value + not_found). No $refs. Returns None
-    when there are no attributes (caller falls back to json_object mode).
+    Wrapped attributes become ``{"value", "confidence", "confidence_type",
+    "evidence"}`` with all four required. Unwrapped attributes
+    (wrap_result False, the 7 v2 list attributes) use the value schema
+    directly (array of strict item objects, no wrapper). Top-level
+    ``required`` lists every attribute name. No $refs. Returns None when
+    there are no attributes (caller falls back to json_object mode).
     """
     if not attrs:
         return None
     properties: dict = {}
     required: list[str] = []
     for a in attrs:
-        properties[a.name] = {
-            "type": "object",
-            "description": a.description or a.name,
-            "properties": {
-                "value": _value_schema_for_attribute(a),
-                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                "confidence_type": {"type": "string",
-                                    "enum": ["quoted", "inferred", "normalized", "not_found"]},
-                "evidence": {"type": ["string", "null"]},
-            },
-            "required": ["value", "confidence", "confidence_type", "evidence"],
-            "additionalProperties": False,
-        }
+        if _is_unwrapped(a):
+            properties[a.name] = _value_schema_for_attribute(a)
+            # Keep the full attribute description on the raw schema so the
+            # model still sees the self-contained definition.
+            try:
+                if getattr(a, "description", None):
+                    properties[a.name]["description"] = a.description or a.name
+            except Exception:
+                pass
+        else:
+            properties[a.name] = {
+                "type": "object",
+                "description": a.description or a.name,
+                "properties": {
+                    "value": _value_schema_for_attribute(a),
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence_type": {"type": "string",
+                                        "enum": list(WRAPPER_CONFIDENCE_TYPES)},
+                    "evidence": {"type": ["string", "null"]},
+                },
+                "required": ["value", "confidence", "confidence_type", "evidence"],
+                "additionalProperties": False,
+            }
         required.append(a.name)
     return {"type": "object", "properties": properties,
             "required": required, "additionalProperties": False}
@@ -999,7 +1043,8 @@ def _build_agent_requests(
                             "group": getattr(a, "group_name", "") or "",
                             "enum_values": a.enum_values or [],
                             "object_properties": _snapshot_props(a),
-                            "array_items": _snapshot_array_items(a)} for a in attrs],
+                            "array_items": _snapshot_array_items(a),
+                            "wrap_result": (False if _is_unwrapped(a) else True)} for a in attrs],
         }
         user_content = input_data
         if is_identifier(agent):

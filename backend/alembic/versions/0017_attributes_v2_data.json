@@ -1,0 +1,692 @@
+[
+  {
+    "id": "7f61f9822699458aa123d835d8b4e450",
+    "name": "accounts",
+    "type": "array",
+    "description": "This attribute consolidates every account the Client mentions - bank, investment, government schemes, brokers and custody - into a single list so balances can be totalled per location. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- account_type (enum, required): Type of account, e.g. 'bank_account', 'ppf'. Allowed values: investment_account, bank_account, ppf, bank_deposit, nps, ssy, epf, pms, aif, crypto_broker, self_custody, others. Meanings: ppf = Public Provident Fund; bank_deposit = fixed/recurring deposit held at a bank; nps = National Pension System; ssy = Sukanya Samriddhi Yojana; epf = Employees' Provident Fund; pms = Portfolio Management Service; aif = Alternative Investment Fund; crypto_broker = exchange or broker account for crypto; self_custody = crypto held in the Client's own wallet; others = any type not listed.\n- provider (string, nullable): Bank / broker / fund house / wallet name, e.g. 'HDFC Bank', 'Zerodha'.\n- account_name (string, nullable): Specific account or product name if given, e.g. 'Salary account'.\n- location (enum, nullable): Where the account is held, e.g. 'India'. Allowed values: India, Foreign.\n- balance (string, nullable): Account balance, e.g. 'INR 250000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"I have around 2.5 lakh in my HDFC salary account and about 8 lakh in PPF.\" -> [\n  {\n    \"account_type\": \"bank_account\",\n    \"provider\": \"HDFC Bank\",\n    \"account_name\": \"Salary account\",\n    \"location\": \"India\",\n    \"balance\": \"INR 250000\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"around 2.5 lakh in my HDFC salary account\"\n  },\n  {\n    \"account_type\": \"ppf\",\n    \"provider\": null,\n    \"account_name\": null,\n    \"location\": \"India\",\n    \"balance\": \"INR 800000\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about 8 lakh in PPF\"\n  }\n]\nExample 2 - Client: \"I keep about ten thousand dollars in my Chase savings account in the US.\" -> [\n  {\n    \"account_type\": \"bank_account\",\n    \"provider\": \"Chase\",\n    \"account_name\": \"Savings account\",\n    \"location\": \"Foreign\",\n    \"balance\": \"USD 10000\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about ten thousand dollars in my Chase savings account in the US\"\n  }\n]\nExample 3 - Client: \"I do have an NPS account but I don't remember the balance, and I have no crypto account.\" -> [\n  {\n    \"account_type\": \"nps\",\n    \"provider\": null,\n    \"account_name\": null,\n    \"location\": \"India\",\n    \"balance\": \"Yes\",\n    \"confidence\": 0.8,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I do have an NPS account but I don't remember the balance\"\n  },\n  {\n    \"account_type\": \"crypto_broker\",\n    \"provider\": null,\n    \"account_name\": null,\n    \"location\": null,\n    \"balance\": \"0\",\n    \"confidence\": 0.95,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I have no crypto account\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "account_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "investment_account",
+            "bank_account",
+            "ppf",
+            "bank_deposit",
+            "nps",
+            "ssy",
+            "epf",
+            "pms",
+            "aif",
+            "crypto_broker",
+            "self_custody",
+            "others"
+          ],
+          "description": "Type of account, e.g. 'bank_account', 'ppf'."
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Bank / broker / fund house / wallet name, e.g. 'HDFC Bank', 'Zerodha'."
+        },
+        {
+          "name": "account_name",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Specific account or product name if given, e.g. 'Salary account'."
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "India",
+            "Foreign"
+          ],
+          "description": "Where the account is held, e.g. 'India'."
+        },
+        {
+          "name": "balance",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Account balance, e.g. 'INR 250000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "074326a0c8654c3c904c96c44ed8f0f5",
+    "name": "assets",
+    "type": "array",
+    "description": "This attribute consolidates every asset holding the Client mentions into a single list so the planner sees the full portfolio in one place. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- asset_type (enum, required): Type of asset holding, e.g. 'stocks', 'bonds', 'real_estate'. Allowed values: stocks, unlisted_stocks, equity_mutual_fund, equity_etf, commodity_etf, debt_etf, deposit, cash, debt_mf, personal_debt, bonds, reits, real_estate, crypto, others, total. Meanings: unlisted_stocks = shares not listed on an exchange (e.g. ESOPs, startup equity); deposit = fixed/recurring deposits held outside bank accounts listed in accounts; personal_debt = money the Client has lent to someone; others = any type not listed; total = an explicitly stated total for the group.\n- name (string, nullable): Instrument / scheme / property / borrower name, e.g. 'HDFC Flexi Cap', 'Flat in Whitefield, Bengaluru'.\n- location (enum, nullable): Where the asset is held, e.g. 'India'. For asset_type total, null = overall total across locations. Allowed values: India, Foreign.\n- amount (string, nullable): Current value, or units held, e.g. 'INR 500000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"I have about 5 lakh in RBI bonds and around 2 lakh in HDFC Flexi Cap.\" -> [\n  {\n    \"asset_type\": \"bonds\",\n    \"name\": \"RBI bonds\",\n    \"location\": \"India\",\n    \"amount\": \"INR 500000\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"I have about 5 lakh in RBI bonds\"\n  },\n  {\n    \"asset_type\": \"equity_mutual_fund\",\n    \"name\": \"HDFC Flexi Cap\",\n    \"location\": \"India\",\n    \"amount\": \"INR 200000\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"around 2 lakh in HDFC Flexi Cap\"\n  }\n]\nExample 2 - Client: \"I hold about $5,400 of Apple shares in my US brokerage.\" -> [\n  {\n    \"asset_type\": \"stocks\",\n    \"name\": \"Apple shares\",\n    \"location\": \"Foreign\",\n    \"amount\": \"USD 5400\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"I hold about $5,400 of Apple shares in my US brokerage\"\n  }\n]\nExample 3 - Client: \"I do hold some crypto but I don't track the value, and I own no real estate.\" -> [\n  {\n    \"asset_type\": \"crypto\",\n    \"name\": null,\n    \"location\": null,\n    \"amount\": \"Yes\",\n    \"confidence\": 0.8,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I do hold some crypto but I don't track the value\"\n  },\n  {\n    \"asset_type\": \"real_estate\",\n    \"name\": null,\n    \"location\": null,\n    \"amount\": \"0\",\n    \"confidence\": 0.95,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I own no real estate\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "asset_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "stocks",
+            "unlisted_stocks",
+            "equity_mutual_fund",
+            "equity_etf",
+            "commodity_etf",
+            "debt_etf",
+            "deposit",
+            "cash",
+            "debt_mf",
+            "personal_debt",
+            "bonds",
+            "reits",
+            "real_estate",
+            "crypto",
+            "others",
+            "total"
+          ],
+          "description": "Type of asset holding, e.g. 'stocks', 'bonds', 'real_estate'."
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Instrument / scheme / property / borrower name, e.g. 'HDFC Flexi Cap', 'Flat in Whitefield, Bengaluru'."
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "India",
+            "Foreign"
+          ],
+          "description": "Where the asset is held, e.g. 'India'. For asset_type total, null = overall total across locations."
+        },
+        {
+          "name": "amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Current value, or units held, e.g. 'INR 500000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "7063e3025b0048709a7ecbff97c0c1dd",
+    "name": "expenses",
+    "type": "array",
+    "description": "This attribute consolidates every expense the Client mentions, recurring or one-time, into a single list so the planner sees the full outflow picture. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- expense_type (enum, required): Type of expense, e.g. 'rent', 'travel_vacations'. Allowed values: rent, utilities, groceries, household_staff, childcare_school_fees, entertainment_dining, transport_fuel, family_support, shopping_purchases, subscriptions_memberships, insurance_premiums, travel_vacations, medical_expenses, loan_emis_education, loan_emis_personal, loan_emis_home, loan_emis_vehicle, loan_emis_others, loan_emis_total, charity_donations, miscellaneous, total. Meanings: loan_emis_* = EMI paid for that loan type; loan_emis_total = an explicitly stated total across EMIs; charity_donations = giving; miscellaneous = anything not listed; total = an explicitly stated total for the group.\n- description (string, nullable): What the expense is for, e.g. '2BHK in Whitefield, Bengaluru'.\n- amount (string, nullable): Amount per period, e.g. 'INR 30000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- frequency (enum, nullable): How often it recurs, e.g. 'monthly'. Keep the Client's own period - do NOT convert annual to monthly. Allowed values: monthly, annual, one_time.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"We pay 30k rent for our 2BHK in Whitefield and 5k for utilities every month.\" -> [\n  {\n    \"expense_type\": \"rent\",\n    \"description\": \"2BHK in Whitefield, Bengaluru\",\n    \"amount\": \"INR 30000\",\n    \"frequency\": \"monthly\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"We pay 30k rent for our 2BHK in Whitefield\"\n  },\n  {\n    \"expense_type\": \"utilities\",\n    \"description\": null,\n    \"amount\": \"INR 5000\",\n    \"frequency\": \"monthly\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"5k for utilities every month\"\n  }\n]\nExample 2 - Client: \"We spend about 2 lakh a year on travel and vacations.\" -> [\n  {\n    \"expense_type\": \"travel_vacations\",\n    \"description\": null,\n    \"amount\": \"INR 200000\",\n    \"frequency\": \"annual\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about 2 lakh a year on travel and vacations\"\n  }\n]\nExample 3 - Client: \"Groceries I don't track exactly, and we pay zero rent since we own the house.\" -> [\n  {\n    \"expense_type\": \"groceries\",\n    \"description\": null,\n    \"amount\": \"Yes\",\n    \"frequency\": null,\n    \"confidence\": 0.8,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"Groceries I don't track exactly\"\n  },\n  {\n    \"expense_type\": \"rent\",\n    \"description\": \"Own house, no rent\",\n    \"amount\": \"0\",\n    \"frequency\": \"monthly\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"inferred\",\n    \"evidence\": \"we pay zero rent since we own the house\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "expense_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "rent",
+            "utilities",
+            "groceries",
+            "household_staff",
+            "childcare_school_fees",
+            "entertainment_dining",
+            "transport_fuel",
+            "family_support",
+            "shopping_purchases",
+            "subscriptions_memberships",
+            "insurance_premiums",
+            "travel_vacations",
+            "medical_expenses",
+            "loan_emis_education",
+            "loan_emis_personal",
+            "loan_emis_home",
+            "loan_emis_vehicle",
+            "loan_emis_others",
+            "loan_emis_total",
+            "charity_donations",
+            "miscellaneous",
+            "total"
+          ],
+          "description": "Type of expense, e.g. 'rent', 'travel_vacations'."
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "What the expense is for, e.g. '2BHK in Whitefield, Bengaluru'."
+        },
+        {
+          "name": "amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Amount per period, e.g. 'INR 30000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "frequency",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "monthly",
+            "annual",
+            "one_time"
+          ],
+          "description": "How often it recurs, e.g. 'monthly'. Keep the Client's own period - do NOT convert annual to monthly."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "d7c2fbda05cd4e40b2e6e1469a42ef27",
+    "name": "goals",
+    "type": "array",
+    "description": "This attribute consolidates every goal the Client mentions into a single list so the planner can size, time and prioritise each one. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- goal_type (enum, required): Type of goal, e.g. 'buying_a_house_india', 'financial_freedom_fire'. Allowed values: planning_a_child, child_s_college_education, child_s_higher_education, buying_a_house_india, buying_a_vehicle, wedding_expenses, parents_healthcare_fund, vacation_travel_fund, legacy_inheritance, financial_freedom_fire, other_goals. Meanings: planning_a_child = expecting- or first-child costs; child_s_college_education / child_s_higher_education = UG / PG or study-abroad costs; buying_a_house_india = India home purchase; financial_freedom_fire = retire-early corpus; legacy_inheritance = leave-behind for heirs; other_goals = any goal not listed.\n- description (string, nullable): Goal in the Client's own terms, e.g. \"Daughter's MS in the US\".\n- target_amount (string, nullable): Target corpus / cost, e.g. 'INR 8000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- target_year (integer, nullable): Calendar year the Client wants to achieve the goal, e.g. 2032. If stated as 'in N years', add N to the meeting year and use confidence_type calculated.\n- priority (enum, nullable): How important the goal is, e.g. 'high'. Only when the Client indicates it. Allowed values: high, medium, low.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"We want around 80 lakh for our daughter's MS in the US by 2032, and about 1 crore for a house in India.\" -> [\n  {\n    \"goal_type\": \"child_s_higher_education\",\n    \"description\": \"Daughter's MS in the US\",\n    \"target_amount\": \"INR 8000000\",\n    \"target_year\": 2032,\n    \"priority\": null,\n    \"confidence\": 0.85,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"around 80 lakh for our daughter's MS in the US by 2032\"\n  },\n  {\n    \"goal_type\": \"buying_a_house_india\",\n    \"description\": \"House in India\",\n    \"target_amount\": \"INR 10000000\",\n    \"target_year\": null,\n    \"priority\": null,\n    \"confidence\": 0.85,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about 1 crore for a house in India\"\n  }\n]\nExample 2 - Client: \"We want to retire in 15 years with a 5 crore corpus. (Meeting year 2026.)\" -> [\n  {\n    \"goal_type\": \"financial_freedom_fire\",\n    \"description\": \"Retire with a 5 crore corpus\",\n    \"target_amount\": \"INR 50000000\",\n    \"target_year\": 2041,\n    \"priority\": null,\n    \"confidence\": 0.8,\n    \"confidence_type\": \"calculated\",\n    \"evidence\": \"retire in 15 years with a 5 crore corpus\"\n  }\n]\nExample 3 - Client: \"We are planning for a child but haven't fixed any amount yet.\" -> [\n  {\n    \"goal_type\": \"planning_a_child\",\n    \"description\": \"Planning for a child\",\n    \"target_amount\": \"Yes\",\n    \"target_year\": null,\n    \"priority\": null,\n    \"confidence\": 0.85,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"planning for a child but haven't fixed any amount yet\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "goal_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "planning_a_child",
+            "child_s_college_education",
+            "child_s_higher_education",
+            "buying_a_house_india",
+            "buying_a_vehicle",
+            "wedding_expenses",
+            "parents_healthcare_fund",
+            "vacation_travel_fund",
+            "legacy_inheritance",
+            "financial_freedom_fire",
+            "other_goals"
+          ],
+          "description": "Type of goal, e.g. 'buying_a_house_india', 'financial_freedom_fire'."
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Goal in the Client's own terms, e.g. \"Daughter's MS in the US\"."
+        },
+        {
+          "name": "target_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Target corpus / cost, e.g. 'INR 8000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "target_year",
+          "type": "integer",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Calendar year the Client wants to achieve the goal, e.g. 2032. If stated as 'in N years', add N to the meeting year and use confidence_type calculated."
+        },
+        {
+          "name": "priority",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "description": "How important the goal is, e.g. 'high'. Only when the Client indicates it."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "bb395d0c7a40483ab48c43ad81e9d307",
+    "name": "income_sources",
+    "type": "array",
+    "description": "This attribute consolidates every income source the Client mentions into a single list so total inflow can be compared against expenses. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- income_type (enum, required): Type of income, e.g. 'salary', 'rental'. Allowed values: salary, business, capital_gains, rental, speculation, other_income. Meanings: capital_gains = profit from selling assets; rental = rent received; speculation = F&O, intraday or lottery-type gains; other_income = any source not listed.\n- source (string, nullable): Employer / business / property name, e.g. 'Infosys', 'Pune flat rent'.\n- amount (string, nullable): Amount per period, e.g. 'INR 200000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- frequency (enum, nullable): Pay frequency, e.g. 'monthly'. Allowed values: monthly, annual, one_time.\n- location (enum, nullable): Where the income is earned, e.g. 'India'. Allowed values: India, Foreign.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"My monthly salary at Infosys is 2 lakh and we get 25k rent from our Pune flat.\" -> [\n  {\n    \"income_type\": \"salary\",\n    \"source\": \"Infosys\",\n    \"amount\": \"INR 200000\",\n    \"frequency\": \"monthly\",\n    \"location\": \"India\",\n    \"confidence\": 0.95,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"My monthly salary at Infosys is 2 lakh\"\n  },\n  {\n    \"income_type\": \"rental\",\n    \"source\": \"Pune flat\",\n    \"amount\": \"INR 25000\",\n    \"frequency\": \"monthly\",\n    \"location\": \"India\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"we get 25k rent from our Pune flat\"\n  }\n]\nExample 2 - Client: \"I earn about $5,400 a month from my US contracting work.\" -> [\n  {\n    \"income_type\": \"salary\",\n    \"source\": \"US contracting work\",\n    \"amount\": \"USD 5400\",\n    \"frequency\": \"monthly\",\n    \"location\": \"Foreign\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about $5,400 a month from my US contracting work\"\n  }\n]\nExample 3 - Client: \"My wife has some business income but I don't know the figure, and I had no capital gains this year.\" -> [\n  {\n    \"income_type\": \"business\",\n    \"source\": \"Wife's business\",\n    \"amount\": \"Yes\",\n    \"frequency\": null,\n    \"location\": \"India\",\n    \"confidence\": 0.8,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"My wife has some business income but I don't know the figure\"\n  },\n  {\n    \"income_type\": \"capital_gains\",\n    \"source\": null,\n    \"amount\": \"0\",\n    \"frequency\": \"annual\",\n    \"location\": null,\n    \"confidence\": 0.9,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I had no capital gains this year\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "income_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "salary",
+            "business",
+            "capital_gains",
+            "rental",
+            "speculation",
+            "other_income"
+          ],
+          "description": "Type of income, e.g. 'salary', 'rental'."
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Employer / business / property name, e.g. 'Infosys', 'Pune flat rent'."
+        },
+        {
+          "name": "amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Amount per period, e.g. 'INR 200000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "frequency",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "monthly",
+            "annual",
+            "one_time"
+          ],
+          "description": "Pay frequency, e.g. 'monthly'."
+        },
+        {
+          "name": "location",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "India",
+            "Foreign"
+          ],
+          "description": "Where the income is earned, e.g. 'India'."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "9cf6ddf24c0546e2acf4ebafee82947f",
+    "name": "insurance_policies",
+    "type": "array",
+    "description": "This attribute consolidates every insurance policy the Client mentions into a single list so cover gaps can be assessed. The two boolean adequacy judgements (term_insurance_coverage_adequacy, health_insurance_coverage_adequacy) stay as separate attributes. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- insurance_type (enum, required): Type of policy, e.g. 'life_term', 'health'. Allowed values: life_term, health, ulip, other. Meanings: life_term = pure protection term cover; health = medical cover; ulip = Unit Linked Insurance Plan (investment-cum-insurance); other = any policy not listed.\n- insurer (string, nullable): Insurance company, e.g. 'HDFC Life', 'Star Health'.\n- policy_name (string, nullable): Plan name if given, e.g. 'Click 2 Protect'.\n- covered_members (string, nullable): Who is covered, e.g. 'self', 'self, spouse, 2 children'.\n- cover_amount (string, nullable): Sum assured / cover, e.g. 'INR 10000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- premium_amount (string, nullable): Premium per period, e.g. 'INR 12000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- premium_frequency (enum, nullable): How often the premium is paid, e.g. 'annual'. Allowed values: monthly, quarterly, annual, one_time.\n- source (enum, nullable): Who provides the cover, e.g. 'personal'. employer = group / corporate cover. Allowed values: employer, personal.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"I have a 1 crore HDFC term plan with 12k annual premium, and a 10 lakh Star Health family floater.\" -> [\n  {\n    \"insurance_type\": \"life_term\",\n    \"insurer\": \"HDFC Life\",\n    \"policy_name\": null,\n    \"covered_members\": \"self\",\n    \"cover_amount\": \"INR 10000000\",\n    \"premium_amount\": \"INR 12000\",\n    \"premium_frequency\": \"annual\",\n    \"source\": \"personal\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"1 crore HDFC term plan with 12k annual premium\"\n  },\n  {\n    \"insurance_type\": \"health\",\n    \"insurer\": \"Star Health\",\n    \"policy_name\": null,\n    \"covered_members\": \"family\",\n    \"cover_amount\": \"INR 1000000\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": \"personal\",\n    \"confidence\": 0.85,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"a 10 lakh Star Health family floater\"\n  }\n]\nExample 2 - Client: \"My employer gives me a 5 lakh health cover for my family; I pay nothing for it.\" -> [\n  {\n    \"insurance_type\": \"health\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": \"family\",\n    \"cover_amount\": \"INR 500000\",\n    \"premium_amount\": \"0\",\n    \"premium_frequency\": null,\n    \"source\": \"employer\",\n    \"confidence\": 0.9,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"My employer gives me a 5 lakh health cover for my family\"\n  }\n]\nExample 3 - Client: \"I do have a ULIP from years ago but I don't remember the cover, and I have no separate term cover of my own.\" -> [\n  {\n    \"insurance_type\": \"ulip\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": null,\n    \"cover_amount\": \"Yes\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": \"personal\",\n    \"confidence\": 0.75,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I do have a ULIP from years ago but I don't remember the cover\"\n  },\n  {\n    \"insurance_type\": \"life_term\",\n    \"insurer\": null,\n    \"policy_name\": null,\n    \"covered_members\": null,\n    \"cover_amount\": \"0\",\n    \"premium_amount\": null,\n    \"premium_frequency\": null,\n    \"source\": null,\n    \"confidence\": 0.9,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I have no separate term cover of my own\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Insurance",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "insurance_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "life_term",
+            "health",
+            "ulip",
+            "other"
+          ],
+          "description": "Type of policy, e.g. 'life_term', 'health'."
+        },
+        {
+          "name": "insurer",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Insurance company, e.g. 'HDFC Life', 'Star Health'."
+        },
+        {
+          "name": "policy_name",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Plan name if given, e.g. 'Click 2 Protect'."
+        },
+        {
+          "name": "covered_members",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Who is covered, e.g. 'self', 'self, spouse, 2 children'."
+        },
+        {
+          "name": "cover_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Sum assured / cover, e.g. 'INR 10000000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "premium_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Premium per period, e.g. 'INR 12000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "premium_frequency",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "monthly",
+            "quarterly",
+            "annual",
+            "one_time"
+          ],
+          "description": "How often the premium is paid, e.g. 'annual'."
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "employer",
+            "personal"
+          ],
+          "description": "Who provides the cover, e.g. 'personal'. employer = group / corporate cover."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "tax_and_insurance",
+      "insurance"
+    ]
+  },
+  {
+    "id": "a83d5d5d6e1f4b5496e13e66b1b875ec",
+    "name": "liabilities",
+    "type": "array",
+    "description": "This attribute consolidates every liability or loan the Client mentions into a single list so outstanding debt and EMI load can be totalled. Return one item per distinct holding/instance mentioned. If the Client mentions a type only in aggregate, return one item for that type. Return an empty list when the group is not discussed. Return the list directly - there is no outer value/confidence wrapper.\n\nProperties:\n- liability_type (enum, required): Type of loan, e.g. 'home_loan', 'credit_card_debt'. Allowed values: home_loan, vehicle_loan, education_loan, personal_loan, gold_loan, credit_card_debt, other_loan, total. Meanings: credit_card_debt = unpaid card dues; other_loan = any loan not listed; total = an explicitly stated total for the group.\n- lender (string, nullable): Lender name, e.g. 'SBI', 'HDFC Bank'.\n- outstanding_amount (string, nullable): Amount still owed, e.g. 'INR 4500000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- emi_amount (string, nullable): Monthly EMI, e.g. 'INR 42000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned.\n- interest_rate (string, nullable): Rate as stated, e.g. '8.5%'.\n- end_year (integer, nullable): Year the loan ends, e.g. 2040.\n- confidence (number, required): How confident the model is in this item (0-1).\n- confidence_type (enum, required): quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type. Allowed values: quoted, normalized, inferred, calculated, not_found.\n- evidence (string, nullable): Short verbatim quote(s) from the transcript supporting this item.\n\nExamples:\nExample 1 - Client: \"I have an SBI home loan of 45 lakh outstanding, EMI of 42 thousand at 8.5%, till 2040.\" -> [\n  {\n    \"liability_type\": \"home_loan\",\n    \"lender\": \"SBI\",\n    \"outstanding_amount\": \"INR 4500000\",\n    \"emi_amount\": \"INR 42000\",\n    \"interest_rate\": \"8.5%\",\n    \"end_year\": 2040,\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"SBI home loan of 45 lakh outstanding, EMI of 42 thousand at 8.5%, till 2040\"\n  }\n]\nExample 2 - Client: \"I have a 3 lakh personal loan and about 50 thousand outstanding on my credit card.\" -> [\n  {\n    \"liability_type\": \"personal_loan\",\n    \"lender\": null,\n    \"outstanding_amount\": \"INR 300000\",\n    \"emi_amount\": null,\n    \"interest_rate\": null,\n    \"end_year\": null,\n    \"confidence\": 0.9,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"I have a 3 lakh personal loan\"\n  },\n  {\n    \"liability_type\": \"credit_card_debt\",\n    \"lender\": null,\n    \"outstanding_amount\": \"INR 50000\",\n    \"emi_amount\": null,\n    \"interest_rate\": null,\n    \"end_year\": null,\n    \"confidence\": 0.85,\n    \"confidence_type\": \"normalized\",\n    \"evidence\": \"about 50 thousand outstanding on my credit card\"\n  }\n]\nExample 3 - Client: \"I still have some education loan left but I'm not sure how much, and I have no vehicle loan.\" -> [\n  {\n    \"liability_type\": \"education_loan\",\n    \"lender\": null,\n    \"outstanding_amount\": \"Yes\",\n    \"emi_amount\": null,\n    \"interest_rate\": null,\n    \"end_year\": null,\n    \"confidence\": 0.8,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I still have some education loan left but I'm not sure how much\"\n  },\n  {\n    \"liability_type\": \"vehicle_loan\",\n    \"lender\": null,\n    \"outstanding_amount\": \"0\",\n    \"emi_amount\": null,\n    \"interest_rate\": null,\n    \"end_year\": null,\n    \"confidence\": 0.95,\n    \"confidence_type\": \"quoted\",\n    \"evidence\": \"I have no vehicle loan\"\n  }\n]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "liability_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "home_loan",
+            "vehicle_loan",
+            "education_loan",
+            "personal_loan",
+            "gold_loan",
+            "credit_card_debt",
+            "other_loan",
+            "total"
+          ],
+          "description": "Type of loan, e.g. 'home_loan', 'credit_card_debt'."
+        },
+        {
+          "name": "lender",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Lender name, e.g. 'SBI', 'HDFC Bank'."
+        },
+        {
+          "name": "outstanding_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Amount still owed, e.g. 'INR 4500000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "emi_amount",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Monthly EMI, e.g. 'INR 42000'. Currency code or unit, one space, digits only - no commas, no symbols, no words: 'INR 1000000', 'USD 5400', '50 units', '0.5 BTC'. Convert lakh/crore to digits (10 lakh -> INR 1000000). '0' when the Client says they have none of this type. 'Yes' when the Client has it but gave no figure. null when not mentioned."
+        },
+        {
+          "name": "interest_rate",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Rate as stated, e.g. '8.5%'."
+        },
+        {
+          "name": "end_year",
+          "type": "integer",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Year the loan ends, e.g. 2040."
+        },
+        {
+          "name": "confidence",
+          "type": "number",
+          "null_allowed": false,
+          "enum": [],
+          "description": "How confident the model is in this item (0-1)."
+        },
+        {
+          "name": "confidence_type",
+          "type": "string",
+          "null_allowed": false,
+          "enum": [
+            "quoted",
+            "normalized",
+            "inferred",
+            "calculated",
+            "not_found"
+          ],
+          "description": "quoted = stated verbatim; normalized = stated but reformatted (e.g. '10 lakh' -> 'INR 1000000'); inferred = clearly implied; calculated = derived from several stated pieces; not_found = no value found for this type."
+        },
+        {
+          "name": "evidence",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Short verbatim quote(s) from the transcript supporting this item."
+        }
+      ]
+    },
+    "wrap_result": false,
+    "agents": [
+      "liability"
+    ]
+  }
+]

@@ -27,6 +27,17 @@ def _agent_ids(db: Session, attribute_id: str) -> list[str]:
     return [r.agent_id for r in rows]
 
 
+def _wrap_result_of(r: Attribute) -> bool:
+    """wrap_result with backward compat: missing column / None means True."""
+    try:
+        v = getattr(r, "wrap_result", True)
+    except Exception:
+        return True
+    if v is None:
+        return True
+    return bool(v)
+
+
 def _out(db: Session, r: Attribute) -> AttributeOut:
     raw_props = getattr(r, "object_properties", None) or []
     raw_group = getattr(r, "group_name", None) or ""
@@ -36,7 +47,8 @@ def _out(db: Session, r: Attribute) -> AttributeOut:
                         description=r.description, group=raw_group,
                         enum_values=r.enum_values or [],
                         object_properties=raw_props if isinstance(raw_props, list) else [],
-                        array_items=norm_items)
+                        array_items=norm_items,
+                        wrap_result=_wrap_result_of(r))
 
 
 def _check_agents_exist(db: Session, agent_ids: list[str]) -> None:
@@ -143,7 +155,7 @@ def _validate_array_items(raw: object) -> dict:
         if not name:
             raise HTTPException(422, "array property name must be non-blank")
         if sub_type not in OBJECT_SUB_TYPES:
-            raise HTTPException(422, "array property type must be string|number|boolean|array")
+            raise HTTPException(422, "array property type must be string|number|integer|boolean|array")
         if not isinstance(null_allowed, bool):
             raise HTTPException(422, "array property null_allowed must be boolean")
         if name in seen:
@@ -177,7 +189,7 @@ def _validate(attr_type: str, enum_values: list[str],
             if not name:
                 raise HTTPException(422, "object property name must be non-blank")
             if sub_type not in OBJECT_SUB_TYPES:
-                raise HTTPException(422, "object property type must be string|number|boolean|array")
+                raise HTTPException(422, "object property type must be string|number|integer|boolean|array")
             if not isinstance(null_allowed, bool):
                 raise HTTPException(422, "object property null_allowed must be boolean")
             if name in seen:
@@ -217,7 +229,8 @@ def create_attribute(payload: AttributeCreate, db: Session = Depends(get_db)):
                     group_name=_clean_group(getattr(payload, "group", "")),
                     enum_values=enum_values,
                     object_properties=object_properties,
-                    array_items=array_items)
+                    array_items=array_items,
+                    wrap_result=bool(getattr(payload, "wrap_result", True)))
     db.add(row)
     db.flush()  # need row.id for the association links
     for aid in dict.fromkeys(payload.agent_ids):
@@ -262,6 +275,11 @@ def update_attribute(attribute_id: str, payload: AttributeUpdate, db: Session = 
             new_type, new_enum, new_props_raw, new_items_raw)
     if payload.group is not None:
         row.group_name = _clean_group(payload.group)
+    if payload.wrap_result is not None:
+        try:
+            row.wrap_result = bool(payload.wrap_result)
+        except Exception:
+            pass
     for field in ("name", "type", "description"):
         value = getattr(payload, field)
         if value is not None:

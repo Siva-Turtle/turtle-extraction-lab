@@ -1,0 +1,3776 @@
+{
+  "attributes": [
+    {
+      "id": "acccd7645ede406bbbccf2a515c53ab4",
+      "name": "bonds",
+      "type": "array",
+      "description": "Individual bond holdings. [Original: Bonds]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.656419+05:30"
+    },
+    {
+      "id": "97dfde9c8c724d1888f9687b5725d705",
+      "name": "cash",
+      "type": "array",
+      "description": "Cash holdings, including relevant breakdown/name where mentioned. [Original: Cash]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.654249+05:30"
+    },
+    {
+      "id": "ef309cb17e3f4224acc4247682332e1d",
+      "name": "commodity_etf",
+      "type": "array",
+      "description": "Individual commodity ETF holdings. [Original: Commodity ETF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.650560+05:30"
+    },
+    {
+      "id": "edf6376e30004c3ea6b9e08d7cdb6ec9",
+      "name": "crypto",
+      "type": "array",
+      "description": "Individual cryptocurrency holdings. [Original: Crypto]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.657813+05:30"
+    },
+    {
+      "id": "4150573eab33402bbaa398c16095ec8b",
+      "name": "debt_etf",
+      "type": "array",
+      "description": "Individual debt ETF holdings. [Original: Debt ETF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.651228+05:30"
+    },
+    {
+      "id": "d5e62ba4ca004b1bb6145ff99b61e43b",
+      "name": "debt_mf",
+      "type": "array",
+      "description": "Individual debt mutual fund holdings. [Original: Debt MF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.655181+05:30"
+    },
+    {
+      "id": "a647609c8d6c41f296128482c9031eef",
+      "name": "deposit",
+      "type": "array",
+      "description": "Individual deposit holdings. [Original: Deposit]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.653149+05:30"
+    },
+    {
+      "id": "c7fbd1c5e1b145099b5e92f6367d9fff",
+      "name": "equity_etf",
+      "type": "array",
+      "description": "Individual equity ETF holdings. [Original: Equity ETF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.650086+05:30"
+    },
+    {
+      "id": "7a33ea09c01b4eabb23d51b1615a2dd1",
+      "name": "equity_mutual_fund",
+      "type": "array",
+      "description": "Individual equity mutual fund holdings. [Original: Equity Mutual Fund]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.649572+05:30"
+    },
+    {
+      "id": "73e0284eb1c142d9932fe6200974a189",
+      "name": "others_asset_type",
+      "type": "array",
+      "description": "Other asset/instrument types not covered by the defined categories. [Original: Others (Asset Type)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.658988+05:30"
+    },
+    {
+      "id": "3a48ecf42a054db59984b52a021cd5f9",
+      "name": "personal_debt",
+      "type": "array",
+      "description": "Personal debt receivables/investments, including individual names where mentioned. [Original: Personal Debt]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.655846+05:30"
+    },
+    {
+      "id": "0973abbe00e349498cbe1462bfdae948",
+      "name": "real_estate",
+      "type": "array",
+      "description": "Individual real-estate assets. [Original: Real Estate]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.657361+05:30"
+    },
+    {
+      "id": "9a2073abe1ca4427ae0b5722e3ea909e",
+      "name": "reits",
+      "type": "array",
+      "description": "Individual REIT holdings. [Original: REITs]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.656910+05:30"
+    },
+    {
+      "id": "899d65d8aaae42c9b7c8dffacdb17d50",
+      "name": "stocks",
+      "type": "array",
+      "description": "Individual listed stock holdings. Multiple instruments can be extracted. [Original: Stocks]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.648655+05:30"
+    },
+    {
+      "id": "7256d9da7d114c89b514b4ba18f9e724",
+      "name": "total",
+      "type": "array",
+      "description": "Total assets where a total value is explicitly stated or can be extracted from the conversation. [Original: Total]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [
+              "India",
+              "Foreign",
+              "Overall"
+            ],
+            "description": "Total assets bucket: extract total assets in India, total assets outside India (Foreign), and overall total."
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.660811+05:30"
+    },
+    {
+      "id": "4ae8db5c070b4033a31bb61344a18e72",
+      "name": "unlisted_stocks",
+      "type": "array",
+      "description": "Individual unlisted stock holdings. Multiple instruments can be extracted. [Original: Unlisted Stocks]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Assets",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.649112+05:30"
+    },
+    {
+      "id": "ac583f202cac40bb98dae91320676fd4",
+      "name": "credit_cards",
+      "type": "array",
+      "description": "Names of credit cards mentioned by the Client. [Original: Card Name(s)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.617279+05:30"
+    },
+    {
+      "id": "01703d441bc5440f889374c007dc32f4",
+      "name": "aif",
+      "type": "array",
+      "description": "Alternative Investment Fund accounts/investments, including specific fund names where mentioned. [Original: AIF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.645691+05:30"
+    },
+    {
+      "id": "1b63930572104143a40f6e2cb1a3885f",
+      "name": "bank_account",
+      "type": "array",
+      "description": "Bank accounts held by the Client, including specific account names where mentioned. [Original: Bank Account]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.641196+05:30"
+    },
+    {
+      "id": "de46589cebdc4392978bc5970d11b98a",
+      "name": "bank_deposit",
+      "type": "array",
+      "description": "Bank deposits held by the Client, including specific deposit/account names where mentioned. [Original: Bank Deposit]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.642123+05:30"
+    },
+    {
+      "id": "072bb3b918e04abd90ff7be08acc62e7",
+      "name": "crypto_broker",
+      "type": "array",
+      "description": "Crypto broker accounts, including specific broker/account names where mentioned. [Original: Crypto Broker]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.646749+05:30"
+    },
+    {
+      "id": "e08e3f0a9bbf4bc9938c6b07ef428a66",
+      "name": "epf",
+      "type": "array",
+      "description": "EPF accounts/holdings, including specific account names where mentioned. [Original: EPF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.643455+05:30"
+    },
+    {
+      "id": "02362c6204884b71992c726bd5ef39ae",
+      "name": "investment_account",
+      "type": "array",
+      "description": "Investment accounts held by the Client, including specific account names where mentioned. [Original: Investment Account]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.640592+05:30"
+    },
+    {
+      "id": "264068f9e10a423db4e1883144c6842e",
+      "name": "nps",
+      "type": "array",
+      "description": "NPS accounts/holdings, including specific account names where mentioned. [Original: NPS]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.642591+05:30"
+    },
+    {
+      "id": "17762a54f603472284c33adf1ba98c7a",
+      "name": "others_account_type",
+      "type": "array",
+      "description": "Other account types not covered by the defined categories. [Original: Others (Account Type)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.648172+05:30"
+    },
+    {
+      "id": "d398487c98e142e28efc2784c1a235a9",
+      "name": "pms",
+      "type": "array",
+      "description": "Portfolio Management Service accounts, including specific provider/account names where mentioned. [Original: PMS]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.643877+05:30"
+    },
+    {
+      "id": "928457203a91446787307adba75484f7",
+      "name": "ppf",
+      "type": "array",
+      "description": "PPF accounts/holdings, including account names or identifiers where mentioned. [Original: PPF]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.641671+05:30"
+    },
+    {
+      "id": "98a4fabc0f80477ca8adce36efdf951b",
+      "name": "self_custody",
+      "type": "array",
+      "description": "Self-custody investment/crypto accounts or wallets, including names where mentioned. [Original: Self Custody]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.647463+05:30"
+    },
+    {
+      "id": "cbbc5d03384d4f0790620cf1ae334606",
+      "name": "ssy",
+      "type": "array",
+      "description": "Sukanya Samriddhi Yojana accounts/holdings, including specific account names where mentioned. [Original: SSY]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Banking / Accounts",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.643037+05:30"
+    },
+    {
+      "id": "ad5bb598dfa74199b89ac3a12ad6d87e",
+      "name": "areas_of_interest",
+      "type": "array",
+      "description": "Custom Turtle tags capturing areas of financial/personal interest that meaningfully characterize the Client/Prospect. [Original: Areas of Interest]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.635577+05:30"
+    },
+    {
+      "id": "a6b4591fbee043a692045195a457cf4c",
+      "name": "financial_biases",
+      "type": "array",
+      "description": "Custom tags capturing financial biases or recurring behavioral tendencies. [Original: Financial Biases]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.636054+05:30"
+    },
+    {
+      "id": "da8ba89840f9495c816234386e58414e",
+      "name": "investing_style",
+      "type": "array",
+      "description": "Custom tags describing the Client/Prospect's investing style or behavioral profile. [Original: Investing Style]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.636476+05:30"
+    },
+    {
+      "id": "ac045ca26b89416bacec0d41ce413ba1",
+      "name": "prospect_s_attitude",
+      "type": "enum",
+      "description": "General attitude of the Prospect. [Original: Prospect's Attitude]",
+      "enum_values": [
+        "Optimistic",
+        "Pessimistic",
+        "Critical"
+      ],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.633548+05:30"
+    },
+    {
+      "id": "f41ff83da9094606bd938054316df104",
+      "name": "prospect_s_financial_acumen",
+      "type": "enum",
+      "description": "Assessed financial sophistication/acumen. [Original: Prospect's Financial Acumen]",
+      "enum_values": [
+        "H",
+        "M",
+        "L"
+      ],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.634135+05:30"
+    },
+    {
+      "id": "acfe4a871f90478189e6b092f913ce8f",
+      "name": "prospect_s_financial_background_y_n",
+      "type": "boolean",
+      "description": "Whether the Prospect has a financial/investment background. [Original: Prospect's Financial Background (Y/N)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.634642+05:30"
+    },
+    {
+      "id": "0fc57545d6124067a5aa8b3e2593ae8e",
+      "name": "prospect_s_price_sensitivity_y_n",
+      "type": "boolean",
+      "description": "Whether the Prospect demonstrates meaningful price sensitivity. [Original: Prospect's Price Sensitivity (Y/N)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Behavioral / Segmentation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.635124+05:30"
+    },
+    {
+      "id": "478f2e68223e4e25ac144ae8b1ae8b41",
+      "name": "client_s_availability_weekday_time_timezone",
+      "type": "string",
+      "description": "General availability of the Client/Prospect as stated in the conversation. [Original: Client's Availability (Weekday, Time, Timezone)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Communication",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.628051+05:30"
+    },
+    {
+      "id": "08ecbcb4f95b4bbd9a79d2b992036770",
+      "name": "preferred_mode_of_communication_email_wa_call",
+      "type": "enum",
+      "description": "Preferred communication channel. [Original: Preferred mode of communication (Email/WA/Call)]",
+      "enum_values": [
+        "Email",
+        "WA",
+        "Call"
+      ],
+      "object_properties": [],
+      "group_name": "Communication",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.628630+05:30"
+    },
+    {
+      "id": "808d56eca0e74c96ae5249b02c090280",
+      "name": "current_residence_city",
+      "type": "string",
+      "description": "The City where the Client/Prospect is residing",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Demographic",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.606128+05:30"
+    },
+    {
+      "id": "534ffe99bdcf46f2a6569d786832ecdf",
+      "name": "current_residence_state",
+      "type": "string",
+      "description": "The State where the Client/Prospect is residing",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Demographic",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.606772+05:30"
+    },
+    {
+      "id": "887e0867cce7406880db3ab16b973845",
+      "name": "native_city",
+      "type": "string",
+      "description": "The Native City of the Client/Prospect",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Demographic",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.601626+05:30"
+    },
+    {
+      "id": "0b8f5783400e4839a5a11a296b750b30",
+      "name": "native_state",
+      "type": "string",
+      "description": "The Native State of the Client/Prospect",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Demographic",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.605121+05:30"
+    },
+    {
+      "id": "325f59aff07a4080b88975f4e491dcbb",
+      "name": "alumni_institute",
+      "type": "array",
+      "description": "Educational institutes attended by the Client/Prospect. [Original: Alumni (Institute)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Education / Alumni",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.622024+05:30"
+    },
+    {
+      "id": "5a516623d8984155986a9c26b44d7abc",
+      "name": "alumni_organization",
+      "type": "array",
+      "description": "Organizations/companies associated with by the Client/Prospect as alumni or through prior employment/association. [Original: Alumni (Organization)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Education / Alumni",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.622453+05:30"
+    },
+    {
+      "id": "6bbcf22eb5df44129d115a6104cd1394",
+      "name": "works_at",
+      "type": "object",
+      "description": "Current work/employment status of the Client/Prospect. [Original: Works at]",
+      "enum_values": [],
+      "object_properties": [
+        {
+          "name": "organization",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "designation",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "department",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "employment_type",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ],
+      "group_name": "Employment",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.621537+05:30"
+    },
+    {
+      "id": "6806eda68654408b91dfe64bf6b79289",
+      "name": "will_executed_y_n",
+      "type": "boolean",
+      "description": "Whether the Client has an executed will. [Original: Will Executed (Y/N)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Estate Planning",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.615565+05:30"
+    },
+    {
+      "id": "ed570ac635774d10ade93f5d95d31610",
+      "name": "charity_donations",
+      "type": "array",
+      "description": "Charity and donation expenses. [Original: Charity / Donations]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.682171+05:30"
+    },
+    {
+      "id": "b4a9ed71bc37458a9503a44929d695e3",
+      "name": "childcare_school_fees",
+      "type": "array",
+      "description": "Childcare and school-fee expenses. [Original: Childcare / School Fees]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.670217+05:30"
+    },
+    {
+      "id": "caece59f541c4f38b32d9776b74aea56",
+      "name": "entertainment_dining",
+      "type": "array",
+      "description": "Entertainment and dining expenses. [Original: Entertainment & Dining]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.670663+05:30"
+    },
+    {
+      "id": "57c45a90fbe4471691762d79c20a98a2",
+      "name": "family_support",
+      "type": "array",
+      "description": "Family-support expenses. [Original: Family Support]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.671652+05:30"
+    },
+    {
+      "id": "63462f6a5c714f3680e861b78e1cfc02",
+      "name": "groceries",
+      "type": "array",
+      "description": "Grocery expenses. [Original: Groceries]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.669299+05:30"
+    },
+    {
+      "id": "9a595440286b4474a8583bb60ee26a73",
+      "name": "household_staff",
+      "type": "array",
+      "description": "Household staff expenses. [Original: Household Staff]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.669790+05:30"
+    },
+    {
+      "id": "bff437be392a4c85b3f7deb7560fd240",
+      "name": "insurance_premiums",
+      "type": "array",
+      "description": "Insurance premium expenses. [Original: Insurance Premiums]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.675465+05:30"
+    },
+    {
+      "id": "89541825be5c48afb57c95ba6d0219be",
+      "name": "loan_emis_education",
+      "type": "array",
+      "description": "Education-loan EMI expenses. [Original: Loan EMIs (Education)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.676976+05:30"
+    },
+    {
+      "id": "9200cef381ab4d5aa8b7f040c4a6f96e",
+      "name": "loan_emis_home",
+      "type": "array",
+      "description": "Home-loan EMI expenses. [Original: Loan EMIs (Home)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.677879+05:30"
+    },
+    {
+      "id": "f64002cf93a94cd5a8f20526c58ac7c0",
+      "name": "loan_emis_others",
+      "type": "array",
+      "description": "Other-loan EMI expenses. [Original: Loan EMIs (Others)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.678963+05:30"
+    },
+    {
+      "id": "5396bc5d16444d1ab4d726790e280de2",
+      "name": "loan_emis_personal",
+      "type": "array",
+      "description": "Personal-loan EMI expenses. [Original: Loan EMIs (Personal)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.677428+05:30"
+    },
+    {
+      "id": "02622da74bf54950a6a517f564fdb749",
+      "name": "loan_emis_total",
+      "type": "array",
+      "description": "Total loan EMI expenses when explicitly stated or extracted. [Original: Loan EMIs (Total)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.681198+05:30"
+    },
+    {
+      "id": "02590792e2a94caba9f0e9c4e507cec5",
+      "name": "loan_emis_vehicle",
+      "type": "array",
+      "description": "Vehicle-loan EMI expenses. [Original: Loan EMIs (Vehicle)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.678312+05:30"
+    },
+    {
+      "id": "b30a26765cf24b79b08e5ac972c78c6c",
+      "name": "medical_expenses",
+      "type": "array",
+      "description": "Medical expenses. [Original: Medical Expenses]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.676503+05:30"
+    },
+    {
+      "id": "959c1e4a6b2a4f9298c74079786c766f",
+      "name": "miscellaneous",
+      "type": "array",
+      "description": "Miscellaneous expenses. [Original: Miscellaneous]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.682792+05:30"
+    },
+    {
+      "id": "cc779903c29a45e9836f2692f4529b1e",
+      "name": "rent",
+      "type": "array",
+      "description": "Rent expenses. [Original: Rent]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": "Name/location of the property the rent expense relates to."
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.667100+05:30"
+    },
+    {
+      "id": "4f444d1f17be48f1955c2d75f2772b94",
+      "name": "shopping_purchases",
+      "type": "array",
+      "description": "Shopping and purchase expenses. [Original: Shopping & Purchases]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.673692+05:30"
+    },
+    {
+      "id": "dc0dc860fea649ec8ae76e6541b00a38",
+      "name": "subscriptions_memberships",
+      "type": "array",
+      "description": "Subscription and membership expenses. [Original: Subscriptions & Memberships]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.674748+05:30"
+    },
+    {
+      "id": "fffa497aa8c84f99a8846cd666958245",
+      "name": "transport_fuel",
+      "type": "array",
+      "description": "Transport and fuel expenses. [Original: Transport / Fuel]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.671193+05:30"
+    },
+    {
+      "id": "85c42795ab6746c1b48140148504fc7e",
+      "name": "travel_vacations",
+      "type": "array",
+      "description": "Travel/vacation expenses. Annual vacation spending should be divided by 12 when converting to monthly expense. [Original: Travel / Vacations]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.676020+05:30"
+    },
+    {
+      "id": "af7b3078de6a44fcb9e4a3cd95993fb8",
+      "name": "utilities",
+      "type": "array",
+      "description": "Utility expenses. [Original: Utilities]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Expenses",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.668323+05:30"
+    },
+    {
+      "id": "97977535806e43c9bbff5495bda21880",
+      "name": "client_s_feedback_on_advisor",
+      "type": "string",
+      "description": "Consolidated feedback provided by the Client/Prospect about Turtle's advisors/planners. [Original: Client's feedback on Advisor]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Feedback",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.632708+05:30"
+    },
+    {
+      "id": "d3d7d6a616514a8fae4ccae6eeb38978",
+      "name": "buying_a_house_india",
+      "type": "array",
+      "description": "Goals related to buying a house in India. [Original: Buying a House (India)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.695075+05:30"
+    },
+    {
+      "id": "5f7257358a4840609fca0cdb3c371563",
+      "name": "buying_a_vehicle",
+      "type": "array",
+      "description": "Goals related to buying a vehicle. [Original: Buying a Vehicle]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.696324+05:30"
+    },
+    {
+      "id": "c2c1ee2064a14b6ba269e1c66e4fc61c",
+      "name": "child_s_college_education",
+      "type": "array",
+      "description": "Goals related to a child's college education. [Original: Child's College Education]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.692056+05:30"
+    },
+    {
+      "id": "91e75e899523474393da1fd26e617637",
+      "name": "child_s_higher_education",
+      "type": "array",
+      "description": "Goals related to a child's higher education. [Original: Child's Higher Education]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.692521+05:30"
+    },
+    {
+      "id": "61bba3fca5e1424c87eb6eaa41d5fa28",
+      "name": "financial_freedom_fire",
+      "type": "array",
+      "description": "Goals related to financial independence or FIRE. [Original: Financial Freedom / FIRE]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.699646+05:30"
+    },
+    {
+      "id": "a07ba9f7040e4341bff00bec87d260e4",
+      "name": "legacy_inheritance",
+      "type": "array",
+      "description": "Goals related to legacy or inheritance. [Original: Legacy / Inheritance]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.699053+05:30"
+    },
+    {
+      "id": "151a12c009bd400bb24022f8838aa91d",
+      "name": "other_goals",
+      "type": "array",
+      "description": "Goals that do not fit the predefined goal categories. [Original: Other Goals]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.701767+05:30"
+    },
+    {
+      "id": "516c39b6f75c465f9b8ab4f02a3c0e34",
+      "name": "parents_healthcare_fund",
+      "type": "array",
+      "description": "Goals related to funding parents' healthcare. [Original: Parents Healthcare Fund]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.697915+05:30"
+    },
+    {
+      "id": "978a6c38500e4e91afa9d49169bcecdc",
+      "name": "planning_a_child",
+      "type": "array",
+      "description": "Goals related to planning for a child. [Original: Planning a Child]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.691521+05:30"
+    },
+    {
+      "id": "d66800d3b05444deb8a2b80906d60db4",
+      "name": "vacation_travel_fund",
+      "type": "array",
+      "description": "Goals related to vacation or travel funding. [Original: Vacation / Travel Fund]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.698518+05:30"
+    },
+    {
+      "id": "9fbfdd9fa0974288a5676e973d70debe",
+      "name": "wedding_expenses",
+      "type": "array",
+      "description": "Goals related to wedding expenses. [Original: Wedding Expenses]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Goals",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "year",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.697242+05:30"
+    },
+    {
+      "id": "aa29f9ed7e0a41a3aa29dd3ffe8c905e",
+      "name": "huf",
+      "type": "enum",
+      "description": "Status of the Client's HUF. [Original: HUF]",
+      "enum_values": [
+        "Has an HUF",
+        "Recommended",
+        "Discussed"
+      ],
+      "object_properties": [],
+      "group_name": "HUF / Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.614502+05:30"
+    },
+    {
+      "id": "e5e93720537342dab4506377f9defac0",
+      "name": "huf_source",
+      "type": "enum",
+      "description": "Who is the Karta or who owns the HUF. [Original: HUF Source]",
+      "enum_values": [
+        "Self",
+        "Father"
+      ],
+      "object_properties": [],
+      "group_name": "HUF / Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.615041+05:30"
+    },
+    {
+      "id": "6eb4963b0a034100af77ae3e1ad22b0c",
+      "name": "business",
+      "type": "array",
+      "description": "Business income sources/breakdowns. [Original: Business]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.662334+05:30"
+    },
+    {
+      "id": "d7f726a2ea724341a13e5c54ab6e178e",
+      "name": "capital_gains",
+      "type": "array",
+      "description": "Capital gains income sources/breakdowns. [Original: Capital Gains]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.662957+05:30"
+    },
+    {
+      "id": "b88ec130a61c409984361946885760bd",
+      "name": "other_income",
+      "type": "array",
+      "description": "Other income sources/breakdowns. [Original: Other Income]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.664911+05:30"
+    },
+    {
+      "id": "afb2a8f672bc44a9be6477d7bd4b8ab5",
+      "name": "rental",
+      "type": "array",
+      "description": "Rental income sources/breakdowns. [Original: Rental]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.663522+05:30"
+    },
+    {
+      "id": "f95e889bcc3d41bb9951210f9d4f80a8",
+      "name": "salary",
+      "type": "array",
+      "description": "Salary income sources/breakdowns. [Original: Salary]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.661718+05:30"
+    },
+    {
+      "id": "ddcc78014abb433fad90ee684753cf59",
+      "name": "speculation",
+      "type": "array",
+      "description": "Speculative income sources/breakdowns. [Original: Speculation]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Income",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.664193+05:30"
+    },
+    {
+      "id": "6ec78edfe8bb47abbba3a2a4d56c6fe4",
+      "name": "health",
+      "type": "array",
+      "description": "Health insurance policies and coverage. [Original: Health]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Insurance",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "cover_amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.690298+05:30"
+    },
+    {
+      "id": "d777e644efe64cc1bbc31917a6a9d9e8",
+      "name": "health_insurance_coverage_adequacy",
+      "type": "boolean",
+      "description": "Is the health insurance coverage adequate for the Client? [Original: Health Insurance Coverage Adequacy]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Insurance",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.613990+05:30"
+    },
+    {
+      "id": "5095ac9e9d574b3896daa0ae4ff2cdea",
+      "name": "life_term",
+      "type": "array",
+      "description": "Life/term insurance policies and coverage. [Original: Life/Term]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Insurance",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "cover_amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.689653+05:30"
+    },
+    {
+      "id": "f3943707361048d69500814c15b9032e",
+      "name": "other_ulip",
+      "type": "array",
+      "description": "Other insurance products, including ULIPs. [Original: Other (ULIP)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Insurance",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "cover_amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.690912+05:30"
+    },
+    {
+      "id": "bfdf02a1739c4d4082b50228e4b3a749",
+      "name": "term_insurance_coverage_adequacy",
+      "type": "boolean",
+      "description": "Is the term insurance coverage adequate for the Client? [Original: Term Insurance Coverage Adequacy]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Insurance",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.613367+05:30"
+    },
+    {
+      "id": "247440390cb6463f8d54a50f9a093801",
+      "name": "kc_taker_attitude",
+      "type": "object",
+      "description": "Only for Karma Conversations. How polite or kind was the Turtle's KC Taker towards the Prospect, on a scale of 1 to 10, with reason.",
+      "enum_values": [],
+      "object_properties": [
+        {
+          "name": "score",
+          "type": "number",
+          "null_allowed": true
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "null_allowed": true
+        }
+      ],
+      "group_name": "Karma Conversation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.607387+05:30"
+    },
+    {
+      "id": "759fb43c12f44ada8ed0f7e18d1d4eba",
+      "name": "kc_taker_knowledge",
+      "type": "object",
+      "description": "Only for Karma Conversations. How well was the Turtle's KC Taker able to answer the Prospect's questions, on a scale of 1 to 10, with reason.",
+      "enum_values": [],
+      "object_properties": [
+        {
+          "name": "score",
+          "type": "number",
+          "null_allowed": true
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "null_allowed": true
+        }
+      ],
+      "group_name": "Karma Conversation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.612516+05:30"
+    },
+    {
+      "id": "9a4303600c4f45d38f7ca4567b0b0754",
+      "name": "kc_taker_readiness",
+      "type": "object",
+      "description": "Only for Karma Conversations. How prepared was the Turtle's KC Taker and how well did they prepare around the Prospect's background, on a scale of 1 to 10, with reason.",
+      "enum_values": [],
+      "object_properties": [
+        {
+          "name": "score",
+          "type": "number",
+          "null_allowed": true
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "null_allowed": true
+        }
+      ],
+      "group_name": "Karma Conversation",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.607975+05:30"
+    },
+    {
+      "id": "0b6b0864318f42818c025cb754550d2e",
+      "name": "credit_card_debt",
+      "type": "array",
+      "description": "Credit-card debt liabilities. [Original: Credit Card Debt]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.686564+05:30"
+    },
+    {
+      "id": "ac9f145ad4d9483d9e111449f4280b7e",
+      "name": "education_loan",
+      "type": "array",
+      "description": "Education-loan liabilities. [Original: Education Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.684242+05:30"
+    },
+    {
+      "id": "0d9338052ced46d198fd61af3ecd5e03",
+      "name": "gold_loan",
+      "type": "array",
+      "description": "Gold-loan liabilities. [Original: Gold Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.685391+05:30"
+    },
+    {
+      "id": "9ca65c5332474c539dcba0646a56961b",
+      "name": "home_loan",
+      "type": "array",
+      "description": "Home-loan liabilities. [Original: Home Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.683296+05:30"
+    },
+    {
+      "id": "a85b5c0b5ad543cc9e27486f66f802b4",
+      "name": "other_loan",
+      "type": "array",
+      "description": "Other loan liabilities. [Original: Other Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.688135+05:30"
+    },
+    {
+      "id": "711dc14cfaca484fb79fc97fc9fbd4dc",
+      "name": "personal_loan",
+      "type": "array",
+      "description": "Personal-loan liabilities. [Original: Personal Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.684793+05:30"
+    },
+    {
+      "id": "4a357209b703498e8cef9d47539f8ab1",
+      "name": "total_liabilities",
+      "type": "array",
+      "description": "Total liabilities when explicitly stated or extracted. [Original: Total Liabilities]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.688982+05:30"
+    },
+    {
+      "id": "dc7e5ec826284a02b37362952082ee92",
+      "name": "vehicle_loan",
+      "type": "array",
+      "description": "Vehicle-loan liabilities. [Original: Vehicle Loan]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Liabilities",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "description",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "amount",
+            "type": "number",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "unit",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.683777+05:30"
+    },
+    {
+      "id": "577fa74ae78542f3bfe2c75de8a58e24",
+      "name": "from_date",
+      "type": "string",
+      "description": "Date associated with the planned return journey. Normalize to YYYY-MM-DD. If only an approximate period is mentioned, use the earliest date. [Original: From (Date)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "NRI Mobility",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.623722+05:30"
+    },
+    {
+      "id": "fac40b0b1f554f1e9d66c0a74ba65cd7",
+      "name": "from_destination",
+      "type": "string",
+      "description": "City from which the NRI plans to return. [Original: From (Destination)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "NRI Mobility",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.622873+05:30"
+    },
+    {
+      "id": "2e05bb0465ff4c85ab5fac53d2a6aaf4",
+      "name": "to_date",
+      "type": "string",
+      "description": "Planned date of permanent relocation to India. Normalize to YYYY-MM-DD. If only month/year is mentioned, use the 1st; for a rough period, use the earliest date. [Original: To (Date)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "NRI Mobility",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.627367+05:30"
+    },
+    {
+      "id": "ccd4780a7ef64db4aba3e8b6bb1e7199",
+      "name": "to_destination",
+      "type": "string",
+      "description": "Indian city to which the NRI plans to return permanently. [Original: To (Destination)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "NRI Mobility",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.625732+05:30"
+    },
+    {
+      "id": "66a8cc9331ac4c039063e821706f4ba6",
+      "name": "list_of_all_queries_asked",
+      "type": "array",
+      "description": "All queries asked during the conversation, including whether they remain open/closed and who asked them. [Original: List of All Queries asked]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Queries / Engagement",
+      "array_items": {
+        "kind": "object",
+        "properties": [
+          {
+            "name": "query",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          },
+          {
+            "name": "asked_by",
+            "type": "string",
+            "null_allowed": true,
+            "enum": [],
+            "description": ""
+          }
+        ]
+      },
+      "created_at": "2026-10-02T01:26:34.629191+05:30"
+    },
+    {
+      "id": "d2e5602a88ce4800adaeb36e7a089b8d",
+      "name": "overall_sentiment",
+      "type": "enum",
+      "description": "Overall sentiment of the Client/Prospect during the conversation.",
+      "enum_values": [
+        "Positive",
+        "Neutral",
+        "Negative",
+        "Mixed"
+      ],
+      "object_properties": [],
+      "group_name": "Sentiment",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.629686+05:30"
+    },
+    {
+      "id": "e276b543382f4a50a6db6abe92988a5d",
+      "name": "sentiment_reasoning",
+      "type": "string",
+      "description": "Short explanation/reasoning for the overall sentiment classification.",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Sentiment",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.630493+05:30"
+    },
+    {
+      "id": "f6a399cc2ca34baf9f764401ae10a46e",
+      "name": "advance_tax",
+      "type": "enum",
+      "description": "Whether advance tax is recommended or not needed. [Original: Advance Tax]",
+      "enum_values": [
+        "Recommended",
+        "Not Needed"
+      ],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.621079+05:30"
+    },
+    {
+      "id": "88f8abe6a755483ab17801a7850f9e59",
+      "name": "rental_tds",
+      "type": "enum",
+      "description": "Relevant rental TDS classification. [Original: Rental TDS]",
+      "enum_values": [
+        "NRI Landlord",
+        "Resident Landlord"
+      ],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.636879+05:30"
+    },
+    {
+      "id": "9789ab0a6df54a728f66abcb396d79cd",
+      "name": "tax_filing_history_for_india",
+      "type": "string",
+      "description": "Short summary of the Client's Indian tax filing history. [Original: Tax Filing History (For India)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.618835+05:30"
+    },
+    {
+      "id": "17f328237f7e4f2baf232828187a5eff",
+      "name": "tax_filing_history_for_non_india",
+      "type": "string",
+      "description": "Short summary of the Client's non-India tax filing history. [Original: Tax Filing History (For Non-India)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.620152+05:30"
+    },
+    {
+      "id": "9a8b7c5cb4df45b88d432eb1f4bde6f9",
+      "name": "tax_filing_years_for_india",
+      "type": "array",
+      "description": "Financial years for which Indian tax filing was explicitly mentioned. [Original: Tax Filing Years (For India)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "number",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.619587+05:30"
+    },
+    {
+      "id": "1300beb350504247b3d6880fd79f942b",
+      "name": "tax_filing_years_for_non_india",
+      "type": "array",
+      "description": "Years for which non-India tax filing was explicitly mentioned. [Original: Tax Filing Years (For Non-India)]",
+      "enum_values": [],
+      "object_properties": [],
+      "group_name": "Tax",
+      "array_items": {
+        "kind": "number",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.620635+05:30"
+    },
+    {
+      "id": "621a1e3e7ec442eeb76c3577fcdc18a8",
+      "name": "gst_services",
+      "type": "enum",
+      "description": "GST requirement/status. [Original: GST services]",
+      "enum_values": [
+        "Client has GST",
+        "Requires GST",
+        "May need in future"
+      ],
+      "object_properties": [],
+      "group_name": "Tax / Compliance",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.637988+05:30"
+    },
+    {
+      "id": "164400e20d5b40859440936b7e1de333",
+      "name": "w8_ben",
+      "type": "enum",
+      "description": "Status of W-8BEN filing. [Original: W8-BEN]",
+      "enum_values": [
+        "Filed",
+        "Not Filed"
+      ],
+      "object_properties": [],
+      "group_name": "Tax / Compliance",
+      "array_items": {
+        "kind": "string",
+        "properties": []
+      },
+      "created_at": "2026-10-02T01:26:34.639695+05:30"
+    }
+  ],
+  "agent_attributes": [
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "151a12c009bd400bb24022f8838aa91d"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "516c39b6f75c465f9b8ab4f02a3c0e34"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "5f7257358a4840609fca0cdb3c371563"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "61bba3fca5e1424c87eb6eaa41d5fa28"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "91e75e899523474393da1fd26e617637"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "978a6c38500e4e91afa9d49169bcecdc"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "9fbfdd9fa0974288a5676e973d70debe"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "a07ba9f7040e4341bff00bec87d260e4"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "c2c1ee2064a14b6ba269e1c66e4fc61c"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "d3d7d6a616514a8fae4ccae6eeb38978"
+    },
+    {
+      "agent_id": "079d132cb74b4877a2921ca7fb2a3642",
+      "attribute_id": "d66800d3b05444deb8a2b80906d60db4"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "08ecbcb4f95b4bbd9a79d2b992036770"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "0b8f5783400e4839a5a11a296b750b30"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "2e05bb0465ff4c85ab5fac53d2a6aaf4"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "325f59aff07a4080b88975f4e491dcbb"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "478f2e68223e4e25ac144ae8b1ae8b41"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "534ffe99bdcf46f2a6569d786832ecdf"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "577fa74ae78542f3bfe2c75de8a58e24"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "5a516623d8984155986a9c26b44d7abc"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "6806eda68654408b91dfe64bf6b79289"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "6bbcf22eb5df44129d115a6104cd1394"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "808d56eca0e74c96ae5249b02c090280"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "887e0867cce7406880db3ab16b973845"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "aa29f9ed7e0a41a3aa29dd3ffe8c905e"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "ac583f202cac40bb98dae91320676fd4"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "ccd4780a7ef64db4aba3e8b6bb1e7199"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "e5e93720537342dab4506377f9defac0"
+    },
+    {
+      "agent_id": "0d534094714643d4b9b9183ef827d701",
+      "attribute_id": "fac40b0b1f554f1e9d66c0a74ba65cd7"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "0973abbe00e349498cbe1462bfdae948"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "3a48ecf42a054db59984b52a021cd5f9"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "4150573eab33402bbaa398c16095ec8b"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "4ae8db5c070b4033a31bb61344a18e72"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "7256d9da7d114c89b514b4ba18f9e724"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "73e0284eb1c142d9932fe6200974a189"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "7a33ea09c01b4eabb23d51b1615a2dd1"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "899d65d8aaae42c9b7c8dffacdb17d50"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "97dfde9c8c724d1888f9687b5725d705"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "9a2073abe1ca4427ae0b5722e3ea909e"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "a647609c8d6c41f296128482c9031eef"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "acccd7645ede406bbbccf2a515c53ab4"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "c7fbd1c5e1b145099b5e92f6367d9fff"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "d5e62ba4ca004b1bb6145ff99b61e43b"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "edf6376e30004c3ea6b9e08d7cdb6ec9"
+    },
+    {
+      "agent_id": "39b05ccd35bb4cd9811c974f748ca9fd",
+      "attribute_id": "ef309cb17e3f4224acc4247682332e1d"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "0b6b0864318f42818c025cb754550d2e"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "0d9338052ced46d198fd61af3ecd5e03"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "4a357209b703498e8cef9d47539f8ab1"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "711dc14cfaca484fb79fc97fc9fbd4dc"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "9ca65c5332474c539dcba0646a56961b"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "a85b5c0b5ad543cc9e27486f66f802b4"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "ac9f145ad4d9483d9e111449f4280b7e"
+    },
+    {
+      "agent_id": "3c4b593653694709a1011d7c9a886cad",
+      "attribute_id": "dc7e5ec826284a02b37362952082ee92"
+    },
+    {
+      "agent_id": "7f2de50e83ff49e5a515b1833d3af6c9",
+      "attribute_id": "66a8cc9331ac4c039063e821706f4ba6"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "0fc57545d6124067a5aa8b3e2593ae8e"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "a6b4591fbee043a692045195a457cf4c"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "ac045ca26b89416bacec0d41ce413ba1"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "acfe4a871f90478189e6b092f913ce8f"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "ad5bb598dfa74199b89ac3a12ad6d87e"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "da8ba89840f9495c816234386e58414e"
+    },
+    {
+      "agent_id": "9cc4627fe04c4e5a8ebe411ae7003a7d",
+      "attribute_id": "f41ff83da9094606bd938054316df104"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "247440390cb6463f8d54a50f9a093801"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "759fb43c12f44ada8ed0f7e18d1d4eba"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "97977535806e43c9bbff5495bda21880"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "9a4303600c4f45d38f7ca4567b0b0754"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "d2e5602a88ce4800adaeb36e7a089b8d"
+    },
+    {
+      "agent_id": "a9d07d9cb927486ba6a47790c6d7c782",
+      "attribute_id": "e276b543382f4a50a6db6abe92988a5d"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "1300beb350504247b3d6880fd79f942b"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "164400e20d5b40859440936b7e1de333"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "17f328237f7e4f2baf232828187a5eff"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "5095ac9e9d574b3896daa0ae4ff2cdea"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "621a1e3e7ec442eeb76c3577fcdc18a8"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "6ec78edfe8bb47abbba3a2a4d56c6fe4"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "88f8abe6a755483ab17801a7850f9e59"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "9789ab0a6df54a728f66abcb396d79cd"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "9a8b7c5cb4df45b88d432eb1f4bde6f9"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "bfdf02a1739c4d4082b50228e4b3a749"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "d777e644efe64cc1bbc31917a6a9d9e8"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "f3943707361048d69500814c15b9032e"
+    },
+    {
+      "agent_id": "b6c7dae16e944ca0839c4311ac25f497",
+      "attribute_id": "f6a399cc2ca34baf9f764401ae10a46e"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "01703d441bc5440f889374c007dc32f4"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "02362c6204884b71992c726bd5ef39ae"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "072bb3b918e04abd90ff7be08acc62e7"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "17762a54f603472284c33adf1ba98c7a"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "1b63930572104143a40f6e2cb1a3885f"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "264068f9e10a423db4e1883144c6842e"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "928457203a91446787307adba75484f7"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "98a4fabc0f80477ca8adce36efdf951b"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "cbbc5d03384d4f0790620cf1ae334606"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "d398487c98e142e28efc2784c1a235a9"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "de46589cebdc4392978bc5970d11b98a"
+    },
+    {
+      "agent_id": "c4dea2aa0c124536be6d456a1e9a4249",
+      "attribute_id": "e08e3f0a9bbf4bc9938c6b07ef428a66"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "02590792e2a94caba9f0e9c4e507cec5"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "02622da74bf54950a6a517f564fdb749"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "4f444d1f17be48f1955c2d75f2772b94"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "5396bc5d16444d1ab4d726790e280de2"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "57c45a90fbe4471691762d79c20a98a2"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "63462f6a5c714f3680e861b78e1cfc02"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "85c42795ab6746c1b48140148504fc7e"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "89541825be5c48afb57c95ba6d0219be"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "9200cef381ab4d5aa8b7f040c4a6f96e"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "959c1e4a6b2a4f9298c74079786c766f"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "9a595440286b4474a8583bb60ee26a73"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "af7b3078de6a44fcb9e4a3cd95993fb8"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "b30a26765cf24b79b08e5ac972c78c6c"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "b4a9ed71bc37458a9503a44929d695e3"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "bff437be392a4c85b3f7deb7560fd240"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "caece59f541c4f38b32d9776b74aea56"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "cc779903c29a45e9836f2692f4529b1e"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "dc0dc860fea649ec8ae76e6541b00a38"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "ed570ac635774d10ade93f5d95d31610"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "f64002cf93a94cd5a8f20526c58ac7c0"
+    },
+    {
+      "agent_id": "cf7830feef44465b8b1a1444869e426e",
+      "attribute_id": "fffa497aa8c84f99a8846cd666958245"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "6eb4963b0a034100af77ae3e1ad22b0c"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "afb2a8f672bc44a9be6477d7bd4b8ab5"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "b88ec130a61c409984361946885760bd"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "d7f726a2ea724341a13e5c54ab6e178e"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "ddcc78014abb433fad90ee684753cf59"
+    },
+    {
+      "agent_id": "f22b4f94838e4c8db5607434f962b78d",
+      "attribute_id": "f95e889bcc3d41bb9951210f9d4f80a8"
+    }
+  ],
+  "agents": {
+    "079d132cb74b4877a2921ca7fb2a3642": "goal",
+    "0d534094714643d4b9b9183ef827d701": "basic_info",
+    "39b05ccd35bb4cd9811c974f748ca9fd": "asset",
+    "3c4b593653694709a1011d7c9a886cad": "liability",
+    "56e8946dc07f4494af943b8bfc3f8056": "agent_identifier",
+    "7f2de50e83ff49e5a515b1833d3af6c9": "query",
+    "9cc4627fe04c4e5a8ebe411ae7003a7d": "behavioral",
+    "a9d07d9cb927486ba6a47790c6d7c782": "kc_and_feedback",
+    "b6c7dae16e944ca0839c4311ac25f497": "tax_and_insurance",
+    "c4dea2aa0c124536be6d456a1e9a4249": "account",
+    "cf7830feef44465b8b1a1444869e426e": "expense",
+    "f22b4f94838e4c8db5607434f962b78d": "income"
+  }
+}

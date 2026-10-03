@@ -9,6 +9,7 @@ import { Drawer } from "../ui/Drawer";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import { RemarksPopover } from "../ui/RemarksPopover";
 import type { CompareModel } from "./useCompareModel";
+import { UnwrappedListTable } from "./UnwrappedListTable";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -25,12 +26,17 @@ function agreementTone(score: number | null): "success" | "warning" | "danger" {
 function FullValue({
   value,
   diff,
+  unwrapped,
 }: {
   value: unknown;
   diff?: ElementDiff;
+  unwrapped?: boolean;
 }): React.JSX.Element {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
+  }
+  if (unwrapped && Array.isArray(value)) {
+    return <UnwrappedListTable value={value} />;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="italic text-[#8a8f98]">— not found</span>;
@@ -216,12 +222,14 @@ export function AttributeCompareDrawer({
                 </span>
               </div>
               <div className="mt-2">
-                <FullValue value={cell.value} diff={row.elementDiff} />
+                <FullValue value={cell.value} diff={row.elementDiff} unwrapped={cell.unwrapped} />
               </div>
-              <p className="mt-1.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                conf {confText} · {confTypeText}
-              </p>
-              {evidenceText.trim() !== "" && (
+              {!cell.unwrapped && (
+                <p className="mt-1.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                  conf {confText} · {confTypeText}
+                </p>
+              )}
+              {!cell.unwrapped && evidenceText.trim() !== "" && (
                 <p
                   className="mt-1 break-words font-sans text-[11px] italic text-[#4a5058] dark:text-[#C3C2B7]"
                   title={evidenceText}

@@ -112,6 +112,28 @@ Consistency v2 is agent-level (`hit` / `miss` / `not_scored` / `error`,
 score = hits / (hits + misses)); misses get an auto thumbs-down on the agent
 (`feedback[agent]["__agent__"]`). Old logs (no `version`) keep the old rendering.
 
+## Attributes v2
+
+Version 2 (rev 2, approved 2026-10-03) replaces the 7 group-wise attributes
+with one list attribute per group: `assets` (Assets → asset), `accounts`
+(Banking / Accounts → account), `expenses` (Expenses → expense), `goals`
+(Goals → goal), `income_sources` (Income → income), `liabilities`
+(Liabilities → liability), `insurance_policies` (Insurance →
+tax_and_insurance + insurance). Tax, Banking (credit_cards) and all other
+groups are untouched; the 2 adequacy booleans are kept.
+
+- `wrap_result=False` on the 7 lists: the extraction output returns the JSON
+  array directly (no `{value, confidence, confidence_type, evidence}`
+  wrapper); confidence lives per item. Wrapped attributes are unchanged.
+- Amount convention: currency code + space + digits only (`INR 1000000`,
+  `USD 5400`); `0` = none of this type, `Yes` = has it but no figure,
+  `null` = not mentioned.
+- Backup (restore source): `exports/attributes_v1_backup_2026-10-03.json`
+  (via `scripts/backup_attributes_v1.py`). Migration `0017_attributes_v2`
+  deletes 77 / inserts 7 on the current DB.
+- Downgrade: `alembic downgrade -1` restores the 77 deleted v1 rows (same
+  ids, from `0017_attributes_v1_deleted.json`) and drops `wrap_result`.
+
 ## Tests
 
 From `backend/`:

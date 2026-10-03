@@ -71,15 +71,20 @@ type PreviewAttr = {
   enum_values: string[];
   object_properties: PreviewObjectProp[];
   array_items: { kind: string; properties: PreviewObjectProp[] };
+  wrap_result?: boolean;
 };
 
 /** Mirrors backend `_attr_line`: `- name (type): description [a | b]`. */
 function attrLine(a: PreviewAttr): string {
   const base = `- ${a.name} (${a.type}): ${a.description}`;
+  let out = base;
   if (a.type === "enum" && a.enum_values.length > 0) {
-    return `${base} [${a.enum_values.join(" | ")}]`;
+    out = `${base} [${a.enum_values.join(" | ")}]`;
   }
-  return base;
+  if ((a as { wrap_result?: boolean }).wrap_result === false) {
+    out += " (return the list directly - no value/confidence wrapper; confidence, confidence_type and evidence are per item)";
+  }
+  return out;
 }
 
 /** Mirrors backend `_agent_system_content`. */
@@ -97,13 +102,24 @@ function subSchema(subType: string, nullAllowed: boolean, subEnum?: string[], su
     out = { type: t("array"), items: { type: "string" } };
   } else if (subType === "number") {
     out = { type: t("number") };
+  } else if (subType === "integer") {
+    out = { type: t("integer") };
   } else if (subType === "boolean") {
     out = { type: t("boolean") };
   } else {
     out = { type: t("string") };
   }
   if (subEnum && subEnum.length > 0) {
-    out.enum = [...subEnum];
+    // Nullable enums use anyOf (Anthropic rejects type-array + enum).
+    if (nullAllowed) {
+      const base = subType === "array" ? "array" : subType === "number" ? "number" : subType === "integer" ? "integer" : subType === "boolean" ? "boolean" : "string";
+      out = { anyOf: [{ type: base, enum: [...subEnum] }, { type: "null" }] } as Record<string, unknown>;
+      if (subType === "array") {
+        (out as Record<string, unknown>).items = { type: "string" };
+      }
+    } else {
+      out.enum = [...subEnum];
+    }
   }
   if (subDescription) {
     out.description = subDescription;
@@ -165,7 +181,18 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
       valueSchema = { type: ["string", "null"], description: `Extracted value for ${a.name}` };
     }
     if (a.type === "enum" && a.enum_values.length > 0) {
-      valueSchema.enum = [...a.enum_values, null];
+      valueSchema = {
+        anyOf: [{ type: "string", enum: [...a.enum_values] }, { type: "null" }],
+        description: `Extracted value for ${a.name}`,
+      };
+    }
+    if ((a as { wrap_result?: boolean }).wrap_result === false) {
+      const raw = { ...valueSchema } as Record<string, unknown>;
+      if (a.description) {
+        raw.description = a.description;
+      }
+      properties[a.name] = raw;
+      continue;
     }
     properties[a.name] = {
       type: "object",
@@ -175,7 +202,7 @@ function buildLocalResponseFormat(attrs: PreviewAttr[]): Record<string, unknown>
         confidence: { type: "number", minimum: 0, maximum: 1 },
         confidence_type: {
           type: "string",
-          enum: ["quoted", "inferred", "normalized", "not_found"],
+          enum: ["quoted", "inferred", "normalized", "calculated", "not_found"],
         },
         evidence: { type: ["string", "null"] },
       },
@@ -209,6 +236,7 @@ function toPreviewAttr(a: LabAttribute): PreviewAttr {
     array_items: a.array_items?.kind === "object"
       ? { kind: "object", properties: (a.array_items.properties ?? []).map((p) => ({ ...p, enum: [...(p.enum ?? [])], description: p.description ?? "" })) }
       : { kind: a.array_items?.kind ?? "string", properties: [] },
+    wrap_result: (a as { wrap_result?: boolean }).wrap_result !== false,
   };
 }
 

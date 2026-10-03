@@ -1,0 +1,2822 @@
+[
+  {
+    "id": "acccd7645ede406bbbccf2a515c53ab4",
+    "name": "bonds",
+    "type": "array",
+    "description": "Individual bond holdings. [Original: Bonds]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.656419+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "97dfde9c8c724d1888f9687b5725d705",
+    "name": "cash",
+    "type": "array",
+    "description": "Cash holdings, including relevant breakdown/name where mentioned. [Original: Cash]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.654249+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "ef309cb17e3f4224acc4247682332e1d",
+    "name": "commodity_etf",
+    "type": "array",
+    "description": "Individual commodity ETF holdings. [Original: Commodity ETF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.650560+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "edf6376e30004c3ea6b9e08d7cdb6ec9",
+    "name": "crypto",
+    "type": "array",
+    "description": "Individual cryptocurrency holdings. [Original: Crypto]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.657813+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "4150573eab33402bbaa398c16095ec8b",
+    "name": "debt_etf",
+    "type": "array",
+    "description": "Individual debt ETF holdings. [Original: Debt ETF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.651228+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "d5e62ba4ca004b1bb6145ff99b61e43b",
+    "name": "debt_mf",
+    "type": "array",
+    "description": "Individual debt mutual fund holdings. [Original: Debt MF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.655181+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "a647609c8d6c41f296128482c9031eef",
+    "name": "deposit",
+    "type": "array",
+    "description": "Individual deposit holdings. [Original: Deposit]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.653149+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "c7fbd1c5e1b145099b5e92f6367d9fff",
+    "name": "equity_etf",
+    "type": "array",
+    "description": "Individual equity ETF holdings. [Original: Equity ETF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.650086+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "7a33ea09c01b4eabb23d51b1615a2dd1",
+    "name": "equity_mutual_fund",
+    "type": "array",
+    "description": "Individual equity mutual fund holdings. [Original: Equity Mutual Fund]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.649572+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "73e0284eb1c142d9932fe6200974a189",
+    "name": "others_asset_type",
+    "type": "array",
+    "description": "Other asset/instrument types not covered by the defined categories. [Original: Others (Asset Type)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.658988+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "3a48ecf42a054db59984b52a021cd5f9",
+    "name": "personal_debt",
+    "type": "array",
+    "description": "Personal debt receivables/investments, including individual names where mentioned. [Original: Personal Debt]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.655846+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "0973abbe00e349498cbe1462bfdae948",
+    "name": "real_estate",
+    "type": "array",
+    "description": "Individual real-estate assets. [Original: Real Estate]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.657361+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "9a2073abe1ca4427ae0b5722e3ea909e",
+    "name": "reits",
+    "type": "array",
+    "description": "Individual REIT holdings. [Original: REITs]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.656910+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "899d65d8aaae42c9b7c8dffacdb17d50",
+    "name": "stocks",
+    "type": "array",
+    "description": "Individual listed stock holdings. Multiple instruments can be extracted. [Original: Stocks]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.648655+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "7256d9da7d114c89b514b4ba18f9e724",
+    "name": "total",
+    "type": "array",
+    "description": "Total assets where a total value is explicitly stated or can be extracted from the conversation. [Original: Total]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [
+            "India",
+            "Foreign",
+            "Overall"
+          ],
+          "description": "Total assets bucket: extract total assets in India, total assets outside India (Foreign), and overall total."
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.660811+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "4ae8db5c070b4033a31bb61344a18e72",
+    "name": "unlisted_stocks",
+    "type": "array",
+    "description": "Individual unlisted stock holdings. Multiple instruments can be extracted. [Original: Unlisted Stocks]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Assets",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.649112+05:30",
+    "agents": [
+      "asset"
+    ]
+  },
+  {
+    "id": "01703d441bc5440f889374c007dc32f4",
+    "name": "aif",
+    "type": "array",
+    "description": "Alternative Investment Fund accounts/investments, including specific fund names where mentioned. [Original: AIF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.645691+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "1b63930572104143a40f6e2cb1a3885f",
+    "name": "bank_account",
+    "type": "array",
+    "description": "Bank accounts held by the Client, including specific account names where mentioned. [Original: Bank Account]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.641196+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "de46589cebdc4392978bc5970d11b98a",
+    "name": "bank_deposit",
+    "type": "array",
+    "description": "Bank deposits held by the Client, including specific deposit/account names where mentioned. [Original: Bank Deposit]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.642123+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "072bb3b918e04abd90ff7be08acc62e7",
+    "name": "crypto_broker",
+    "type": "array",
+    "description": "Crypto broker accounts, including specific broker/account names where mentioned. [Original: Crypto Broker]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.646749+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "e08e3f0a9bbf4bc9938c6b07ef428a66",
+    "name": "epf",
+    "type": "array",
+    "description": "EPF accounts/holdings, including specific account names where mentioned. [Original: EPF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.643455+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "02362c6204884b71992c726bd5ef39ae",
+    "name": "investment_account",
+    "type": "array",
+    "description": "Investment accounts held by the Client, including specific account names where mentioned. [Original: Investment Account]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.640592+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "264068f9e10a423db4e1883144c6842e",
+    "name": "nps",
+    "type": "array",
+    "description": "NPS accounts/holdings, including specific account names where mentioned. [Original: NPS]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.642591+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "17762a54f603472284c33adf1ba98c7a",
+    "name": "others_account_type",
+    "type": "array",
+    "description": "Other account types not covered by the defined categories. [Original: Others (Account Type)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.648172+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "d398487c98e142e28efc2784c1a235a9",
+    "name": "pms",
+    "type": "array",
+    "description": "Portfolio Management Service accounts, including specific provider/account names where mentioned. [Original: PMS]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.643877+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "928457203a91446787307adba75484f7",
+    "name": "ppf",
+    "type": "array",
+    "description": "PPF accounts/holdings, including account names or identifiers where mentioned. [Original: PPF]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.641671+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "98a4fabc0f80477ca8adce36efdf951b",
+    "name": "self_custody",
+    "type": "array",
+    "description": "Self-custody investment/crypto accounts or wallets, including names where mentioned. [Original: Self Custody]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.647463+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "cbbc5d03384d4f0790620cf1ae334606",
+    "name": "ssy",
+    "type": "array",
+    "description": "Sukanya Samriddhi Yojana accounts/holdings, including specific account names where mentioned. [Original: SSY]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Banking / Accounts",
+    "array_items": {
+      "kind": "string",
+      "properties": []
+    },
+    "created_at": "2026-10-02T01:26:34.643037+05:30",
+    "agents": [
+      "account"
+    ]
+  },
+  {
+    "id": "ed570ac635774d10ade93f5d95d31610",
+    "name": "charity_donations",
+    "type": "array",
+    "description": "Charity and donation expenses. [Original: Charity / Donations]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.682171+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "b4a9ed71bc37458a9503a44929d695e3",
+    "name": "childcare_school_fees",
+    "type": "array",
+    "description": "Childcare and school-fee expenses. [Original: Childcare / School Fees]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.670217+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "caece59f541c4f38b32d9776b74aea56",
+    "name": "entertainment_dining",
+    "type": "array",
+    "description": "Entertainment and dining expenses. [Original: Entertainment & Dining]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.670663+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "57c45a90fbe4471691762d79c20a98a2",
+    "name": "family_support",
+    "type": "array",
+    "description": "Family-support expenses. [Original: Family Support]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.671652+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "63462f6a5c714f3680e861b78e1cfc02",
+    "name": "groceries",
+    "type": "array",
+    "description": "Grocery expenses. [Original: Groceries]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.669299+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "9a595440286b4474a8583bb60ee26a73",
+    "name": "household_staff",
+    "type": "array",
+    "description": "Household staff expenses. [Original: Household Staff]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.669790+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "bff437be392a4c85b3f7deb7560fd240",
+    "name": "insurance_premiums",
+    "type": "array",
+    "description": "Insurance premium expenses. [Original: Insurance Premiums]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.675465+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "89541825be5c48afb57c95ba6d0219be",
+    "name": "loan_emis_education",
+    "type": "array",
+    "description": "Education-loan EMI expenses. [Original: Loan EMIs (Education)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.676976+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "9200cef381ab4d5aa8b7f040c4a6f96e",
+    "name": "loan_emis_home",
+    "type": "array",
+    "description": "Home-loan EMI expenses. [Original: Loan EMIs (Home)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.677879+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "f64002cf93a94cd5a8f20526c58ac7c0",
+    "name": "loan_emis_others",
+    "type": "array",
+    "description": "Other-loan EMI expenses. [Original: Loan EMIs (Others)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.678963+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "5396bc5d16444d1ab4d726790e280de2",
+    "name": "loan_emis_personal",
+    "type": "array",
+    "description": "Personal-loan EMI expenses. [Original: Loan EMIs (Personal)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.677428+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "02622da74bf54950a6a517f564fdb749",
+    "name": "loan_emis_total",
+    "type": "array",
+    "description": "Total loan EMI expenses when explicitly stated or extracted. [Original: Loan EMIs (Total)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.681198+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "02590792e2a94caba9f0e9c4e507cec5",
+    "name": "loan_emis_vehicle",
+    "type": "array",
+    "description": "Vehicle-loan EMI expenses. [Original: Loan EMIs (Vehicle)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.678312+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "b30a26765cf24b79b08e5ac972c78c6c",
+    "name": "medical_expenses",
+    "type": "array",
+    "description": "Medical expenses. [Original: Medical Expenses]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.676503+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "959c1e4a6b2a4f9298c74079786c766f",
+    "name": "miscellaneous",
+    "type": "array",
+    "description": "Miscellaneous expenses. [Original: Miscellaneous]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.682792+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "cc779903c29a45e9836f2692f4529b1e",
+    "name": "rent",
+    "type": "array",
+    "description": "Rent expenses. [Original: Rent]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": "Name/location of the property the rent expense relates to."
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.667100+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "4f444d1f17be48f1955c2d75f2772b94",
+    "name": "shopping_purchases",
+    "type": "array",
+    "description": "Shopping and purchase expenses. [Original: Shopping & Purchases]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.673692+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "dc0dc860fea649ec8ae76e6541b00a38",
+    "name": "subscriptions_memberships",
+    "type": "array",
+    "description": "Subscription and membership expenses. [Original: Subscriptions & Memberships]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.674748+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "fffa497aa8c84f99a8846cd666958245",
+    "name": "transport_fuel",
+    "type": "array",
+    "description": "Transport and fuel expenses. [Original: Transport / Fuel]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.671193+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "85c42795ab6746c1b48140148504fc7e",
+    "name": "travel_vacations",
+    "type": "array",
+    "description": "Travel/vacation expenses. Annual vacation spending should be divided by 12 when converting to monthly expense. [Original: Travel / Vacations]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.676020+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "af7b3078de6a44fcb9e4a3cd95993fb8",
+    "name": "utilities",
+    "type": "array",
+    "description": "Utility expenses. [Original: Utilities]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Expenses",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.668323+05:30",
+    "agents": [
+      "expense"
+    ]
+  },
+  {
+    "id": "d3d7d6a616514a8fae4ccae6eeb38978",
+    "name": "buying_a_house_india",
+    "type": "array",
+    "description": "Goals related to buying a house in India. [Original: Buying a House (India)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.695075+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "5f7257358a4840609fca0cdb3c371563",
+    "name": "buying_a_vehicle",
+    "type": "array",
+    "description": "Goals related to buying a vehicle. [Original: Buying a Vehicle]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.696324+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "c2c1ee2064a14b6ba269e1c66e4fc61c",
+    "name": "child_s_college_education",
+    "type": "array",
+    "description": "Goals related to a child's college education. [Original: Child's College Education]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.692056+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "91e75e899523474393da1fd26e617637",
+    "name": "child_s_higher_education",
+    "type": "array",
+    "description": "Goals related to a child's higher education. [Original: Child's Higher Education]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.692521+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "61bba3fca5e1424c87eb6eaa41d5fa28",
+    "name": "financial_freedom_fire",
+    "type": "array",
+    "description": "Goals related to financial independence or FIRE. [Original: Financial Freedom / FIRE]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.699646+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "a07ba9f7040e4341bff00bec87d260e4",
+    "name": "legacy_inheritance",
+    "type": "array",
+    "description": "Goals related to legacy or inheritance. [Original: Legacy / Inheritance]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.699053+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "151a12c009bd400bb24022f8838aa91d",
+    "name": "other_goals",
+    "type": "array",
+    "description": "Goals that do not fit the predefined goal categories. [Original: Other Goals]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.701767+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "516c39b6f75c465f9b8ab4f02a3c0e34",
+    "name": "parents_healthcare_fund",
+    "type": "array",
+    "description": "Goals related to funding parents' healthcare. [Original: Parents Healthcare Fund]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.697915+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "978a6c38500e4e91afa9d49169bcecdc",
+    "name": "planning_a_child",
+    "type": "array",
+    "description": "Goals related to planning for a child. [Original: Planning a Child]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.691521+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "d66800d3b05444deb8a2b80906d60db4",
+    "name": "vacation_travel_fund",
+    "type": "array",
+    "description": "Goals related to vacation or travel funding. [Original: Vacation / Travel Fund]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.698518+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "9fbfdd9fa0974288a5676e973d70debe",
+    "name": "wedding_expenses",
+    "type": "array",
+    "description": "Goals related to wedding expenses. [Original: Wedding Expenses]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Goals",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "year",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.697242+05:30",
+    "agents": [
+      "goal"
+    ]
+  },
+  {
+    "id": "6eb4963b0a034100af77ae3e1ad22b0c",
+    "name": "business",
+    "type": "array",
+    "description": "Business income sources/breakdowns. [Original: Business]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.662334+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "d7f726a2ea724341a13e5c54ab6e178e",
+    "name": "capital_gains",
+    "type": "array",
+    "description": "Capital gains income sources/breakdowns. [Original: Capital Gains]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.662957+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "b88ec130a61c409984361946885760bd",
+    "name": "other_income",
+    "type": "array",
+    "description": "Other income sources/breakdowns. [Original: Other Income]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.664911+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "afb2a8f672bc44a9be6477d7bd4b8ab5",
+    "name": "rental",
+    "type": "array",
+    "description": "Rental income sources/breakdowns. [Original: Rental]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.663522+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "f95e889bcc3d41bb9951210f9d4f80a8",
+    "name": "salary",
+    "type": "array",
+    "description": "Salary income sources/breakdowns. [Original: Salary]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.661718+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "ddcc78014abb433fad90ee684753cf59",
+    "name": "speculation",
+    "type": "array",
+    "description": "Speculative income sources/breakdowns. [Original: Speculation]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Income",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.664193+05:30",
+    "agents": [
+      "income"
+    ]
+  },
+  {
+    "id": "6ec78edfe8bb47abbba3a2a4d56c6fe4",
+    "name": "health",
+    "type": "array",
+    "description": "Health insurance policies and coverage. [Original: Health]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Insurance",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "cover_amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.690298+05:30",
+    "agents": [
+      "tax_and_insurance"
+    ]
+  },
+  {
+    "id": "5095ac9e9d574b3896daa0ae4ff2cdea",
+    "name": "life_term",
+    "type": "array",
+    "description": "Life/term insurance policies and coverage. [Original: Life/Term]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Insurance",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "cover_amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.689653+05:30",
+    "agents": [
+      "tax_and_insurance"
+    ]
+  },
+  {
+    "id": "f3943707361048d69500814c15b9032e",
+    "name": "other_ulip",
+    "type": "array",
+    "description": "Other insurance products, including ULIPs. [Original: Other (ULIP)]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Insurance",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "cover_amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.690912+05:30",
+    "agents": [
+      "tax_and_insurance"
+    ]
+  },
+  {
+    "id": "0b6b0864318f42818c025cb754550d2e",
+    "name": "credit_card_debt",
+    "type": "array",
+    "description": "Credit-card debt liabilities. [Original: Credit Card Debt]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.686564+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "ac9f145ad4d9483d9e111449f4280b7e",
+    "name": "education_loan",
+    "type": "array",
+    "description": "Education-loan liabilities. [Original: Education Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.684242+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "0d9338052ced46d198fd61af3ecd5e03",
+    "name": "gold_loan",
+    "type": "array",
+    "description": "Gold-loan liabilities. [Original: Gold Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.685391+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "9ca65c5332474c539dcba0646a56961b",
+    "name": "home_loan",
+    "type": "array",
+    "description": "Home-loan liabilities. [Original: Home Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.683296+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "a85b5c0b5ad543cc9e27486f66f802b4",
+    "name": "other_loan",
+    "type": "array",
+    "description": "Other loan liabilities. [Original: Other Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.688135+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "711dc14cfaca484fb79fc97fc9fbd4dc",
+    "name": "personal_loan",
+    "type": "array",
+    "description": "Personal-loan liabilities. [Original: Personal Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.684793+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "4a357209b703498e8cef9d47539f8ab1",
+    "name": "total_liabilities",
+    "type": "array",
+    "description": "Total liabilities when explicitly stated or extracted. [Original: Total Liabilities]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.688982+05:30",
+    "agents": [
+      "liability"
+    ]
+  },
+  {
+    "id": "dc7e5ec826284a02b37362952082ee92",
+    "name": "vehicle_loan",
+    "type": "array",
+    "description": "Vehicle-loan liabilities. [Original: Vehicle Loan]",
+    "enum_values": [],
+    "object_properties": [],
+    "group_name": "Liabilities",
+    "array_items": {
+      "kind": "object",
+      "properties": [
+        {
+          "name": "description",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "amount",
+          "type": "number",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        },
+        {
+          "name": "unit",
+          "type": "string",
+          "null_allowed": true,
+          "enum": [],
+          "description": ""
+        }
+      ]
+    },
+    "created_at": "2026-10-02T01:26:34.683777+05:30",
+    "agents": [
+      "liability"
+    ]
+  }
+]
