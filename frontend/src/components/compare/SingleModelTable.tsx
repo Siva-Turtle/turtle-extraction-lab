@@ -3,7 +3,7 @@ import { Pencil } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
-import { formatValue, selectedAgentsOf } from "../../lib/format";
+import { fillableAttributesOf, formatValue, selectedAgentsOf } from "../../lib/format";
 import type { LogRow } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/Badge";
@@ -331,6 +331,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
         const selected = selectedAgentsOf(out);
         if (selected !== null) {
           const saved = savedFeedback(log, agentName, "selected_agents");
+          const fillable = fillableAttributesOf(out);
           return (
             <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
               <CardTitle>{agentName}</CardTitle>
@@ -338,12 +339,32 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
                 {selected.length === 0 ? (
                   <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selected.map((name) => (
-                      <Badge key={name} tone="brand">
-                        {name}
-                      </Badge>
-                    ))}
+                  <div className="grid gap-1.5">
+                    {selected.map((name) => {
+                      const attrs = fillable[name] ?? [];
+                      return (
+                        <div key={name} className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <Badge tone="brand">{name}</Badge>
+                          {attrs.length > 0 && (
+                            <>
+                              <span className="flex min-w-0 flex-wrap gap-1">
+                                {attrs.map((attr, i) => (
+                                  <span
+                                    key={`${attr}-${i}`}
+                                    className="inline-flex items-center break-words rounded-full bg-[#f1f2f3] px-2 py-0.5 font-sans text-[11px] text-[#4a5058] dark:bg-white/10 dark:text-[#C3C2B7]"
+                                  >
+                                    {attr}
+                                  </span>
+                                ))}
+                              </span>
+                              <span className="font-sans text-[11px] text-[#8a8f98] dark:text-[#C3C2B7]">
+                                {attrs.length} attribute{attrs.length === 1 ? "" : "s"}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

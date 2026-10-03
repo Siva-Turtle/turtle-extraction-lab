@@ -54,6 +54,39 @@ export function selectedAgentsOf(out: unknown): string[] | null {
     .filter((s) => s !== "");
 }
 
+/**
+ * Identifier fillable attributes: {fillable_attributes: [{agent, attributes}]}.
+ * Returns a map agent -> attribute names. Empty object when missing/malformed.
+ */
+export function fillableAttributesOf(out: unknown): Record<string, string[]> {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return {};
+  const v = (out as Record<string, unknown>).fillable_attributes;
+  if (!Array.isArray(v)) return {};
+  const map: Record<string, string[]> = {};
+  for (const entry of v) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const rec = entry as Record<string, unknown>;
+    const agent = rec.agent;
+    if (typeof agent !== "string") continue;
+    const name = agent.trim();
+    if (name === "") continue;
+    const attrs = rec.attributes;
+    if (!Array.isArray(attrs)) continue;
+    const names = attrs
+      .filter((x): x is string => typeof x === "string")
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+    if (map[name]) {
+      for (const n of names) {
+        if (!map[name].includes(n)) map[name].push(n);
+      }
+    } else {
+      map[name] = names;
+    }
+  }
+  return map;
+}
+
 /** Value cell text: "—" for null/undefined, compact JSON for objects, String() otherwise. */
 export function formatValue(v: unknown): string {
   if (v === null || v === undefined) return "—";
