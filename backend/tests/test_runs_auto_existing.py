@@ -43,8 +43,16 @@ def _setup_auto_agents(client):
     kc = _make_extraction(client, "kc_and_feedback",
                           ["kc_karma", "kc_fb"],
                           groups=["Karma Conversation", "Feedback"])
+    _make_extraction(client, "kc", ["kc_karma2"],
+                     groups=["Karma Conversation"])
+    fb = _make_extraction(client, "feedback",
+                          ["fb_attr", "fb_sent"],
+                          groups=["Feedback", "Sentiment"])
+    _make_extraction(client, "tax", ["tax_attr"], groups=["Tax"])
+    _make_extraction(client, "insurance", ["ins_attr"],
+                     groups=["Insurance"])
     ident = _make_identifier(client)
-    return ident, beh, qry, kc
+    return ident, beh, qry, kc, fb
 
 
 def _auto_route():
@@ -66,7 +74,7 @@ def _auto_route():
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30})
     return _route
 
@@ -120,7 +128,7 @@ def test_auto_identifier_error_still_marked(client, monkeypatch):
     ident = _make_identifier(client)
     _make_extraction(client, "behavioral", ["b_attr"])
     _make_extraction(client, "query", ["q_attr"])
-    _make_extraction(client, "kc_and_feedback", ["kc_fb"])
+    _make_extraction(client, "feedback", ["fb_attr"])
 
     async def _fail(payload):
         rf = payload.get("response_format", {})
@@ -148,7 +156,7 @@ def test_auto_identifier_error_still_marked(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _fail2)
@@ -184,7 +192,7 @@ def test_check_existing_auto_found(client, monkeypatch):
 
 
 def test_check_existing_auto_returns_always_agents(client, monkeypatch):
-    ident, beh, qry, kc = _setup_auto_agents(client)
+    ident, beh, qry, kc, fb = _setup_auto_agents(client)
     monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     _run_auto(client)
@@ -197,7 +205,8 @@ def test_check_existing_auto_returns_always_agents(client, monkeypatch):
     slot = data["slots"][0]
     assert slot["log"] is not None
     by_id = {a["agent_id"]: a for a in slot["agents"]}
-    assert set(by_id) == {beh, qry, kc}
+    # Always-run for a non-KC meeting is feedback (not the combined agent).
+    assert set(by_id) == {beh, qry, fb}
     for entry in slot["agents"]:
         assert entry["log_id"]
         assert entry["agent_name"]
@@ -221,7 +230,7 @@ def test_check_existing_auto_different_effort_no_match(client, monkeypatch):
 
 def test_check_existing_auto_changed_identifier_prompt_no_match(client, monkeypatch):
     # Identifier prompt is code-owned; changing DB instruction must NOT break matching.
-    ident, _, _, _ = _setup_auto_agents(client)
+    ident, _, _, _, _ = _setup_auto_agents(client)
     monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     _run_auto(client)
@@ -271,7 +280,7 @@ def test_check_existing_auto_ignores_identifier_error(client, monkeypatch):
     _make_identifier(client)
     _make_extraction(client, "behavioral", ["b_attr"])
     _make_extraction(client, "query", ["q_attr"])
-    _make_extraction(client, "kc_and_feedback", ["kc"])
+    _make_extraction(client, "feedback", ["fb_attr"])
 
     async def _fail(payload):
         rf = payload.get("response_format", {})
@@ -290,7 +299,7 @@ def test_check_existing_auto_ignores_identifier_error(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _fail)
@@ -333,7 +342,7 @@ def test_reuse_auto_copies_consistency_and_only_auto_feedback(client, monkeypatc
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)

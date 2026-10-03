@@ -97,10 +97,13 @@ the CLIENT's own situation) then deterministic routing (`plan_auto_agents`):
   `goals` → `goal`, `income` → `income`, `liabilities` → `liability` (all attrs).
 - `credit_cards` → `basic_info` Banking, `employment_changed` → Employment,
   `alumni` → Education / Alumni (subset, DB order).
-- `insurance` → `tax_and_insurance` Insurance only; `tax` → Tax + Tax / Compliance;
-  both → all attributes.
-- Always-run (unscored): `behavioral`, `query`, `kc_and_feedback`
-  (without Karma Conversation group unless the meeting is a Karma Conversation).
+- `insurance` → `insurance` (all attrs); `tax` → `tax` (all attrs);
+  both → `tax_and_insurance` (all attrs). Fallback to the combined subset
+  when the split agent is missing/disabled; both splits (insurance then tax)
+  when the combined agent is missing/disabled.
+- Always-run (unscored): `behavioral`, `query`, `feedback` (all attrs).
+  Karma Conversation meetings run `kc_and_feedback` full instead of `feedback`.
+  (`kc` exists for manual runs only and is never auto-selected.)
 - Meeting-type rules (case-insensitive on `meeting_type`): Karma Conversation
   runs `kc_and_feedback` full + `basic_info` full; Kick-off (`kick-off` /
   `kickoff` / `kick off`) runs `basic_info` full.

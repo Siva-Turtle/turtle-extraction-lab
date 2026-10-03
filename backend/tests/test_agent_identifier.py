@@ -194,9 +194,10 @@ class _FakeAttr:
 
 
 def _plan_setup(extra_attrs=None, disabled=None):
-    names = ["behavioral", "query", "kc_and_feedback", "basic_info",
+    names = ["behavioral", "query", "kc_and_feedback", "kc", "feedback",
+             "basic_info",
              "asset", "account", "expense", "goal", "income",
-             "liability", "tax_and_insurance"]
+             "liability", "tax_and_insurance", "tax", "insurance"]
     by_name = {}
     attrs_by_name = {}
     for n in names:
@@ -206,6 +207,14 @@ def _plan_setup(extra_attrs=None, disabled=None):
     # kc_and_feedback groups.
     attrs_by_name["kc_and_feedback"] = [
         _FakeAttr("kc-karma", "Karma Conversation"),
+        _FakeAttr("kc-feedback", "Feedback"),
+        _FakeAttr("kc-sent", "Sentiment"),
+    ]
+    # Split agents.
+    attrs_by_name["kc"] = [
+        _FakeAttr("kc-karma", "Karma Conversation"),
+    ]
+    attrs_by_name["feedback"] = [
         _FakeAttr("kc-feedback", "Feedback"),
         _FakeAttr("kc-sent", "Sentiment"),
     ]
@@ -222,6 +231,14 @@ def _plan_setup(extra_attrs=None, disabled=None):
         _FakeAttr("ti-tax", "Tax"),
         _FakeAttr("ti-comp", "Tax / Compliance"),
         _FakeAttr("ti-other", "Other"),
+    ]
+    # Split tax/insurance agents (all attributes).
+    attrs_by_name["tax"] = [
+        _FakeAttr("tax-a1", "Tax"),
+        _FakeAttr("tax-a2", "Tax / Compliance"),
+    ]
+    attrs_by_name["insurance"] = [
+        _FakeAttr("ins-a1", "Insurance"),
     ]
     if extra_attrs:
         for k, v in extra_attrs.items():
@@ -240,12 +257,14 @@ def _plan_names(plan):
 def test_plan_all_false_only_always():
     by_name, attrs_by = _plan_setup()
     plan = plan_auto_agents(_false_answers(), "Some Review", by_name, attrs_by)
-    assert _plan_names(plan) == ["behavioral", "query", "kc_and_feedback"]
-    # kc without Karma group.
-    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
-    assert kc["reasons"] == ["always"]
-    assert kc["scored"] is False
-    assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+    assert _plan_names(plan) == ["behavioral", "query", "feedback"]
+    # non-KC uses the split feedback agent (all attributes).
+    fb = next(e for e in plan if e["agent"].name == "feedback")
+    assert fb["reasons"] == ["always"]
+    assert fb["scored"] is False
+    assert fb["attribute_ids"] is None
+    assert "kc_and_feedback" not in _plan_names(plan)
+    assert "kc" not in _plan_names(plan)
     for e in plan:
         assert e["scored"] is False
 
@@ -258,6 +277,8 @@ def test_plan_kc_meeting_full():
     kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
     assert kc["attribute_ids"] is None
     assert kc["reasons"] == ["always", "meeting:karma_conversation"]
+    assert "feedback" not in _plan_names(plan)
+    assert "kc" not in _plan_names(plan)
     bi = next(e for e in plan if e["agent"].name == "basic_info")
     assert bi["attribute_ids"] is None
     assert bi["reasons"] == ["meeting:karma_conversation"]
@@ -272,8 +293,9 @@ def test_plan_kickoff_meeting():
         bi = next(e for e in plan if e["agent"].name == "basic_info")
         assert bi["attribute_ids"] is None
         assert bi["reasons"] == ["meeting:kick_off"]
-        kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
-        assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+        fb = next(e for e in plan if e["agent"].name == "feedback")
+        assert fb["attribute_ids"] is None
+        assert "kc_and_feedback" not in _plan_names(plan)
 
 
 def test_plan_employment_only_subset():
@@ -285,8 +307,8 @@ def test_plan_employment_only_subset():
     assert bi["attribute_ids"] == ["bi-emp"]
     assert bi["reasons"] == ["employment_changed"]
     assert bi["scored"] is True
-    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
-    assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+    fb = next(e for e in plan if e["agent"].name == "feedback")
+    assert fb["attribute_ids"] is None
 
 
 def test_plan_credit_cards_only():
@@ -304,16 +326,22 @@ def test_plan_insurance_only_tax_only_both():
     ans = _false_answers()
     ans["insurance"] = True
     plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
-    ti = next(e for e in plan if e["agent"].name == "tax_and_insurance")
-    assert ti["attribute_ids"] == ["ti-ins"]
-    assert ti["reasons"] == ["insurance"]
+    assert "insurance" in _plan_names(plan)
+    assert "tax_and_insurance" not in _plan_names(plan)
+    ins = next(e for e in plan if e["agent"].name == "insurance")
+    assert ins["attribute_ids"] is None
+    assert ins["reasons"] == ["insurance"]
+    assert ins["scored"] is True
 
     ans2 = _false_answers()
     ans2["tax"] = True
     plan2 = plan_auto_agents(ans2, "Other", by_name, attrs_by)
-    ti2 = next(e for e in plan2 if e["agent"].name == "tax_and_insurance")
-    assert set(ti2["attribute_ids"]) == {"ti-tax", "ti-comp"}
-    assert ti2["reasons"] == ["tax"]
+    assert "tax" in _plan_names(plan2)
+    assert "tax_and_insurance" not in _plan_names(plan2)
+    tx2 = next(e for e in plan2 if e["agent"].name == "tax")
+    assert tx2["attribute_ids"] is None
+    assert tx2["reasons"] == ["tax"]
+    assert tx2["scored"] is True
 
     ans3 = _false_answers()
     ans3["insurance"] = True
@@ -322,6 +350,71 @@ def test_plan_insurance_only_tax_only_both():
     ti3 = next(e for e in plan3 if e["agent"].name == "tax_and_insurance")
     assert ti3["attribute_ids"] is None
     assert ti3["reasons"] == ["insurance", "tax"]
+    assert "insurance" not in _plan_names(plan3)
+    assert "tax" not in _plan_names(plan3)
+    # kc split agent is never auto-selected.
+    for p in (plan, plan2, plan3):
+        assert "kc" not in _plan_names(p)
+
+
+def test_plan_feedback_fallback_to_combined_subset():
+    by_name, attrs_by = _plan_setup(disabled="feedback")
+    plan = plan_auto_agents(_false_answers(), "Quarterly Review",
+                            by_name, attrs_by)
+    assert "feedback" not in _plan_names(plan)
+    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
+    assert kc["reasons"] == ["always"]
+    assert kc["scored"] is False
+    assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+
+
+def test_plan_tax_fallback_to_combined_subset():
+    by_name, attrs_by = _plan_setup(disabled="insurance")
+    ans = _false_answers()
+    ans["insurance"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    assert "insurance" not in _plan_names(plan)
+    ti = next(e for e in plan if e["agent"].name == "tax_and_insurance")
+    assert ti["attribute_ids"] == ["ti-ins"]
+    assert ti["reasons"] == ["insurance"]
+
+    by_name2, attrs_by2 = _plan_setup(disabled="tax")
+    ans2 = _false_answers()
+    ans2["tax"] = True
+    plan2 = plan_auto_agents(ans2, "Other", by_name2, attrs_by2)
+    assert "tax" not in _plan_names(plan2)
+    ti2 = next(e for e in plan2 if e["agent"].name == "tax_and_insurance")
+    assert set(ti2["attribute_ids"]) == {"ti-tax", "ti-comp"}
+    assert ti2["reasons"] == ["tax"]
+
+
+def test_plan_both_without_combined_runs_splits():
+    by_name, attrs_by = _plan_setup(disabled="tax_and_insurance")
+    ans = _false_answers()
+    ans["insurance"] = True
+    ans["tax"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    assert _plan_names(plan)[-2:] == ["insurance", "tax"]
+    assert "tax_and_insurance" not in _plan_names(plan)
+    for e in plan:
+        if e["agent"].name in ("insurance", "tax"):
+            assert e["attribute_ids"] is None
+            assert e["scored"] is True
+
+
+def test_split_agents_migration_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0016_split_agents.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("split_agents_0016", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.down_revision == "0015_runlog_provider"
+    assert mod.revision == "0016_split_agents"
+    assert callable(mod.upgrade) and callable(mod.downgrade)
 
 
 def test_plan_disabled_agent_skipped():

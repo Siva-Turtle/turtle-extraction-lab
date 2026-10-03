@@ -1,4 +1,4 @@
-"""Seed the 12 lab agents (11 extraction + 1 identifier router).
+"""Seed the 16 lab agents (15 extraction + 1 identifier router).
 
 Usage:
     python scripts/seed_agents.py [--database-url URL]
@@ -65,6 +65,15 @@ AGENT_DEFS: list[tuple[str, str, str, str, list[str]]] = [
      ["kc_taker_attitude", "kc_taker_readiness", "kc_taker_knowledge",
       "overall_sentiment", "sentiment_reasoning",
       "Client's feedback on Advisor"]),
+    ("kc",
+     "Karma Conversation attributes only",
+     "extraction", "",
+     ["kc_taker_attitude", "kc_taker_readiness", "kc_taker_knowledge"]),
+    ("feedback",
+     "Feedback and sentiment attributes only",
+     "extraction", "",
+     ["overall_sentiment", "sentiment_reasoning",
+      "Client's feedback on Advisor"]),
     ("tax_and_insurance",
      "Extracts tax filing history, advance tax, rental TDS, GST, W8-BEN and insurance coverage adequacy.",
      "extraction", "",
@@ -72,6 +81,17 @@ AGENT_DEFS: list[tuple[str, str, str, str, list[str]]] = [
       "Tax Filing History (For India)", "Tax Filing Years (For India)",
       "Tax Filing History (For Non-India)", "Tax Filing Years (For Non-India)",
       "Advance Tax", "Rental TDS", "GST services", "W8-BEN",
+      "Life/Term", "Health", "Other (ULIP)"]),
+    ("tax",
+     "Tax and compliance attributes only",
+     "extraction", "",
+     ["Tax Filing History (For India)", "Tax Filing Years (For India)",
+      "Tax Filing History (For Non-India)", "Tax Filing Years (For Non-India)",
+      "Advance Tax", "Rental TDS", "GST services", "W8-BEN"]),
+    ("insurance",
+     "Insurance attributes only",
+     "extraction", "",
+     ["Term Insurance Coverage Adequacy", "Health Insurance Coverage Adequacy",
       "Life/Term", "Health", "Other (ULIP)"]),
     ("query",
      "Collects every query the client asked during the conversation.",

@@ -49,8 +49,17 @@ def _setup_minimal_auto(client):
     kc = _make_extraction(client, "kc_and_feedback",
                           ["kc_karma", "kc_fb"],
                           groups=["Karma Conversation", "Feedback"])
+    _make_extraction(client, "kc", ["kc_karma2"],
+                     groups=["Karma Conversation"])
+    fb = _make_extraction(client, "feedback",
+                          ["fb_attr", "fb_sent"],
+                          groups=["Feedback", "Sentiment"])
+    _make_extraction(client, "tax", ["tax_attr"],
+                     groups=["Tax"])
+    _make_extraction(client, "insurance", ["ins_attr"],
+                     groups=["Insurance"])
     ident = _make_identifier(client)
-    return ident, beh, qry, kc
+    return ident, beh, qry, kc, fb
 
 
 def test_compute_consistency_v2_hit_miss_not_scored():
@@ -139,7 +148,7 @@ def test_apply_auto_feedback_v2():
 
 
 def test_auto_all_false_runs_always_only(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
     calls = {"n": 0}
 
     async def _route(payload):
@@ -161,10 +170,11 @@ def test_auto_all_false_runs_always_only(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        if "kc_fb" in required:
-            # kc subset without Karma group: only kc_fb.
+        if "fb_attr" in required:
+            # split feedback agent (all attributes).
             assert "kc_karma" not in required
-            return ({"kc_fb": _filled("z")},
+            assert "kc_fb" not in required
+            return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
         raise AssertionError(f"unexpected: {required}")
 
@@ -175,21 +185,112 @@ def test_auto_all_false_runs_always_only(client, monkeypatch):
         "input_type": "mail", "input_data": "hello", "model": "m",
         "meeting_type": "Quarterly Review"}).json()
     assert calls["n"] == 4  # identifier + 3 always-run
-    assert set(body["outputs"]) == {ident, beh, qry, kc}
+    assert set(body["outputs"]) == {ident, beh, qry, fb}
     cons = body["log"]["consistency"]
     assert cons["version"] == 2
     assert cons["answers"] == {q["key"]: False for q in IDENTIFIER_QUESTIONS}
     assert {p["agent_name"] for p in cons["plan"]} == \
-        {"behavioral", "query", "kc_and_feedback"}
-    # kc plan subset excludes Karma group.
-    kc_plan = next(p for p in cons["plan"] if p["agent_name"] == "kc_and_feedback")
-    assert kc_plan["attributes"] == ["kc_fb"]
+        {"behavioral", "query", "feedback"}
+    # feedback plan is full (all attributes).
+    fb_plan = next(p for p in cons["plan"] if p["agent_name"] == "feedback")
+    assert set(fb_plan["attributes"]) == {"fb_attr", "fb_sent"}
     assert cons["score"] is None  # no scored agents
     assert body["log"]["feedback"] == {}
 
 
+def test_auto_kc_meeting_runs_combined(client, monkeypatch):
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "kc_fb" in required:
+            assert "kc_karma" in required
+            return ({"kc_karma": _filled("k"), "kc_fb": _filled("z")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        raise AssertionError(f"unexpected: {required}")
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+    body = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m",
+        "meeting_type": "Karma Conversation"}).json()
+    assert set(body["outputs"]) == {ident, beh, qry, kc}
+    cons = body["log"]["consistency"]
+    kc_plan = next(p for p in cons["plan"] if p["agent_name"] == "kc_and_feedback")
+    assert set(kc_plan["attributes"]) == {"kc_karma", "kc_fb"}
+    assert kc_plan["reasons"] == ["always", "meeting:karma_conversation"]
+
+
+def test_auto_tax_insurance_split_routing(client, monkeypatch):
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
+    tax_comb = _make_extraction(client, "tax_and_insurance",
+                                ["ti_ins", "ti_tax"],
+                                groups=["Insurance", "Tax"])
+    # Split agents already exist from the fixture (tax/insurance); fetch ids.
+    agents = {a["name"]: a["id"] for a in client.get("/api/v1/agents").json()}
+    tax_id = agents["tax"]
+    ins_id = agents["insurance"]
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            out["insurance"] = True
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "ins_attr" in required:
+            assert "tax_attr" not in required
+            assert "ti_ins" not in required
+            return ({"ins_attr": _filled("i")},
+                    {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "fb_attr" in required:
+            return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        raise AssertionError(f"unexpected: {required}")
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+    body = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m",
+        "meeting_type": "Other"}).json()
+    assert ins_id in body["outputs"]
+    assert tax_comb not in body["outputs"]
+    cons = body["log"]["consistency"]
+    ins_plan = next(p for p in cons["plan"] if p["agent_name"] == "insurance")
+    assert ins_plan["reasons"] == ["insurance"]
+    assert ins_plan["attributes"] == ["ins_attr"]
+
+
 def test_auto_question_routes_and_subset_schema(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
     asset = _make_extraction(client, "asset", ["holding"])
     bi = _make_extraction(client, "basic_info",
                           ["cc_attr", "emp_attr"],
@@ -224,8 +325,8 @@ def test_auto_question_routes_and_subset_schema(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        if "kc_fb" in required:
-            return ({"kc_fb": _filled("z")},
+        if "fb_attr" in required:
+            return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         raise AssertionError(f"unexpected: {required}")
 
@@ -235,7 +336,7 @@ def test_auto_question_routes_and_subset_schema(client, monkeypatch):
     body = client.post("/api/v1/runs/auto", json={
         "input_type": "mail", "input_data": "hello", "model": "m",
         "meeting_type": "Other"}).json()
-    assert set(body["outputs"]) == {ident, beh, qry, kc, asset, bi}
+    assert set(body["outputs"]) == {ident, beh, qry, fb, asset, bi}
     cons = body["log"]["consistency"]
     assert cons["answers"]["has_assets"] is True
     assert cons["answers"]["credit_cards"] is True
@@ -248,7 +349,7 @@ def test_auto_question_routes_and_subset_schema(client, monkeypatch):
 
 
 def test_auto_miss_creates_agent_feedback(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
     asset = _make_extraction(client, "asset", ["holding"])
 
     async def _route(payload):
@@ -273,7 +374,7 @@ def test_auto_miss_creates_agent_feedback(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)
@@ -290,7 +391,7 @@ def test_auto_miss_creates_agent_feedback(client, monkeypatch):
 
 
 def test_auto_identifier_error_runs_always(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
     e1 = _make_extraction(client, "asset", ["holding"])
 
     async def _fail_ident(payload):
@@ -319,7 +420,7 @@ def test_auto_identifier_error_runs_always(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)
@@ -330,7 +431,8 @@ def test_auto_identifier_error_runs_always(client, monkeypatch):
     assert "_error" in body["outputs"][ident]
     assert beh in body["outputs"]
     assert qry in body["outputs"]
-    assert kc in body["outputs"]
+    assert fb in body["outputs"]
+    assert kc not in body["outputs"]
     assert e1 not in body["outputs"]
     cons = body["log"]["consistency"]
     assert cons["version"] == 2
@@ -345,7 +447,7 @@ def test_auto_no_identifier_400(client):
 
 
 def test_auto_honours_reuse(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
 
     async def _route(payload):
         rf = payload.get("response_format", {})
@@ -365,7 +467,7 @@ def test_auto_honours_reuse(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("qy")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        return ({"kc_fb": _filled("kz")},
+        return ({"fb_attr": _filled("kz"), "fb_sent": _filled("kw")},
                 {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)
@@ -392,7 +494,7 @@ def test_auto_honours_reuse(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("qy2")},
                     {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
-        return ({"kc_fb": _filled("kz2")},
+        return ({"fb_attr": _filled("kz2"), "fb_sent": _filled("kw2")},
                 {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _second)
@@ -407,7 +509,7 @@ def test_auto_honours_reuse(client, monkeypatch):
 
 
 def test_retry_on_auto_log_recomputes_v2(client, monkeypatch):
-    ident, beh, qry, kc = _setup_minimal_auto(client)
+    ident, beh, qry, kc, fb = _setup_minimal_auto(client)
     asset = _make_extraction(client, "asset", ["holding"])
 
     async def _route(payload):
@@ -432,7 +534,7 @@ def test_retry_on_auto_log_recomputes_v2(client, monkeypatch):
         if "q_attr" in required:
             return ({"q_attr": _filled("y")},
                     {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-        return ({"kc_fb": _filled("z")},
+        return ({"fb_attr": _filled("z"), "fb_sent": _filled("w")},
                 {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)

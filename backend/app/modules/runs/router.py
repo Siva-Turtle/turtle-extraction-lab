@@ -267,21 +267,36 @@ def plan_auto_agents(
     _push_all("behavioral", ["always"], False)
     # b. query: always, all.
     _push_all("query", ["always"], False)
-    # c. kc_and_feedback: always (subset unless KC).
-    _kc_ag = _get("kc_and_feedback")
-    if _kc_ag is not None:
-        _kc_attrs = _attrs("kc_and_feedback")
-        if len(_kc_attrs) > 0:
-            if is_kc:
+    # c. Feedback/KC: KC meeting -> combined full; else split feedback full
+    # (fallback to combined subset when feedback is missing/disabled/empty).
+    # The "kc" agent is never auto-selected (manual runs only).
+    if is_kc:
+        _kc_ag = _get("kc_and_feedback")
+        if _kc_ag is not None:
+            _kc_attrs = _attrs("kc_and_feedback")
+            if len(_kc_attrs) > 0:
                 result.append({"agent": _kc_ag, "attribute_ids": None,
                                "reasons": ["always", "meeting:karma_conversation"],
                                "scored": False})
-            else:
-                sub = [a.id for a in _kc_attrs
-                       if _group_of_attr(a) != "karma conversation"]
-                if sub:
-                    result.append({"agent": _kc_ag, "attribute_ids": sub,
-                                   "reasons": ["always"], "scored": False})
+    else:
+        _pushed_fb = False
+        _fb_ag = _get("feedback")
+        if _fb_ag is not None:
+            _fb_attrs = _attrs("feedback")
+            if len(_fb_attrs) > 0:
+                result.append({"agent": _fb_ag, "attribute_ids": None,
+                               "reasons": ["always"], "scored": False})
+                _pushed_fb = True
+        if not _pushed_fb:
+            _kc_ag = _get("kc_and_feedback")
+            if _kc_ag is not None:
+                _kc_attrs = _attrs("kc_and_feedback")
+                if len(_kc_attrs) > 0:
+                    sub = [a.id for a in _kc_attrs
+                           if _group_of_attr(a) != "karma conversation"]
+                    if sub:
+                        result.append({"agent": _kc_ag, "attribute_ids": sub,
+                                       "reasons": ["always"], "scored": False})
     # d. basic_info.
     _bi_ag = _get("basic_info")
     if _bi_ag is not None:
@@ -330,27 +345,53 @@ def plan_auto_agents(
     for qkey, aname in _single_map:
         if _answer_true(answers, qkey):
             _push_all(aname, [qkey], True)
-    # k. tax_and_insurance.
-    _ti_ag = _get("tax_and_insurance")
-    if _ti_ag is not None:
-        _ti_attrs = _attrs("tax_and_insurance")
-        if len(_ti_attrs) > 0:
-            need_ins = _answer_true(answers, "insurance")
-            need_tax = _answer_true(answers, "tax")
-            if need_ins and need_tax:
+    # k. Tax/Insurance: combined only when both halves are needed,
+    # otherwise only the split agent (fewer tokens).
+    need_ins = _answer_true(answers, "insurance")
+    need_tax = _answer_true(answers, "tax")
+    if need_ins or need_tax:
+        if need_ins and need_tax:
+            _ti_ag = _get("tax_and_insurance")
+            _ti_attrs = _attrs("tax_and_insurance") if _ti_ag is not None else []
+            if _ti_ag is not None and len(_ti_attrs) > 0:
                 result.append({"agent": _ti_ag, "attribute_ids": None,
                                "reasons": ["insurance", "tax"], "scored": True})
-            elif need_ins:
-                sub_ins = [a.id for a in _ti_attrs if _group_of_attr(a) == "insurance"]
-                if sub_ins:
-                    result.append({"agent": _ti_ag, "attribute_ids": sub_ins,
-                                   "reasons": ["insurance"], "scored": True})
-            elif need_tax:
-                sub_tax = [a.id for a in _ti_attrs
-                           if _group_of_attr(a) in ("tax", "tax / compliance")]
-                if sub_tax:
-                    result.append({"agent": _ti_ag, "attribute_ids": sub_tax,
-                                   "reasons": ["tax"], "scored": True})
+            else:
+                # Combined missing/disabled/empty: run both splits.
+                _push_all("insurance", ["insurance", "tax"], True)
+                _push_all("tax", ["insurance", "tax"], True)
+        elif need_ins:
+            _ins_ag = _get("insurance")
+            _ins_attrs = _attrs("insurance") if _ins_ag is not None else []
+            if _ins_ag is not None and len(_ins_attrs) > 0:
+                result.append({"agent": _ins_ag, "attribute_ids": None,
+                               "reasons": ["insurance"], "scored": True})
+            else:
+                _ti_ag = _get("tax_and_insurance")
+                if _ti_ag is not None:
+                    _ti_attrs = _attrs("tax_and_insurance")
+                    if len(_ti_attrs) > 0:
+                        sub_ins = [a.id for a in _ti_attrs
+                                   if _group_of_attr(a) == "insurance"]
+                        if sub_ins:
+                            result.append({"agent": _ti_ag, "attribute_ids": sub_ins,
+                                           "reasons": ["insurance"], "scored": True})
+        elif need_tax:
+            _tax_ag = _get("tax")
+            _tax_attrs = _attrs("tax") if _tax_ag is not None else []
+            if _tax_ag is not None and len(_tax_attrs) > 0:
+                result.append({"agent": _tax_ag, "attribute_ids": None,
+                               "reasons": ["tax"], "scored": True})
+            else:
+                _ti_ag = _get("tax_and_insurance")
+                if _ti_ag is not None:
+                    _ti_attrs = _attrs("tax_and_insurance")
+                    if len(_ti_attrs) > 0:
+                        sub_tax = [a.id for a in _ti_attrs
+                                   if _group_of_attr(a) in ("tax", "tax / compliance")]
+                        if sub_tax:
+                            result.append({"agent": _ti_ag, "attribute_ids": sub_tax,
+                                           "reasons": ["tax"], "scored": True})
     return result
 
 
