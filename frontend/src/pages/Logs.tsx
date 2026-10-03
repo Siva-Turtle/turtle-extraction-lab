@@ -119,6 +119,30 @@ function byCreatedAtAsc(a: LogRow, b: LogRow): number {
   return ta - tb;
 }
 
+/**
+ * Labels for older rows of retried models in the Raw tab segmented control:
+ * within each `model|reasoning_effort` group (created_at ascending), every
+ * row but the latest is "attempt N". Single-row groups get no label.
+ */
+function attemptLabels(rows: LogRow[]): Map<string, string> {
+  const groups = new Map<string, LogRow[]>();
+  for (const r of rows) {
+    const k = `${r.model ?? ""}|${r.reasoning_effort ?? ""}`;
+    const list = groups.get(k);
+    if (list) list.push(r);
+    else groups.set(k, [r]);
+  }
+  const out = new Map<string, string>();
+  for (const list of groups.values()) {
+    if (list.length <= 1) continue;
+    const sorted = [...list].sort(byCreatedAtAsc);
+    sorted.forEach((r, i) => {
+      if (i < sorted.length - 1) out.set(r.id, `attempt ${i + 1}`);
+    });
+  }
+  return out;
+}
+
 const sectionLabel = "font-heading text-xs font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]";
 const codeBlock =
   "mt-1.5 max-h-60 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-xl bg-[#f1f2f3] p-3 font-mono text-xs text-[#1d1d1d] dark:bg-white/5 dark:text-[#F0EFEC]";
@@ -630,6 +654,9 @@ function RawSingle({ log }: { log: LogRow }) {
 
 function RawPanel({ rows }: { rows: LogRow[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Every row stays listed, including older attempts of retried models; the
+  // matrix (columnsFromLogs) shows only the latest per model+effort.
+  const attempts = React.useMemo(() => attemptLabels(rows), [rows]);
   if (rows.length <= 1) return <RawSingle log={rows[0] as LogRow} />;
   const selected = rows.find((r) => r.id === selectedId) ?? (rows[0] as LogRow);
   return (
@@ -642,12 +669,13 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
         {rows.map((r) => {
           const isSel = r.id === selected.id;
           const effort = (r.reasoning_effort ?? "").trim() || "default";
+          const attempt = attempts.get(r.id);
           return (
             <button
               key={r.id}
               role="tab"
               aria-selected={isSel}
-              title={r.model}
+              title={attempt ? `${r.model} · ${effort} · ${attempt} (${r.created_at})` : r.model}
               onClick={() => setSelectedId(r.id)}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
@@ -658,6 +686,11 @@ function RawPanel({ rows }: { rows: LogRow[] }) {
             >
               <span className="max-w-40 truncate font-mono">{shortModel(r.model)}</span>
               <span className="font-sans font-normal">· {effort}</span>
+              {attempt && (
+                <span className="rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-normal dark:border-white/10">
+                  {attempt}
+                </span>
+              )}
             </button>
           );
         })}

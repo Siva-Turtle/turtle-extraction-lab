@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Check, ChevronDown, Eye, Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { api, meetingTypeOf } from "../lib/api";
 import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, serverDetail, shortModel } from "../lib/format";
 import { agentsFromLog } from "../lib/compareData";
+import { estimateRunCost } from "../lib/estimate";
 import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
@@ -649,6 +650,44 @@ export default function TestLab() {
     [multi.columns, selected, agents],
   );
 
+  // Cost-hint inputs: the transcript text the run will send (omit the hint
+  // when no text is loaded) + each selected agent's system prompt preview.
+  const transcriptChars = transcriptQuery.data?.transcription?.length ?? 0;
+  const previewQueries = useQueries({
+    queries: selected.map((id) => ({
+      queryKey: ["prompt-preview", id],
+      queryFn: async () =>
+        (await api.get(`/agents/${id}/prompt-preview`)).data as {
+          system?: unknown;
+          attributes?: unknown;
+        },
+      staleTime: 5 * 60 * 1000,
+      retry: false,
+    })),
+  });
+  const previewPending = previewQueries.some((q) => q.isLoading || q.isFetching);
+  const previewFailed = previewQueries.some((q) => q.isError);
+  const previewData = previewQueries.map((q) => q.data);
+  const estimates = React.useMemo((): Record<string, { inTokens: number; outTokens: number; usd: number | null }> | undefined => {
+    if (transcriptChars === 0 || selected.length === 0 || slots.length === 0) return undefined;
+    if (previewPending || previewFailed) return undefined;
+    if (previewData.some((d) => !d)) return undefined;
+    const agentPrompts = previewData.map((d) => {
+      const rec = (d ?? {}) as { system?: unknown; attributes?: unknown };
+      return {
+        systemChars: typeof rec.system === "string" ? rec.system.length : 0,
+        attrCount: Array.isArray(rec.attributes) ? rec.attributes.length : 0,
+      };
+    });
+    const out: Record<string, { inTokens: number; outTokens: number; usd: number | null }> = {};
+    for (const s of slots) {
+      const pricing =
+        (modelsMeta?.models ?? []).find((m) => m.id === s.model)?.pricing ?? null;
+      out[`${s.model}|${s.effort}`] = estimateRunCost({ transcriptChars, agentPrompts, pricing });
+    }
+    return out;
+  }, [transcriptChars, selected, slots, modelsMeta, previewPending, previewFailed, previewData]);
+
   return (
     <div className="grid gap-4">
       <Card>
@@ -671,6 +710,7 @@ export default function TestLab() {
                 slots={slots}
                 onChange={setSlots}
                 models={modelsMeta?.models ?? []}
+                estimates={estimates}
               />
             </div>
           </div>

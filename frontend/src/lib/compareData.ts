@@ -18,17 +18,39 @@ function statusOf(log: LogRow): CompareColumn["status"] {
 }
 
 /**
- * One finished matrix column per log row, in input order. Keys are the log
- * ids (unique even when the same model+effort was retried in one group).
+ * One finished matrix column per model+effort, in first-seen order. A retried
+ * model adds another log row to the same group; the matrix keeps only the
+ * LATEST row (by created_at) per `model|reasoning_effort`. Callers that need
+ * every attempt (Raw tab, list badges, cost sums) use the raw rows directly.
  */
 export function columnsFromLogs(logs: LogRow[]): CompareColumn[] {
-  return logs.map((log) => ({
-    key: log.id,
-    model: typeof log.model === "string" ? log.model : "",
-    effort: typeof log.reasoning_effort === "string" ? log.reasoning_effort : "",
-    status: statusOf(log),
-    log,
-  }));
+  const latest = new Map<string, LogRow>();
+  const order: string[] = [];
+  for (const log of logs) {
+    const model = typeof log.model === "string" ? log.model : "";
+    const effort = typeof log.reasoning_effort === "string" ? log.reasoning_effort : "";
+    const k = `${model}|${effort}`;
+    if (!latest.has(k)) order.push(k);
+    const cur = latest.get(k);
+    // Later in input order wins ties (invalid timestamps sink to -Infinity).
+    if (!cur || timeOf(log.created_at) >= timeOf(cur.created_at)) latest.set(k, log);
+  }
+  return order.map((k) => {
+    const log = latest.get(k) as LogRow;
+    return {
+      key: log.id,
+      model: typeof log.model === "string" ? log.model : "",
+      effort: typeof log.reasoning_effort === "string" ? log.reasoning_effort : "",
+      status: statusOf(log),
+      log,
+    };
+  });
+}
+
+/** Sortable timestamp; invalid timestamps sink last. */
+function timeOf(ts: string): number {
+  const t = new Date(ts).getTime();
+  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
 }
 
 /**

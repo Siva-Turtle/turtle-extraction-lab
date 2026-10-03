@@ -104,6 +104,8 @@ export function groupLogs(rows: LogRow[]): LogGroup[] {
     let agreePct: number | null = null;
     if (members.length >= 2) {
       try {
+        // Agreement uses only the latest row per model+effort (matrix
+        // columns); cost/tokens above still sum every row (money was spent).
         const first = members[0] as LogRow;
         agreePct = groupAgreementPct(buildRows(agentsFromLog(first), columnsFromLogs(members)));
       } catch {

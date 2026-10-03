@@ -17,9 +17,17 @@ function overlayKey(runId: string, agent: string, attr: string): string {
   return `${runId}|${agent}|${attr}`;
 }
 
+function invalidateFeedbackQueries(qc: ReturnType<typeof useQueryClient>): void {
+  qc.invalidateQueries({ queryKey: ["logs"] });
+  qc.invalidateQueries({ queryKey: ["logs-all"] });
+  qc.invalidateQueries({ queryKey: ["log-group"] });
+}
+
 /**
  * Optimistic thumbs overlay layered over each log's saved feedback.
  * Posts via `POST /runs/feedback-batch` (single items use batch too).
+ * Remarks post via `POST /runs/{run_id}/feedback` with the cell's current
+ * rating, with an optimistic remarks overlay.
  */
 export function useFeedback(): {
   getRating: (
@@ -28,13 +36,28 @@ export function useFeedback(): {
     attr: string,
     saved: { rating: string; remarks: string } | null,
   ) => "up" | "down" | null;
-  getRemarks: (saved: { rating: string; remarks: string } | null) => string;
+  getRemarks: (
+    runId: string,
+    agent: string,
+    attr: string,
+    saved: { rating: string; remarks: string } | null,
+  ) => string;
   rate: (items: FeedbackRateItem[]) => Promise<void>;
+  saveRemarks: (
+    runId: string,
+    agent: string,
+    attr: string,
+    rating: "up" | "down" | "",
+    text: string,
+  ) => Promise<void>;
 } {
   const qc = useQueryClient();
   const [overlay, setOverlay] = React.useState<Record<string, FeedbackRating>>({});
   const overlayRef = React.useRef(overlay);
   overlayRef.current = overlay;
+  const [remarksOverlay, setRemarksOverlay] = React.useState<Record<string, string>>({});
+  const remarksOverlayRef = React.useRef(remarksOverlay);
+  remarksOverlayRef.current = remarksOverlay;
 
   const getRating = React.useCallback(
     (
@@ -55,10 +78,17 @@ export function useFeedback(): {
   );
 
   const getRemarks = React.useCallback(
-    (saved: { rating: string; remarks: string } | null): string => {
+    (
+      runId: string,
+      agent: string,
+      attr: string,
+      saved: { rating: string; remarks: string } | null,
+    ): string => {
+      const k = overlayKey(runId, agent, attr);
+      if (k in remarksOverlay) return remarksOverlay[k] ?? "";
       return typeof saved?.remarks === "string" ? saved.remarks : "";
     },
-    [],
+    [remarksOverlay],
   );
 
   const rate = React.useCallback(
@@ -87,9 +117,7 @@ export function useFeedback(): {
             rating: it.rating,
           })),
         });
-        qc.invalidateQueries({ queryKey: ["logs"] });
-        qc.invalidateQueries({ queryKey: ["logs-all"] });
-        qc.invalidateQueries({ queryKey: ["log-group"] });
+        invalidateFeedbackQueries(qc);
       } catch (e: unknown) {
         setOverlay((prevOv) => {
           const next = { ...prevOv };
@@ -106,5 +134,38 @@ export function useFeedback(): {
     [qc],
   );
 
-  return { getRating, getRemarks, rate };
+  const saveRemarks = React.useCallback(
+    async (
+      runId: string,
+      agent: string,
+      attr: string,
+      rating: "up" | "down" | "",
+      text: string,
+    ): Promise<void> => {
+      const k = overlayKey(runId, agent, attr);
+      const prev = remarksOverlayRef.current[k];
+      setRemarksOverlay((prevOv) => ({ ...prevOv, [k]: text }));
+      try {
+        await api.post(`/runs/${runId}/feedback`, {
+          agent_name: agent,
+          attribute_name: attr,
+          rating,
+          remarks: text,
+        });
+        invalidateFeedbackQueries(qc);
+      } catch (e: unknown) {
+        setRemarksOverlay((prevOv) => {
+          const next = { ...prevOv };
+          if (prev === undefined) delete next[k];
+          else next[k] = prev;
+          return next;
+        });
+        toast.error(serverDetail(e));
+        throw e;
+      }
+    },
+    [qc],
+  );
+
+  return { getRating, getRemarks, rate, saveRemarks };
 }

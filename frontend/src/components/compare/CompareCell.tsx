@@ -66,7 +66,8 @@ function ValueView({ value }: { value: unknown }): React.JSX.Element {
 
 /**
  * One matrix cell body: value first, optional confidence/evidence lines,
- * small thumbs right-aligned when editable, remarks dot, "≠ accepted" mark.
+ * small thumbs right-aligned when editable, remarks dot + 💬 button,
+ * "≠ accepted" mark. Clicking the value text opens the attribute drawer.
  */
 export function CompareCell({
   value,
@@ -80,6 +81,10 @@ export function CompareCell({
   hasRemarks,
   notAccepted,
   notFound,
+  onValueClick,
+  onRemarksClick,
+  remarksOpen,
+  canRemark,
 }: {
   value: unknown;
   confidence?: unknown;
@@ -92,19 +97,38 @@ export function CompareCell({
   hasRemarks: boolean;
   notAccepted: boolean;
   notFound: boolean;
+  onValueClick?: () => void;
+  onRemarksClick?: () => void;
+  remarksOpen?: boolean;
+  canRemark?: boolean;
 }): React.JSX.Element {
   const confText =
     typeof confidence === "number" && Number.isFinite(confidence) ? confidence.toFixed(2) : "?";
   const confTypeText =
     typeof confidenceType === "string" && confidenceType.trim() !== "" ? confidenceType : "?";
   const evidenceText = typeof evidence === "string" ? evidence : "";
+  const remarkAllowed = canRemark ?? rating !== null;
+  const showRemarksButton = editable && typeof onRemarksClick === "function";
+
+  const valueNode = notFound ? (
+    <span className="italic text-[#8a8f98]">— not found</span>
+  ) : (
+    <ValueView value={value} />
+  );
 
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      {notFound ? (
-        <span className="italic text-[#8a8f98]">— not found</span>
+    <div className="group/cell flex min-w-0 flex-col gap-1">
+      {onValueClick && !notFound ? (
+        <button
+          type="button"
+          onClick={onValueClick}
+          title="Open attribute comparison"
+          className="min-w-0 cursor-pointer rounded text-left focus-visible:outline-2 focus-visible:outline-brand"
+        >
+          {valueNode}
+        </button>
       ) : (
-        <ValueView value={value} />
+        valueNode
       )}
       {detail !== "value" && !notFound && (
         <span className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
@@ -138,6 +162,24 @@ export function CompareCell({
         {editable && (
           <span className="flex items-center gap-1">
             <ThumbButtons value={rating} onChange={onRate} size="sm" />
+            {showRemarksButton && (
+              <button
+                type="button"
+                onClick={onRemarksClick}
+                disabled={!remarkAllowed}
+                title={remarkAllowed ? "Edit remarks" : "Rate first"}
+                aria-label="Edit remarks"
+                aria-pressed={remarksOpen}
+                className={cn(
+                  "flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] text-xs text-[#4a5058] transition-opacity hover:border-[#1d1d1d] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-[#C3C2B7]",
+                  hasRemarks || remarksOpen
+                    ? "opacity-100"
+                    : "opacity-0 focus-visible:opacity-100 group-hover/cell:opacity-100 group-focus-within/cell:opacity-100",
+                )}
+              >
+                💬
+              </button>
+            )}
           </span>
         )}
       </div>

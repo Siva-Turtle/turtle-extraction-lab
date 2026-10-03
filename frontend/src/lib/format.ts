@@ -24,6 +24,19 @@ export function fmtCost(cost: unknown): string {
 
 export const USD_TO_INR = 100;
 
+/** INR display for a USD cost ("—" when missing). USD value goes in `title`. */
+export function fmtINR(costUsd: unknown): string {
+  if (typeof costUsd !== "number" || !Number.isFinite(costUsd)) return "—";
+  return `₹${(costUsd * USD_TO_INR).toFixed(2)}`;
+}
+
+/** Compact input-token display, e.g. 12_500 -> "~13k". */
+export function fmtTokensShort(n: unknown): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  if (n >= 1000) return `~${Math.round(n / 1000)}k`;
+  return `~${Math.round(n)}`;
+}
+
 /** Shared USD + INR cost display; "—" when missing. Keeps USD format, appends INR. */
 export function fmtCostBoth(cost: unknown): string {
   if (typeof cost !== "number" || !Number.isFinite(cost)) return "—";

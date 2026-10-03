@@ -70,6 +70,7 @@ export function CompareToolbar({
   up,
   down,
   agreePct,
+  onShortcuts,
 }: {
   filter: CompareFilter;
   onFilter: (f: CompareFilter) => void;
@@ -83,6 +84,7 @@ export function CompareToolbar({
   up: number;
   down: number;
   agreePct: number;
+  onShortcuts?: () => void;
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -137,6 +139,17 @@ export function CompareToolbar({
         ))}
       </div>
       <div className="ml-auto flex items-center gap-2 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+        {onShortcuts && (
+          <button
+            type="button"
+            onClick={onShortcuts}
+            title="Keyboard shortcuts"
+            aria-label="Keyboard shortcuts"
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] font-mono text-xs font-bold text-[#4a5058] hover:border-[#1d1d1d] hover:text-[#1d1d1d] focus-visible:outline-2 focus-visible:outline-brand dark:border-white/10 dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+          >
+            ?
+          </button>
+        )}
         <span title="Thumbs up total">
           👍{up}
         </span>

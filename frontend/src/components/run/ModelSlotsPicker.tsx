@@ -1,7 +1,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import type { ModelInfo } from "../../lib/api";
-import { shortModel } from "../../lib/format";
+import { fmtCost, fmtINR, fmtTokensShort, shortModel } from "../../lib/format";
 import type { ModelSlot } from "../../lib/logTypes";
 import { effortOptionsFor } from "../../lib/models";
 import { Badge } from "../ui/Badge";
@@ -59,11 +59,13 @@ export function ModelSlotsPicker({
   onChange,
   models,
   max = 4,
+  estimates,
 }: {
   slots: ModelSlot[];
   onChange: (s: ModelSlot[]) => void;
   models: ModelInfo[];
   max?: number;
+  estimates?: Record<string, { inTokens: number; outTokens: number; usd: number | null }>;
 }): React.JSX.Element {
   // effortOptionsFor wants the /models meta shape; the live flag only gates
   // the "no reasoning options" disabled state, and a populated list means
@@ -176,6 +178,9 @@ export function ModelSlotsPicker({
           })}
         </ul>
       )}
+      {slots.length > 0 && estimates && (
+        <CostHint slots={slots} estimates={estimates} />
+      )}
       <div title={full ? `Max ${max} models` : undefined}>
         <ModelCombobox mode="add" onChange={addModel} disabled={full} />
       </div>
@@ -205,8 +210,7 @@ export function ModelSlotsPicker({
               {presets.length}
             </Badge>
           )}
-        </Button>
-        {presetsOpen && (
+        </Button>        {presetsOpen && (
           <div className="mt-1.5 grid gap-1 rounded-xl border border-[#e5e7eb] bg-white p-1.5 dark:border-white/10 dark:bg-[#1a1a1a]">
             <button
               type="button"
@@ -248,5 +252,56 @@ export function ModelSlotsPicker({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * One-line run cost estimate under the chips:
+ * `≈ ₹X total · ₹a–₹b per model · ~Nk input tokens (estimate)`.
+ * Hidden when no slot has pricing data; notes "price unknown" for models
+ * without pricing. INR first, USD in `title`.
+ */
+function CostHint({
+  slots,
+  estimates,
+}: {
+  slots: ModelSlot[];
+  estimates: Record<string, { inTokens: number; outTokens: number; usd: number | null }>;
+}): React.JSX.Element | null {
+  const known: number[] = [];
+  let unknown = 0;
+  let inTokens = 0;
+  for (const s of slots) {
+    const e = estimates[`${s.model}|${s.effort}`];
+    if (!e) {
+      unknown += 1;
+      continue;
+    }
+    if (typeof e.usd === "number" && Number.isFinite(e.usd)) known.push(e.usd);
+    else unknown += 1;
+    if (typeof e.inTokens === "number" && Number.isFinite(e.inTokens) && e.inTokens > inTokens) {
+      inTokens = e.inTokens;
+    }
+  }
+  if (known.length === 0) return null;
+  const total = known.reduce((a, b) => a + b, 0);
+  const lo = Math.min(...known);
+  const hi = Math.max(...known);
+  const perModel = known.length === 1 || lo === hi ? fmtINR(lo) : `${fmtINR(lo)}–${fmtINR(hi)}`;
+  const text =
+    `≈ ${fmtINR(total)} total · ${perModel} per model · ` +
+    `${fmtTokensShort(inTokens)} input tokens (estimate)` +
+    (unknown > 0 ? ` · price unknown for ${unknown} model${unknown === 1 ? "" : "s"}` : "");
+  const title =
+    `Estimated cost ${fmtCost(total)} USD total` +
+    (known.length === 1 || lo === hi
+      ? ""
+      : ` (${fmtCost(lo)}–${fmtCost(hi)} USD per model)`) +
+    (unknown > 0 ? "; some models have no pricing" : "") +
+    " — estimate only";
+  return (
+    <p title={title} className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+      {text}
+    </p>
   );
 }
