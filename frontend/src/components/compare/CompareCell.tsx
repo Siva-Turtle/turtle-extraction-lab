@@ -40,7 +40,7 @@ function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): Rea
     const itemsDiff = itemsDiffOf(diff);
     const total = totalOf(diff);
     return (
-      <span className="flex flex-wrap gap-1">
+      <span className="flex min-w-0 max-w-full flex-wrap gap-1 break-words [overflow-wrap:anywhere]">
         {value.map((v, i) => {
           let count: number | null = null;
           if (itemsDiff !== null && total !== null) {
@@ -55,7 +55,7 @@ function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): Rea
               key={i}
               title={formatValue(v)}
               className={cn(
-                "max-w-full break-words rounded-full border px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] dark:text-[#F0EFEC]",
+                "max-w-full break-words rounded-full border px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] [overflow-wrap:anywhere] dark:text-[#F0EFEC]",
                 disputed
                   ? "border-[#f59e0b] bg-[#fef6e7] dark:border-[#f59e0b]/40 dark:bg-[#f59e0b]/15"
                   : "border-[#e5e7eb] bg-[#f1f2f3] dark:border-white/10 dark:bg-white/10",
@@ -80,7 +80,7 @@ function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): Rea
     }
     const agreeMap = keysAgreeOf(diff);
     return (
-      <span className="grid gap-0.5">
+      <span className="grid min-w-0 max-w-full gap-0.5 break-words [overflow-wrap:anywhere]">
         {entries.map(([k, v]) => {
           const agree = agreeMap?.get(k);
           const disputed = agree === false;
@@ -88,7 +88,7 @@ function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): Rea
             <span
               key={k}
               className={cn(
-                "break-words font-mono text-xs",
+                "break-words font-mono text-xs [overflow-wrap:anywhere]",
                 disputed && "rounded bg-[#fef6e7] px-1 dark:bg-[#f59e0b]/10",
               )}
               title={`${k}: ${formatValue(v)}${disputed ? " (differs)" : ""}`}
@@ -103,7 +103,7 @@ function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): Rea
   }
   const text = formatValue(value);
   return (
-    <span className="break-words font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]" title={text}>
+    <span className="break-words font-sans text-xs text-[#1d1d1d] [overflow-wrap:anywhere] dark:text-[#F0EFEC]" title={text}>
       {text}
     </span>
   );
@@ -164,7 +164,7 @@ export function CompareCell({
   );
 
   return (
-    <div className="group/cell flex min-w-0 flex-col gap-1">
+    <div className="group/cell flex min-w-0 flex-col gap-1 break-words [overflow-wrap:anywhere]">
       {onValueClick && !notFound ? (
         <button
           type="button"
@@ -178,13 +178,13 @@ export function CompareCell({
         valueNode
       )}
       {detail !== "value" && !notFound && (
-        <span className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+        <span className="break-words font-mono text-[11px] text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
           conf {confText} · {confTypeText}
         </span>
       )}
       {detail === "evidence" && !notFound && evidenceText.trim() !== "" && (
         <span
-          className="break-words italic font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+          className="break-words font-sans text-[11px] italic text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]"
           title={evidenceText}
         >
           “{evidenceText}”

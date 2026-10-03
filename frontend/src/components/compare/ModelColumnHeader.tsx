@@ -88,18 +88,18 @@ export function ModelColumnHeader({
   return (
     <th
       scope="col"
-      className="min-w-[220px] max-w-[320px] border-b border-[#e5e7eb] bg-white p-3 text-left align-top dark:border-white/10 dark:bg-[#1a1a1a]"
+      className="break-words border-b border-[#e5e7eb] bg-white p-3 text-left align-top [overflow-wrap:anywhere] dark:border-white/10 dark:bg-[#1a1a1a]"
     >
-      <div className="grid gap-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
+      <div className="grid min-w-0 gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span
             title={column.model}
-            className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+            className="min-w-0 flex-1 break-words font-mono text-xs font-bold text-[#1d1d1d] [overflow-wrap:anywhere] dark:text-[#F0EFEC]"
           >
             {modelLabel(column.model, column.effort)}
           </span>
           {column.log && isReused(column.log) && <ReusedBadge log={column.log} />}
-          <div className="relative" ref={menuRef}>
+          <div className="relative shrink-0" ref={menuRef}>
             <button
               type="button"
               onClick={() => setMenuOpen((o) => !o)}
@@ -150,13 +150,13 @@ export function ModelColumnHeader({
         </div>
         <div
           className={cn(
-            "font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]",
+            "break-words font-mono text-[11px] text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]",
             column.status === "error" && !column.log && "text-[#b91c1c] dark:text-[#f87171]",
           )}
           title={column.status === "error" && !column.log ? column.error : undefined}
         >
           {column.status === "error" && !column.log ? (
-            <span className="break-words font-sans text-xs">{column.error || "Column failed"}</span>
+            <span className="break-words font-sans text-xs [overflow-wrap:anywhere]">{column.error || "Column failed"}</span>
           ) : (
             <>
               <span title={cost.title}>{cost.text}</span>
@@ -167,7 +167,7 @@ export function ModelColumnHeader({
             </>
           )}
         </div>
-        <div className="font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+        <div className="break-words font-sans text-[11px] text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
           <span title="Average similarity to the other models">agrees {agreePct.toFixed(0)}%</span>
           {" · "}
           <span title="Thumbs up / down on this column">

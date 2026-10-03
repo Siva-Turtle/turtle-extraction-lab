@@ -217,23 +217,23 @@ function AttrRow({
 
   return (
     <tr className="border-t border-[#e5e7eb] text-[#1d1d1d] dark:border-white/10 dark:text-[#F0EFEC]">
-      <td className="whitespace-nowrap px-3 py-2 font-mono text-[#4a5058] dark:text-[#C3C2B7]">
+      <td className="break-words px-3 py-2 font-mono text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
         {sn}
       </td>
-      <td className="max-w-48 break-words px-3 py-2 font-heading font-bold">{attr}</td>
-      <td className="max-w-64 break-words px-3 py-2" title={valueText}>
+      <td className="break-words px-3 py-2 font-heading font-bold [overflow-wrap:anywhere]">{attr}</td>
+      <td className="break-words px-3 py-2 [overflow-wrap:anywhere]" title={valueText}>
         {valueText}
       </td>
-      <td className="whitespace-nowrap px-3 py-2 font-mono">
+      <td className="break-words px-3 py-2 font-mono [overflow-wrap:anywhere]">
         {typeof r.confidence === "number" ? r.confidence.toFixed(2) : "?"}
       </td>
-      <td className="whitespace-nowrap px-3 py-2">
+      <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
         <Badge tone="brand">{String(r.confidence_type ?? "?")}</Badge>
       </td>
-      <td className="max-w-64 break-words px-3 py-2">
+      <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
         {evidenceText !== "" ? (
           <span
-            className="break-words italic text-[#4a5058] dark:text-[#C3C2B7]"
+            className="break-words italic text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]"
             title={evidenceText}
           >
             “{evidenceText}”
@@ -242,16 +242,16 @@ function AttrRow({
           "—"
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-2">
-        <div className="flex items-center gap-1.5">
+      <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
+        <div className="flex flex-wrap items-center gap-1.5">
           <ThumbButtons value={rating} onChange={handleThumb} />
         </div>
       </td>
-      <td className="min-w-40 max-w-64 px-3 py-2">
-        <div className="flex items-start gap-1.5">
+      <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
+        <div className="flex min-w-0 flex-wrap items-start gap-1.5">
           <span
             className={cn(
-              "block min-w-0 max-w-40 flex-1 truncate",
+              "block min-w-0 flex-1 break-words [overflow-wrap:anywhere]",
               remarksText ? "" : "text-[#8a8f98]",
             )}
             title={remarksText || undefined}
@@ -379,18 +379,28 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
             {entries.length === 0 ? (
               <p className="mt-2 font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
             ) : (
-              <div className="mt-1.5 overflow-x-auto rounded-xl border border-[#e5e7eb] dark:border-white/10">
-                <table className="w-full min-w-[960px] font-sans text-xs">
+              <div className="mt-1.5 overflow-x-hidden rounded-xl border border-[#e5e7eb] dark:border-white/10">
+                <table className="w-full table-fixed font-sans text-xs">
+                  <colgroup>
+                    <col style={{ width: "5%" }} />
+                    <col style={{ width: "18%" }} />
+                    <col style={{ width: "32%" }} />
+                    <col style={{ width: "7%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "10%" }} />
+                    <col style={{ width: "8%" }} />
+                    <col style={{ width: "10%" }} />
+                  </colgroup>
                   <thead>
                     <tr className="bg-[#f1f2f3] text-left font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/5 dark:text-[#C3C2B7]">
-                      <th className="px-3 py-2">SN</th>
-                      <th className="px-3 py-2">Attribute</th>
-                      <th className="px-3 py-2">Value</th>
-                      <th className="px-3 py-2">Conf.</th>
-                      <th className="px-3 py-2">Conf. type</th>
-                      <th className="px-3 py-2">Evidence</th>
-                      <th className="px-3 py-2">Feedback</th>
-                      <th className="px-3 py-2">Remark</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">SN</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Attribute</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Value</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Conf.</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Conf. type</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Evidence</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Feedback</th>
+                      <th className="break-words px-3 py-2 [overflow-wrap:anywhere]">Remark</th>
                     </tr>
                   </thead>
                   <tbody>

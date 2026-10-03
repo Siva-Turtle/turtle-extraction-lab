@@ -5,7 +5,6 @@ import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { useIsNarrow } from "../../lib/useIsNarrow";
 import { Button } from "../ui/Button";
-import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
 import { RemarksPopover } from "../ui/RemarksPopover";
 import { CompareCell, cellClassFor } from "./CompareCell";
@@ -17,14 +16,6 @@ import { agreementMark, useCompareModel } from "./useCompareModel";
 
 const PENDING_CANON = "__pending__";
 const ERROR_CANON = "__error__";
-
-function agreementTone(score: number | null): "success" | "warning" | "danger" {
-  if (score === null) return "warning";
-  const pct = score * 100;
-  if (pct >= 90) return "success";
-  if (pct >= 50) return "warning";
-  return "danger";
-}
 
 function agentAgreementLabel(agentRows: CompareRow[]): string {
   const comparable = agentRows.filter((r) => !r.allEmpty && r.score !== null);
@@ -310,27 +301,26 @@ export function ComparisonMatrix({
         </button>
       </div>
       <div
-        className="max-h-[calc(100svh-140px)] overflow-auto rounded-2xl border border-[#e5e7eb] bg-white dark:border-white/10 dark:bg-[#1a1a1a]"
+        className="max-h-[calc(100svh-140px)] overflow-x-hidden overflow-y-auto rounded-2xl border border-[#e5e7eb] bg-white dark:border-white/10 dark:bg-[#1a1a1a]"
         onFocus={() => setGridActive(true)}
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setGridActive(false);
         }}
       >
-        <table ref={gridRef} role="grid" aria-label="Model comparison" className="w-full border-collapse text-left">
+        <table ref={gridRef} role="grid" aria-label="Model comparison" className="w-full table-fixed border-collapse text-left">
+          <colgroup>
+            <col style={{ width: "18%" }} />
+            {columns.map((col) => (
+              <col key={col.key} style={{ width: `${82 / Math.max(columns.length, 1)}%` }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-20">
             <tr>
               <th
                 scope="col"
-                className="sticky left-0 z-30 min-w-[180px] border-b border-[#e5e7eb] bg-[#f1f2f3] p-3 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#C3C2B7]"
+                className="break-words border-b border-[#e5e7eb] bg-[#f1f2f3] p-3 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] [overflow-wrap:anywhere] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#C3C2B7]"
               >
                 Attribute
-              </th>
-              <th
-                scope="col"
-                title="Mean pairwise similarity over compared models"
-                className="min-w-[92px] border-b border-[#e5e7eb] bg-[#f1f2f3] p-3 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#C3C2B7]"
-              >
-                Agreement
               </th>
               {columns.map((col) => {
                 const s = perCol.get(col.key) ?? { agreePct: 0, up: 0, down: 0, rated: 0, total: visibleRows.length };
@@ -364,7 +354,7 @@ export function ComparisonMatrix({
                 <React.Fragment key={agent.id}>
                   <tr>
                     <td
-                      colSpan={2 + columns.length}
+                      colSpan={1 + columns.length}
                       className="border-b border-[#e5e7eb] bg-[#f1f2f3]/70 p-0 dark:border-white/10 dark:bg-white/5"
                     >
                       <button
@@ -393,10 +383,10 @@ export function ComparisonMatrix({
                             row.allEmpty && "opacity-60",
                           )}
                         >
-                          <td className="sticky left-0 z-10 min-w-[180px] max-w-[240px] border-r border-[#e5e7eb] bg-white p-3 align-top dark:border-white/10 dark:bg-[#1a1a1a]">
+                          <td className="break-words border-r border-[#e5e7eb] bg-white p-3 align-top [overflow-wrap:anywhere] dark:border-white/10 dark:bg-[#1a1a1a]">
                             <span className="flex items-start gap-1.5">
                               <span
-                                className="max-w-full flex-1 break-words font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                                className="max-w-full flex-1 break-words font-heading text-xs font-bold text-[#1d1d1d] [overflow-wrap:anywhere] dark:text-[#F0EFEC]"
                                 title={attrDesc || undefined}
                               >
                                 {row.attr}
@@ -408,19 +398,6 @@ export function ComparisonMatrix({
                                 {mark}
                               </span>
                             </span>
-                          </td>
-                          <td className="min-w-[92px] p-3 align-top">
-                            {row.allEmpty ? (
-                              <span className="font-sans text-[11px] italic text-[#8a8f98]">
-                                — empty
-                              </span>
-                            ) : row.score === null ? (
-                              <span className="font-mono text-[11px] text-[#8a8f98]">…</span>
-                            ) : (
-                              <Badge tone={agreementTone(row.score)}>
-                                {Math.round((row.score as number) * 100)}%
-                              </Badge>
-                            )}
                           </td>
                           {columns.map((col) => {
                             const cell = row.cells[col.key];
@@ -441,11 +418,11 @@ export function ComparisonMatrix({
                                     key={col.key}
                                     {...focusProps}
                                     className={cn(
-                                      "min-w-[220px] border-l-4 border-l-[#ef4444] bg-[#fdecec] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand dark:bg-[#ef4444]/10",
+                                      "break-words border-l-4 border-l-[#ef4444] bg-[#fdecec] p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand dark:bg-[#ef4444]/10",
                                       focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
                                     )}
                                   >
-                                    <p className="break-words font-sans text-xs text-[#b91c1c] dark:text-[#f87171]">
+                                    <p className="break-words font-sans text-xs text-[#b91c1c] [overflow-wrap:anywhere] dark:text-[#f87171]">
                                       {col.error || "Column failed"}
                                     </p>
                                     {onRetry && (
@@ -463,7 +440,7 @@ export function ComparisonMatrix({
                                   key={col.key}
                                   {...focusProps}
                                   className={cn(
-                                    "min-w-[220px] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand",
+                                    "break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
                                     focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
                                   )}
                                 >
@@ -481,11 +458,11 @@ export function ComparisonMatrix({
                                   key={col.key}
                                   {...focusProps}
                                   className={cn(
-                                    "min-w-[220px] border-l-4 border-l-[#ef4444] bg-[#fdecec] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand dark:bg-[#ef4444]/10",
+                                    "break-words border-l-4 border-l-[#ef4444] bg-[#fdecec] p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand dark:bg-[#ef4444]/10",
                                     focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
                                   )}
                                 >
-                                  <p className="break-words font-sans text-xs text-[#b91c1c] dark:text-[#f87171]">
+                                  <p className="break-words font-sans text-xs text-[#b91c1c] [overflow-wrap:anywhere] dark:text-[#f87171]">
                                     Agent failed{cell?.error ? ` · ${cell.error}` : ""}
                                   </p>
                                   {onRetry && (
@@ -504,7 +481,7 @@ export function ComparisonMatrix({
                                   key={col.key}
                                   {...focusProps}
                                   className={cn(
-                                    "min-w-[220px] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand",
+                                    "break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
                                     focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
                                   )}
                                 >
@@ -544,7 +521,7 @@ export function ComparisonMatrix({
                                 key={col.key}
                                 {...focusProps}
                                 className={cn(
-                                  "relative min-w-[220px] p-3 align-top focus-visible:outline-2 focus-visible:outline-brand",
+                                  "relative break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
                                   tdClass,
                                   focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
                                 )}
