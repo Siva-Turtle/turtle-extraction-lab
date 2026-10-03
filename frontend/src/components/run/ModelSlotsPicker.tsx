@@ -167,12 +167,16 @@ export function ModelSlotsPicker({
             const data = res.data as { endpoints?: unknown };
             const raw = Array.isArray(data?.endpoints) ? (data.endpoints as unknown[]) : [];
             const clean: ModelEndpoint[] = [];
+            const seenSlugs = new Set<string>();
             for (const item of raw) {
               if (!item || typeof item !== "object") continue;
               const rec = item as Record<string, unknown>;
               const slug = typeof rec.slug === "string" ? rec.slug : "";
               const name = typeof rec.name === "string" ? rec.name : "";
               if (slug === "" || name === "") continue;
+              // Defensive: OpenRouter can list the same slug twice.
+              if (seenSlugs.has(slug)) continue;
+              seenSlugs.add(slug);
               const pricingRaw =
                 rec.pricing && typeof rec.pricing === "object"
                   ? (rec.pricing as Record<string, unknown>)
@@ -342,6 +346,14 @@ export function ModelSlotsPicker({
               slots.map((s, i) => {
                 const effortInfo = effortOptionsFor(meta, s.model);
                 const endpoints = endpointsByModel[s.model] ?? endpointsCache.get(s.model) ?? [];
+                // Defensive: de-duplicate by slug (first wins) so the
+                // select never shows a duplicate option / duplicate key.
+                const seenProviderSlugs = new Set<string>();
+                const providerOptions = endpoints.filter((e) => {
+                  if (seenProviderSlugs.has(e.slug)) return false;
+                  seenProviderSlugs.add(e.slug);
+                  return true;
+                });
                 const loading = loadingModels[s.model] === true;
                 const price = priceForSlot(s, models, endpointsByModel);
                 const priceText =
@@ -399,7 +411,7 @@ export function ModelSlotsPicker({
                       >
                         <option value="">Auto (OpenRouter picks)</option>
                         {!loading &&
-                          endpoints.map((e) => (
+                          providerOptions.map((e) => (
                             <option key={e.slug} value={e.slug} title={e.slug}>
                               {endpointLabel(e)}
                             </option>

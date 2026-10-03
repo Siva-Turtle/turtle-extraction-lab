@@ -559,14 +559,22 @@ async def fetch_model_endpoints(model_id: str) -> list[dict]:
         except Exception:
             items_raw = []
         out: list[dict] = []
+        seen_slugs: set[str] = set()
         try:
             for e in items_raw or []:
                 if not isinstance(e, dict):
                     continue
                 try:
-                    out.append(_endpoint_entry(e))
+                    entry = _endpoint_entry(e)
                 except Exception:
                     continue
+                # OpenRouter can list the same provider endpoint twice
+                # (e.g. "baseten/fp8"); de-duplicate by slug, first wins.
+                slug = entry.get("slug")
+                if slug in seen_slugs:
+                    continue
+                seen_slugs.add(slug)  # type: ignore[arg-type]
+                out.append(entry)
         except Exception:
             return []
         _endpoints_cache[mid] = (now + _ENDPOINTS_TTL_S, out)

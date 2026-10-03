@@ -104,6 +104,28 @@ def test_fetch_model_endpoints_normalization(monkeypatch):
     openrouter.clear_endpoints_cache()
 
 
+def test_fetch_model_endpoints_dedupes_duplicate_slug(monkeypatch):
+    openrouter.clear_endpoints_cache()
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(settings, "openrouter_base_url", "https://openrouter.ai/api/v1")
+    payload = {"data": {"endpoints": [
+        {"provider_name": "BaseTen", "tag": "baseten/fp8",
+         "quantization": "fp8", "context_length": 128000,
+         "pricing": {"prompt": "0.0000001", "completion": "0.0000002"}},
+        {"provider_name": "BaseTen", "tag": "baseten/fp8",
+         "quantization": "fp8", "context_length": 128000,
+         "pricing": {"prompt": "0.0000009", "completion": "0.0000009"}},
+        {"provider_name": "DeepInfra", "tag": "deepinfra",
+         "pricing": {"prompt": "0.0000001", "completion": "0.0000002"}},
+    ]}}
+    monkeypatch.setattr(openrouter.httpx, "AsyncClient", _fake_get_client(payload))
+    out = asyncio.run(openrouter.fetch_model_endpoints("z-ai/glm-5.3-flash"))
+    assert [e["slug"] for e in out] == ["baseten/fp8", "deepinfra"]
+    # First occurrence wins, original order kept.
+    assert out[0]["pricing"] == {"prompt": 0.0000001, "completion": 0.0000002}
+    openrouter.clear_endpoints_cache()
+
+
 def test_fetch_model_endpoints_failure_returns_empty(monkeypatch):
     openrouter.clear_endpoints_cache()
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
