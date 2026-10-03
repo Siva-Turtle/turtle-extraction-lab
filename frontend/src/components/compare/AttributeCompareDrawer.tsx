@@ -1,8 +1,10 @@
 import * as React from "react";
 import { formatValue, modelLabel } from "../../lib/format";
+import { cn } from "../../lib/cn";
 import { canonicalKey } from "../../lib/compare";
-import type { CompareRow } from "../../lib/compare";
+import type { CompareRow, ElementDiff } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
+import { Badge } from "../ui/Badge";
 import { Drawer } from "../ui/Drawer";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import { RemarksPopover } from "../ui/RemarksPopover";
@@ -12,63 +14,79 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
-function consensusObject(row: CompareRow, columns: CompareColumn[]): Record<string, unknown> | null {
-  if (!row.consensusKey) return null;
-  for (const col of columns) {
-    const cell = row.cells[col.key];
-    if (cell && cell.canon === row.consensusKey && isPlainObject(cell.value)) {
-      return cell.value;
-    }
-  }
-  return null;
+function agreementTone(score: number | null): "success" | "warning" | "danger" {
+  if (score === null) return "warning";
+  const pct = score * 100;
+  if (pct >= 90) return "success";
+  if (pct >= 50) return "warning";
+  return "danger";
 }
 
 function FullValue({
   value,
-  consensus,
+  diff,
 }: {
   value: unknown;
-  consensus: Record<string, unknown> | null;
+  diff?: ElementDiff;
 }): React.JSX.Element {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="italic text-[#8a8f98]">— not found</span>;
+    const hasItems = !!diff && "items" in diff;
+    const total = hasItems ? (diff as { total: number }).total : null;
+    const items = hasItems ? (diff as { items: { value: string; count: number }[] }).items : null;
     return (
-      <ul className="grid gap-1">
-        {value.map((v, i) => (
-          // eslint-disable-next-line react/no-array-index-key
-          <li
-            key={i}
-            className="break-words rounded-lg border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-1 font-sans text-xs text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
-          >
-            {formatValue(v)}
-          </li>
-        ))}
+      <ul className="flex flex-wrap gap-1">
+        {value.map((v, i) => {
+          let count: number | null = null;
+          if (items !== null && total !== null) {
+            const k = canonicalKey(v);
+            const entry = items.find((e) => canonicalKey(e.value) === k);
+            count = entry ? entry.count : 0;
+          }
+          const disputed = count !== null && total !== null && count < total;
+          return (
+            // eslint-disable-next-line react/no-array-index-key
+            <li
+              key={i}
+              className={cn(
+                "break-words rounded-full border px-2 py-1 font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]",
+                disputed
+                  ? "border-[#f59e0b] bg-[#fef6e7] dark:border-[#f59e0b]/40 dark:bg-[#f59e0b]/15"
+                  : "border-[#e5e7eb] bg-[#f1f2f3] dark:border-white/10 dark:bg-white/10",
+              )}
+            >
+              {formatValue(v)}
+              {disputed && total !== null && count !== null && (
+                <sup className="ml-1 font-mono text-[10px] text-[#b45309] dark:text-[#fbbf24]">
+                  {count}/{total}
+                </sup>
+              )}
+            </li>
+          );
+        })}
       </ul>
     );
   }
   if (isPlainObject(value)) {
     const entries = Object.entries(value);
     if (entries.length === 0) return <span className="italic text-[#8a8f98]">— not found</span>;
+    const agreeMap =
+      diff && "keys" in diff
+        ? new Map((diff as { keys: { key: string; agree: boolean }[] }).keys.map((k) => [k.key, k.agree]))
+        : null;
     return (
       <table className="w-full font-mono text-xs">
         <tbody>
           {entries.map(([k, v]) => {
-            const differs =
-              consensus !== null &&
-              k in consensus &&
-              canonicalKey(v) !== canonicalKey((consensus as Record<string, unknown>)[k]);
+            const disputed = agreeMap?.get(k) === false;
             return (
               <tr
                 key={k}
-                className={
-                  differs
-                    ? "bg-[#fef6e7] dark:bg-[#f59e0b]/10"
-                    : undefined
-                }
-                title={differs ? "Differs from consensus" : undefined}
+                className={disputed ? "bg-[#fef6e7] dark:bg-[#f59e0b]/10" : undefined}
+                title={disputed ? "Differs across models" : undefined}
               >
                 <td className="break-words px-2 py-1 align-top text-[#4a5058] dark:text-[#C3C2B7]">
                   {k}
@@ -120,7 +138,6 @@ export function AttributeCompareDrawer({
   if (!open || !row) return null;
 
   const attrMeta = agent?.attributes.find((a) => a.name === row.attr);
-  const consensus = consensusObject(row, columns);
 
   return (
     <Drawer
@@ -128,8 +145,15 @@ export function AttributeCompareDrawer({
       onClose={onClose}
       title={
         <div className="grid gap-1">
-          <p className="break-words font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-            {row.attr}
+          <p className="flex flex-wrap items-center gap-2 break-words font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
+            <span>{row.attr}</span>
+            {row.allEmpty ? (
+              <span className="font-sans text-[11px] font-normal italic text-[#8a8f98]">
+                — empty
+              </span>
+            ) : row.score !== null ? (
+              <Badge tone={agreementTone(row.score)}>{Math.round((row.score as number) * 100)}%</Badge>
+            ) : null}
           </p>
           <p className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
             {agent?.name ?? row.agentName}
@@ -173,7 +197,7 @@ export function AttributeCompareDrawer({
                 </span>
               </div>
               <div className="mt-2">
-                <FullValue value={cell.value} consensus={consensus} />
+                <FullValue value={cell.value} diff={row.elementDiff} />
               </div>
               <p className="mt-1.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                 conf {confText} · {confTypeText}

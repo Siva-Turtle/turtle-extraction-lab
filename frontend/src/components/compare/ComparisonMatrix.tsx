@@ -1,10 +1,11 @@
 import * as React from "react";
 import { cn } from "../../lib/cn";
-import { NOT_FOUND_CANON } from "../../lib/compare";
+import { NOT_FOUND_CANON, emptyRowCount, groupAgreementPct } from "../../lib/compare";
 import type { CompareRow } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
 import { useIsNarrow } from "../../lib/useIsNarrow";
 import { Button } from "../ui/Button";
+import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
 import { RemarksPopover } from "../ui/RemarksPopover";
 import { CompareCell, cellClassFor } from "./CompareCell";
@@ -16,6 +17,20 @@ import { agreementMark, useCompareModel } from "./useCompareModel";
 
 const PENDING_CANON = "__pending__";
 const ERROR_CANON = "__error__";
+
+function agreementTone(score: number | null): "success" | "warning" | "danger" {
+  if (score === null) return "warning";
+  const pct = score * 100;
+  if (pct >= 90) return "success";
+  if (pct >= 50) return "warning";
+  return "danger";
+}
+
+function agentAgreementLabel(agentRows: CompareRow[]): string {
+  const comparable = agentRows.filter((r) => !r.allEmpty && r.score !== null);
+  if (comparable.length === 0) return "—";
+  return `${Math.round(groupAgreementPct(agentRows))}%`;
+}
 
 type FocusCell = { row: CompareRow; colKey: string; merged: boolean; key: string };
 
@@ -59,6 +74,8 @@ export function ComparisonMatrix({
     rowsByAgent,
     detail,
     setDetail,
+    disputedFirst,
+    setDisputedFirst,
     collapsed,
     toggleAgent,
     perCol,
@@ -271,11 +288,27 @@ export function ComparisonMatrix({
 
   return (
     <div className="grid gap-3">
-      <CompareToolbar
-        detail={detail}
-        onDetail={setDetail}
-        onShortcuts={() => setShortcutsOpen(true)}
-      />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <CompareToolbar
+          detail={detail}
+          onDetail={setDetail}
+          onShortcuts={() => setShortcutsOpen(true)}
+        />
+        <button
+          type="button"
+          aria-pressed={disputedFirst}
+          onClick={() => setDisputedFirst((v) => !v)}
+          title="Sort rows by similarity score, lowest first"
+          className={cn(
+            "rounded-full border px-3 py-1 font-heading text-[11px] font-bold transition-colors",
+            disputedFirst
+              ? "border-[#0d5c4a] bg-[#e8fbf6] text-[#0d5c4a] dark:bg-[#2fdebf]/15 dark:text-[#5ee8cf]"
+              : "border-[#e5e7eb] text-[#4a5058] hover:text-[#1d1d1d] dark:border-white/10 dark:text-[#C3C2B7]",
+          )}
+        >
+          Most disputed first
+        </button>
+      </div>
       <div
         className="max-h-[calc(100svh-140px)] overflow-auto rounded-2xl border border-[#e5e7eb] bg-white dark:border-white/10 dark:bg-[#1a1a1a]"
         onFocus={() => setGridActive(true)}
@@ -291,6 +324,13 @@ export function ComparisonMatrix({
                 className="sticky left-0 z-30 min-w-[180px] border-b border-[#e5e7eb] bg-[#f1f2f3] p-3 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#C3C2B7]"
               >
                 Attribute
+              </th>
+              <th
+                scope="col"
+                title="Mean pairwise similarity over compared models"
+                className="min-w-[92px] border-b border-[#e5e7eb] bg-[#f1f2f3] p-3 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:border-white/10 dark:bg-[#2e2e2e] dark:text-[#C3C2B7]"
+              >
+                Agreement
               </th>
               {columns.map((col) => {
                 const s = perCol.get(col.key) ?? { agreePct: 0, up: 0, down: 0, rated: 0, total: visibleRows.length };
@@ -316,16 +356,15 @@ export function ComparisonMatrix({
             {agents.map((agent) => {
               const agentRows = rowsByAgent.get(agent.id) ?? [];
               const totalRows = model.rows.filter((r) => r.agentId === agent.id);
-              const disagreements = totalRows.filter(
-                (r) => r.state === "majority" || r.state === "split",
-              ).length;
+              const emptyCount = emptyRowCount(totalRows);
+              const agreeLabel = agentAgreementLabel(totalRows);
               if (agentRows.length === 0) return null;
               const isCollapsed = collapsed.has(agent.id);
               return (
                 <React.Fragment key={agent.id}>
                   <tr>
                     <td
-                      colSpan={1 + columns.length}
+                      colSpan={2 + columns.length}
                       className="border-b border-[#e5e7eb] bg-[#f1f2f3]/70 p-0 dark:border-white/10 dark:bg-white/5"
                     >
                       <button
@@ -336,7 +375,8 @@ export function ComparisonMatrix({
                       >
                         <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
                         <span className="truncate">
-                          {agent.name} · {totalRows.length} attrs · {disagreements} disagreements
+                          {agent.name} · {totalRows.length} attrs · {agreeLabel} agreement ·{" "}
+                          {emptyCount} empty everywhere
                         </span>
                       </button>
                     </td>
@@ -348,7 +388,10 @@ export function ComparisonMatrix({
                       return (
                         <tr
                           key={`${row.agentId}|${row.attr}`}
-                          className="border-b border-[#e5e7eb] last:border-0 dark:border-white/10"
+                          className={cn(
+                            "border-b border-[#e5e7eb] last:border-0 dark:border-white/10",
+                            row.allEmpty && "opacity-60",
+                          )}
                         >
                           <td className="sticky left-0 z-10 min-w-[180px] max-w-[240px] border-r border-[#e5e7eb] bg-white p-3 align-top dark:border-white/10 dark:bg-[#1a1a1a]">
                             <span className="flex items-start gap-1.5">
@@ -365,6 +408,19 @@ export function ComparisonMatrix({
                                 {mark}
                               </span>
                             </span>
+                          </td>
+                          <td className="min-w-[92px] p-3 align-top">
+                            {row.allEmpty ? (
+                              <span className="font-sans text-[11px] italic text-[#8a8f98]">
+                                — empty
+                              </span>
+                            ) : row.score === null ? (
+                              <span className="font-mono text-[11px] text-[#8a8f98]">…</span>
+                            ) : (
+                              <Badge tone={agreementTone(row.score)}>
+                                {Math.round((row.score as number) * 100)}%
+                              </Badge>
+                            )}
                           </td>
                           {columns.map((col) => {
                             const cell = row.cells[col.key];
@@ -511,6 +567,7 @@ export function ComparisonMatrix({
                                   }
                                   remarksOpen={remarksFor === ck}
                                   canRemark={rating !== null}
+                                  diff={row.elementDiff}
                                 />
                                 {remarksFor === ck && (
                                   <RemarksPopover

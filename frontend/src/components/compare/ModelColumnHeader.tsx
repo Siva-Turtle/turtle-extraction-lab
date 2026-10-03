@@ -168,7 +168,7 @@ export function ModelColumnHeader({
           )}
         </div>
         <div className="font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-          <span title="Share of compared rows sitting in the row consensus">agrees {agreePct.toFixed(0)}%</span>
+          <span title="Average similarity to the other models">agrees {agreePct.toFixed(0)}%</span>
           {" · "}
           <span title="Thumbs up / down on this column">
             👍{up} 👎{down}

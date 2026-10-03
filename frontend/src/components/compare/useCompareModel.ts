@@ -45,8 +45,10 @@ export function comparedKeys(row: CompareRow): string[] {
 }
 
 export function agreementMark(row: CompareRow): string {
-  if (row.state === "unanimous") return "✓";
+  const pct = row.score === null || row.score === undefined ? null : Math.round(row.score * 100);
+  if (row.state === "unanimous") return pct === null ? "✓" : `✓ ${pct}%`;
   if (row.state === "majority") {
+    if (pct !== null) return `≠ ${pct}%`;
     let compared = 0;
     let largest = 0;
     for (const keys of row.groups.values()) {
@@ -55,9 +57,15 @@ export function agreementMark(row: CompareRow): string {
     }
     return `≠ ${largest}/${compared}`;
   }
-  if (row.state === "split") return "⚡";
+  if (row.state === "split") return pct === null ? "⚡" : `⚡ ${pct}%`;
   if (row.state === "none_found") return "∅";
   return "…";
+}
+
+export function scorePct(row: CompareRow): string | null {
+  if (row.allEmpty) return null;
+  if (row.score === null || row.score === undefined) return null;
+  return `${Math.round(row.score * 100)}%`;
 }
 
 export type CellIdentity = {
@@ -83,6 +91,8 @@ export function useCompareModel(
   rowsByAgent: Map<string, CompareRow[]>;
   detail: CompareDetail;
   setDetail: React.Dispatch<React.SetStateAction<CompareDetail>>;
+  disputedFirst: boolean;
+  setDisputedFirst: React.Dispatch<React.SetStateAction<boolean>>;
   collapsed: Set<string>;
   toggleAgent: (agentId: string) => void;
   perCol: Map<string, { agreePct: number; up: number; down: number; rated: number; total: number }>;
@@ -101,6 +111,7 @@ export function useCompareModel(
   const feedback = useFeedback();
   const [detail, setDetail] = React.useState<CompareDetail>(loadDetail);
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
+  const [disputedFirst, setDisputedFirst] = React.useState(false);
 
   React.useEffect(() => {
     try {
@@ -317,7 +328,18 @@ export function useCompareModel(
     });
   }
 
-  const visibleRows = rows;
+  const visibleRows = React.useMemo(() => {
+    if (!disputedFirst) return rows;
+    return [...rows].sort((a, b) => {
+      const sa = a.score;
+      const sb = b.score;
+      if (sa === null && sb === null) return a.attr.localeCompare(b.attr);
+      if (sa === null) return 1;
+      if (sb === null) return -1;
+      if (sa !== sb) return (sa as number) - (sb as number);
+      return a.attr.localeCompare(b.attr);
+    });
+  }, [rows, disputedFirst]);
 
   const rowsByAgent = React.useMemo(() => {
     const map = new Map<string, CompareRow[]>();
@@ -339,6 +361,8 @@ export function useCompareModel(
     rowsByAgent,
     detail,
     setDetail,
+    disputedFirst,
+    setDisputedFirst,
     collapsed,
     toggleAgent,
     perCol,

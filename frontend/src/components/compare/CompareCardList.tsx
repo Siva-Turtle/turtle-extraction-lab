@@ -1,24 +1,40 @@
 import * as React from "react";
 import { Loader2 } from "lucide-react";
 import { fmtMs, formatValue, modelLabel } from "../../lib/format";
-import { NOT_FOUND_CANON } from "../../lib/compare";
+import { NOT_FOUND_CANON, canonicalKey, emptyRowCount, groupAgreementPct } from "../../lib/compare";
 import type { CompareAgent, CompareColumn } from "../../lib/logTypes";
+import { cn } from "../../lib/cn";
 import { ThumbButtons } from "../ui/ThumbButtons";
+import { Badge } from "../ui/Badge";
 import { CompareToolbar } from "./CompareToolbar";
 import { AttributeCompareDrawer } from "./AttributeCompareDrawer";
 import { agreementMark, useCompareModel } from "./useCompareModel";
 import { ReusedBadge, isReused } from "./ReusedBadge";
-import type { CompareRow } from "../../lib/compare";
+import type { CompareRow, ElementDiff } from "../../lib/compare";
 
 const PENDING_CANON = "__pending__";
 const ERROR_CANON = "__error__";
+
+function agreementTone(score: number | null): "success" | "warning" | "danger" {
+  if (score === null) return "warning";
+  const pct = score * 100;
+  if (pct >= 90) return "success";
+  if (pct >= 50) return "warning";
+  return "danger";
+}
+
+function agentAgreementLabel(agentRows: CompareRow[]): string {
+  const comparable = agentRows.filter((r) => !r.allEmpty && r.score !== null);
+  if (comparable.length === 0) return "—";
+  return `${Math.round(groupAgreementPct(agentRows))}%`;
+}
 
 function costText(costUsd: unknown): string {
   if (typeof costUsd !== "number" || !Number.isFinite(costUsd)) return "—";
   return `₹${(costUsd * 100).toFixed(2)}`;
 }
 
-function CompactValue({ value }: { value: unknown }): React.JSX.Element {
+function CompactValue({ value, diff }: { value: unknown; diff?: ElementDiff }): React.JSX.Element {
   if (value === null || value === undefined) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
@@ -29,18 +45,40 @@ function CompactValue({ value }: { value: unknown }): React.JSX.Element {
     if (value.length === 0) {
       return <span className="italic text-[#8a8f98]">— not found</span>;
     }
+    const hasItems = !!diff && "items" in diff;
+    const total = hasItems ? (diff as { total: number }).total : null;
+    const items = hasItems ? (diff as { items: { value: string; count: number }[] }).items : null;
     return (
       <span className="flex min-w-0 flex-1 flex-wrap gap-1">
-        {value.map((v, i) => (
-          // eslint-disable-next-line react/no-array-index-key
-          <span
-            key={i}
-            title={formatValue(v)}
-            className="max-w-full break-words rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-0.5 font-sans text-xs text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
-          >
-            {formatValue(v)}
-          </span>
-        ))}
+        {value.map((v, i) => {
+          let count: number | null = null;
+          if (items !== null && total !== null) {
+            const k = canonicalKey(v);
+            const entry = items.find((e) => canonicalKey(e.value) === k);
+            count = entry ? entry.count : 0;
+          }
+          const disputed = count !== null && total !== null && count < total;
+          return (
+            // eslint-disable-next-line react/no-array-index-key
+            <span
+              key={i}
+              title={formatValue(v)}
+              className={cn(
+                "max-w-full break-words rounded-full border px-2 py-0.5 font-sans text-xs text-[#1d1d1d] dark:text-[#F0EFEC]",
+                disputed
+                  ? "border-[#f59e0b] bg-[#fef6e7] dark:border-[#f59e0b]/40 dark:bg-[#f59e0b]/15"
+                  : "border-[#e5e7eb] bg-[#f1f2f3] dark:border-white/10 dark:bg-white/10",
+              )}
+            >
+              {formatValue(v)}
+              {disputed && total !== null && count !== null && (
+                <sup className="ml-1 font-mono text-[10px] text-[#b45309] dark:text-[#fbbf24]">
+                  {count}/{total}
+                </sup>
+              )}
+            </span>
+          );
+        })}
       </span>
     );
   }
@@ -49,14 +87,28 @@ function CompactValue({ value }: { value: unknown }): React.JSX.Element {
     if (entries.length === 0) {
       return <span className="italic text-[#8a8f98]">— not found</span>;
     }
+    const agreeMap =
+      diff && "keys" in diff
+        ? new Map((diff as { keys: { key: string; agree: boolean }[] }).keys.map((k) => [k.key, k.agree]))
+        : null;
     return (
       <span className="grid min-w-0 flex-1 gap-0.5">
-        {entries.map(([k, v]) => (
-          <span key={k} className="break-words font-mono text-xs" title={`${k}: ${formatValue(v)}`}>
-            <span className="text-[#4a5058] dark:text-[#C3C2B7]">{k}: </span>
-            <span className="text-[#1d1d1d] dark:text-[#F0EFEC]">{formatValue(v)}</span>
-          </span>
-        ))}
+        {entries.map(([k, v]) => {
+          const disputed = agreeMap?.get(k) === false;
+          return (
+            <span
+              key={k}
+              className={cn(
+                "break-words font-mono text-xs",
+                disputed && "rounded bg-[#fef6e7] px-1 dark:bg-[#f59e0b]/10",
+              )}
+              title={`${k}: ${formatValue(v)}${disputed ? " (differs)" : ""}`}
+            >
+              <span className="text-[#4a5058] dark:text-[#C3C2B7]">{k}: </span>
+              <span className="text-[#1d1d1d] dark:text-[#F0EFEC]">{formatValue(v)}</span>
+            </span>
+          );
+        })}
       </span>
     );
   }
@@ -92,6 +144,8 @@ export function CompareCardList({
     rowsByAgent,
     detail,
     setDetail,
+    disputedFirst,
+    setDisputedFirst,
     collapsed,
     toggleAgent,
     perCol,
@@ -167,14 +221,33 @@ export function CompareCardList({
         })}
       </div>
 
-      <CompareToolbar
-        detail={detail}
-        onDetail={setDetail}
-      />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <CompareToolbar
+          detail={detail}
+          onDetail={setDetail}
+        />
+        <button
+          type="button"
+          aria-pressed={disputedFirst}
+          onClick={() => setDisputedFirst((v) => !v)}
+          title="Sort rows by similarity score, lowest first"
+          className={cn(
+            "rounded-full border px-3 py-1 font-heading text-[11px] font-bold transition-colors",
+            disputedFirst
+              ? "border-[#0d5c4a] bg-[#e8fbf6] text-[#0d5c4a] dark:bg-[#2fdebf]/15 dark:text-[#5ee8cf]"
+              : "border-[#e5e7eb] text-[#4a5058] hover:text-[#1d1d1d] dark:border-white/10 dark:text-[#C3C2B7]",
+          )}
+        >
+          Most disputed first
+        </button>
+      </div>
 
       {agents.map((agent) => {
         const agentRows = rowsByAgent.get(agent.id) ?? [];
         if (agentRows.length === 0) return null;
+        const totalRows = model.rows.filter((r) => r.agentId === agent.id);
+        const emptyCount = emptyRowCount(totalRows);
+        const agreeLabel = agentAgreementLabel(totalRows);
         const isCollapsed = collapsed.has(agent.id);
         return (
           <section key={agent.id} className="grid gap-2">
@@ -185,7 +258,10 @@ export function CompareCardList({
               className="flex w-full items-center gap-2 text-left font-heading text-xs font-bold text-[#1d1d1d] hover:text-[#0d5c4a] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#F0EFEC]"
             >
               <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
-              <span className="truncate">{agent.name} · {agentRows.length} attrs</span>
+              <span className="truncate">
+                {agent.name} · {totalRows.length} attrs · {agreeLabel} agreement · {emptyCount}{" "}
+                empty everywhere
+              </span>
             </button>
             {!isCollapsed &&
               agentRows.map((row) => {
@@ -194,7 +270,10 @@ export function CompareCardList({
                 return (
                   <article
                     key={`${row.agentId}|${row.attr}`}
-                    className="rounded-2xl border border-[#e5e7eb] bg-white p-3 dark:border-white/10 dark:bg-[#1a1a1a]"
+                    className={cn(
+                      "rounded-2xl border border-[#e5e7eb] bg-white p-3 dark:border-white/10 dark:bg-[#1a1a1a]",
+                      row.allEmpty && "opacity-60",
+                    )}
                   >
                     <header className="flex items-baseline gap-1.5">
                       <h4
@@ -203,9 +282,24 @@ export function CompareCardList({
                       >
                         {row.attr}
                       </h4>
-                      <span aria-hidden="true" className="shrink-0 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                        {mark}
-                      </span>
+                      {row.allEmpty ? (
+                        <span className="shrink-0 font-sans text-[11px] italic text-[#8a8f98]">
+                          — empty
+                        </span>
+                      ) : row.score === null ? (
+                        <span aria-hidden="true" className="shrink-0 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                          {mark}
+                        </span>
+                      ) : (
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          <Badge tone={agreementTone(row.score)}>
+                            {Math.round((row.score as number) * 100)}%
+                          </Badge>
+                          <span aria-hidden="true" className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                            {mark}
+                          </span>
+                        </span>
+                      )}
                     </header>
                     <ul className="mt-1.5 grid gap-1.5">
                       {columns.map((col) => {
@@ -272,7 +366,7 @@ export function CompareCardList({
                               {notFound ? (
                                 <span className="italic font-sans text-xs text-[#8a8f98]">— not found</span>
                               ) : (
-                                <CompactValue value={cell.value} />
+                                <CompactValue value={cell.value} diff={row.elementDiff} />
                               )}
                               {detail !== "value" && !notFound && (
                                 <span className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">

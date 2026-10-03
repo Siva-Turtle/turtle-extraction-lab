@@ -1,5 +1,7 @@
 import { formatValue } from "../../lib/format";
 import { cn } from "../../lib/cn";
+import { canonicalKey } from "../../lib/compare";
+import type { ElementDiff } from "../../lib/compare";
 import { ThumbButtons } from "../ui/ThumbButtons";
 import type { CompareDetail } from "./CompareToolbar";
 
@@ -7,7 +9,24 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
-function ValueView({ value }: { value: unknown }): React.JSX.Element {
+function itemsDiffOf(diff: ElementDiff | undefined): { value: string; count: number }[] | null {
+  if (!diff || !("items" in diff)) return null;
+  return diff.items;
+}
+
+function totalOf(diff: ElementDiff | undefined): number | null {
+  if (!diff || !("items" in diff)) return null;
+  return diff.total;
+}
+
+function keysAgreeOf(diff: ElementDiff | undefined): Map<string, boolean> | null {
+  if (!diff || !("keys" in diff)) return null;
+  const m = new Map<string, boolean>();
+  for (const k of diff.keys) m.set(k.key, k.agree);
+  return m;
+}
+
+function ValueView({ value, diff }: { value: unknown; diff?: ElementDiff }): React.JSX.Element {
   if (value === null || value === undefined) {
     return <span className="italic text-[#8a8f98]">— not found</span>;
   }
@@ -18,18 +37,39 @@ function ValueView({ value }: { value: unknown }): React.JSX.Element {
     if (value.length === 0) {
       return <span className="italic text-[#8a8f98]">— not found</span>;
     }
+    const itemsDiff = itemsDiffOf(diff);
+    const total = totalOf(diff);
     return (
       <span className="flex flex-wrap gap-1">
-        {value.map((v, i) => (
-          <span
-            // eslint-disable-next-line react/no-array-index-key
-            key={i}
-            title={formatValue(v)}
-            className="max-w-full break-words rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#F0EFEC]"
-          >
-            {formatValue(v)}
-          </span>
-        ))}
+        {value.map((v, i) => {
+          let count: number | null = null;
+          if (itemsDiff !== null && total !== null) {
+            const k = canonicalKey(v);
+            const entry = itemsDiff.find((e) => canonicalKey(e.value) === k);
+            count = entry ? entry.count : 0;
+          }
+          const disputed = count !== null && total !== null && count < total;
+          return (
+            <span
+              // eslint-disable-next-line react/no-array-index-key
+              key={i}
+              title={formatValue(v)}
+              className={cn(
+                "max-w-full break-words rounded-full border px-2 py-0.5 font-sans text-[11px] text-[#1d1d1d] dark:text-[#F0EFEC]",
+                disputed
+                  ? "border-[#f59e0b] bg-[#fef6e7] dark:border-[#f59e0b]/40 dark:bg-[#f59e0b]/15"
+                  : "border-[#e5e7eb] bg-[#f1f2f3] dark:border-white/10 dark:bg-white/10",
+              )}
+            >
+              {formatValue(v)}
+              {disputed && total !== null && count !== null && (
+                <sup className="ml-1 font-mono text-[10px] text-[#b45309] dark:text-[#fbbf24]">
+                  {count}/{total}
+                </sup>
+              )}
+            </span>
+          );
+        })}
       </span>
     );
   }
@@ -38,14 +78,26 @@ function ValueView({ value }: { value: unknown }): React.JSX.Element {
     if (entries.length === 0) {
       return <span className="italic text-[#8a8f98]">— not found</span>;
     }
+    const agreeMap = keysAgreeOf(diff);
     return (
       <span className="grid gap-0.5">
-        {entries.map(([k, v]) => (
-          <span key={k} className="break-words font-mono text-xs" title={`${k}: ${formatValue(v)}`}>
-            <span className="text-[#4a5058] dark:text-[#C3C2B7]">{k}: </span>
-            <span className="text-[#1d1d1d] dark:text-[#F0EFEC]">{formatValue(v)}</span>
-          </span>
-        ))}
+        {entries.map(([k, v]) => {
+          const agree = agreeMap?.get(k);
+          const disputed = agree === false;
+          return (
+            <span
+              key={k}
+              className={cn(
+                "break-words font-mono text-xs",
+                disputed && "rounded bg-[#fef6e7] px-1 dark:bg-[#f59e0b]/10",
+              )}
+              title={`${k}: ${formatValue(v)}${disputed ? " (differs)" : ""}`}
+            >
+              <span className="text-[#4a5058] dark:text-[#C3C2B7]">{k}: </span>
+              <span className="text-[#1d1d1d] dark:text-[#F0EFEC]">{formatValue(v)}</span>
+            </span>
+          );
+        })}
       </span>
     );
   }
@@ -78,6 +130,7 @@ export function CompareCell({
   onRemarksClick,
   remarksOpen,
   canRemark,
+  diff,
 }: {
   value: unknown;
   confidence?: unknown;
@@ -94,6 +147,7 @@ export function CompareCell({
   onRemarksClick?: () => void;
   remarksOpen?: boolean;
   canRemark?: boolean;
+  diff?: ElementDiff;
 }): React.JSX.Element {
   const confText =
     typeof confidence === "number" && Number.isFinite(confidence) ? confidence.toFixed(2) : "?";
@@ -106,7 +160,7 @@ export function CompareCell({
   const valueNode = notFound ? (
     <span className="italic text-[#8a8f98]">— not found</span>
   ) : (
-    <ValueView value={value} />
+    <ValueView value={value} diff={diff} />
   );
 
   return (
