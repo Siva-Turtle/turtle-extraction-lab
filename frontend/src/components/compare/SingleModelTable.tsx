@@ -26,6 +26,31 @@ function prettyEntries(out: unknown): [string, PrettyAttr][] {
     .map(([k, v]) => [k, (v && typeof v === "object" ? v : {}) as PrettyAttr]);
 }
 
+/** Per-agent reuse info from usage.per_agent (null when fresh/unknown). */
+function agentReuse(log: LogRow, agentId: string): { createdAt: string | null } | null {
+  try {
+    const perAgent = log.usage?.per_agent?.[agentId];
+    if (!perAgent || typeof perAgent !== "object") return null;
+    const id = (perAgent as { reused_from_log_id?: unknown }).reused_from_log_id;
+    if (typeof id !== "string" || id === "") return null;
+    const ts = (perAgent as { reused_from_created_at?: unknown }).reused_from_created_at;
+    return { createdAt: typeof ts === "string" ? ts : null };
+  } catch {
+    return null;
+  }
+}
+
+/** Agent card title with a Reused badge when this agent was reused. */
+function AgentTitle({ log, agentId, name }: { log: LogRow; agentId: string; name: string }) {
+  const reused = agentReuse(log, agentId);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <CardTitle className="min-w-0">{name}</CardTitle>
+      {reused && <ReusedBadge fromCreatedAt={reused.createdAt} />}
+    </div>
+  );
+}
+
 /** Display name for an agent id; falls back to the id when the snapshot is missing/malformed. */
 function agentDisplayName(log: LogRow, agentId: string): string {
   const snap = log.agent_snapshot?.[agentId];
@@ -321,7 +346,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
               key={agentId}
               className="min-w-0 max-w-full rounded-2xl border border-[#ef4444]/40 bg-[#fdecec] p-4 dark:bg-[#ef4444]/10"
             >
-              <CardTitle>{agentName}</CardTitle>
+              <AgentTitle log={log} agentId={agentId} name={agentName} />
               <p className="mt-1 break-words font-sans text-sm text-[#b91c1c] dark:text-[#f87171]">
                 Agent failed: {String(err)}
               </p>
@@ -334,7 +359,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
           const fillable = fillableAttributesOf(out);
           return (
             <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
-              <CardTitle>{agentName}</CardTitle>
+              <AgentTitle log={log} agentId={agentId} name={agentName} />
               <div className="mt-2 grid min-w-0 max-w-full gap-2">
                 {selected.length === 0 ? (
                   <p className="font-heading text-xs text-[#8a8f98]">No agents selected.</p>
@@ -375,7 +400,7 @@ export function SingleModelTable({ log }: { log: LogRow }): React.JSX.Element {
         const entries = prettyEntries(out);
         return (
           <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
-            <CardTitle>{agentName}</CardTitle>
+            <AgentTitle log={log} agentId={agentId} name={agentName} />
             {entries.length === 0 ? (
               <p className="mt-2 font-heading text-xs text-[#8a8f98]">Agent returned no attributes.</p>
             ) : (

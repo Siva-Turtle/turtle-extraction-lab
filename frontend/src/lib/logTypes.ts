@@ -16,10 +16,13 @@ export type AgentUsage = {
   output_cost_usd?: number | null;
   duration_ms: number;
   model: string;
+  reused_from_log_id?: string;
+  reused_from_created_at?: string | null;
 };
 
 export type RunUsage = AgentUsage & {
   per_agent: Record<string, AgentUsage>;
+  reused_agents?: Record<string, { log_id: string; created_at: string }>;
 };
 
 export type LogFilters = {

@@ -31,6 +31,15 @@ class RunCreate(BaseModel):
     reasoning_effort: str = ""
     # Multi-model compare group key: "" (single) or 32 lowercase hex chars.
     run_group_id: str = ""
+    # Per-agent reuse: {"<agent_id>": "<source log_id>"} — agents listed here
+    # are NOT sent to the model; output + per-agent usage are copied.
+    # Invalid entries are ignored silently (that agent runs normally).
+    reuse: dict = Field(default_factory=dict)
+
+    @field_validator("reuse", mode="before")
+    @classmethod
+    def _coerce_reuse(cls, v):
+        return v if isinstance(v, dict) else {}
 
     @field_validator("run_group_id", mode="before")
     @classmethod
@@ -91,14 +100,23 @@ class CheckExistingIn(BaseModel):
         return v if isinstance(v, dict) else {}
 
 
-class CheckExistingMatch(BaseModel):
+class CheckExistingAgentEntry(BaseModel):
+    agent_id: str
+    agent_name: str = ""
+    log_id: str
+    created_at: str
+    cost_usd: float | None = None
+    duration_ms: float | None = None
+
+
+class CheckExistingSlot(BaseModel):
     model: str
     reasoning_effort: str = ""
-    log: dict = Field(default_factory=dict)
+    agents: list[CheckExistingAgentEntry] = Field(default_factory=list)
 
 
 class CheckExistingOut(BaseModel):
-    matches: list[CheckExistingMatch] = Field(default_factory=list)
+    slots: list[CheckExistingSlot] = Field(default_factory=list)
 
 
 class ReuseRunIn(BaseModel):

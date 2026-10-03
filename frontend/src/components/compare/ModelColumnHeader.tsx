@@ -5,7 +5,7 @@ import { fmtCost, fmtMs, fmtTokens, modelLabel, USD_TO_INR } from "../../lib/for
 import type { CompareColumn } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/Badge";
-import { ReusedBadge, isReused } from "./ReusedBadge";
+import { ReusedBadge, isFullyReused, reusedCounts } from "./ReusedBadge";
 
 function Elapsed({ startedAt }: { startedAt?: number }): React.JSX.Element | null {
   const [now, setNow] = React.useState(() => Date.now());
@@ -74,6 +74,9 @@ export function ModelColumnHeader({
     usage && typeof usage.prompt_tokens === "number" && typeof usage.completion_tokens === "number"
       ? `${fmtTokens(usage.prompt_tokens)}→${fmtTokens(usage.completion_tokens)}`
       : "—";
+  const reuse = column.log ? reusedCounts(column.log) : { reused: 0, total: 0 };
+  const fullyReused = column.log ? isFullyReused(column.log) : false;
+  const partiallyReused = reuse.reused > 0 && reuse.total > 0 && reuse.reused < reuse.total;
 
   async function copyJson() {
     try {
@@ -98,7 +101,15 @@ export function ModelColumnHeader({
           >
             {modelLabel(column.model, column.effort)}
           </span>
-          {column.log && isReused(column.log) && <ReusedBadge log={column.log} />}
+          {column.log && fullyReused && <ReusedBadge log={column.log} />}
+          {column.log && partiallyReused && (
+            <span
+              className="font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+              title="Some agents reused previous output; the rest ran fresh"
+            >
+              {reuse.reused} of {reuse.total} agents reused
+            </span>
+          )}
           <div className="relative shrink-0" ref={menuRef}>
             <button
               type="button"

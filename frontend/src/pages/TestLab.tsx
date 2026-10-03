@@ -8,7 +8,7 @@ import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, fmtRelative, modelLabel, serverDetail } from "../lib/format";
 import { agentsFromLog } from "../lib/compareData";
 import { estimateRunCost } from "../lib/estimate";
-import type { ColumnStatus, CompareAgent, CompareColumn, LogRow, ModelSlot } from "../lib/logTypes";
+import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -353,6 +353,30 @@ function loadSlots(): ModelSlot[] {
   }
 }
 
+/** One reusable agent entry from POST /runs/check-existing. */
+type ExistingAgent = {
+  agent_id: string;
+  agent_name: string;
+  log_id: string;
+  created_at: string;
+  cost_usd: number | null;
+};
+
+type CheckExistingAgent = {
+  agent_id?: unknown;
+  agent_name?: unknown;
+  log_id?: unknown;
+  created_at?: unknown;
+  cost_usd?: unknown;
+  duration_ms?: unknown;
+};
+
+type CheckExistingSlot = {
+  model?: unknown;
+  reasoning_effort?: unknown;
+  agents?: unknown;
+};
+
 function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
   if (status === "done") return <Badge tone="success">done</Badge>;
   if (status === "partial") return <Badge tone="warning">partial</Badge>;
@@ -465,7 +489,9 @@ export default function TestLab() {
   const [pendingRun, setPendingRun] = React.useState<{
     slots: ModelSlot[];
     basePayload: Record<string, unknown>;
-    existing: Record<string, LogRow>;
+    reuse: Record<string, Record<string, string>>;
+    details: Record<string, ExistingAgent[]>;
+    selectedIds: string[];
   } | null>(null);
 
   const multi = useMultiRun();
@@ -602,6 +628,7 @@ export default function TestLab() {
     }
     const basePayload = buildBasePayload();
     const currentSlots = [...slots];
+    const currentSelected = [...selected];
     setChecking(true);
     api
       .post("/runs/check-existing", {
@@ -611,25 +638,66 @@ export default function TestLab() {
       .then(
         (res) => {
           setChecking(false);
-          const matches = (res.data as { matches?: { model: string; reasoning_effort: string; log: LogRow }[] })
-            .matches;
-          const existing: Record<string, LogRow> = {};
-          if (Array.isArray(matches)) {
-            for (const m of matches) {
-              if (!m || typeof m.model !== "string" || !m.log) continue;
-              const effort = typeof m.reasoning_effort === "string" ? m.reasoning_effort : "";
-              const k = `${m.model}|${effort}`;
-              // Only keep matches for currently requested slots.
-              if (currentSlots.some((s) => `${s.model}|${s.effort}` === k)) {
-                existing[k] = m.log as LogRow;
-              }
-            }
-          }
-          if (Object.keys(existing).length === 0) {
+          const data = res.data as { slots?: CheckExistingSlot[] };
+          const slotEntries = Array.isArray(data?.slots) ? data.slots : null;
+          // Unknown shape: run normally with no popup.
+          if (!slotEntries) {
             multi.start(currentSlots, basePayload);
             return;
           }
-          setPendingRun({ slots: currentSlots, basePayload, existing });
+          const reuse: Record<string, Record<string, string>> = {};
+          const details: Record<string, ExistingAgent[]> = {};
+          let anyReusable = false;
+          for (const entry of slotEntries) {
+            if (!entry || typeof entry.model !== "string") continue;
+            const effort =
+              typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : "";
+            const k = `${entry.model}|${effort}`;
+            // Only keep entries for currently requested slots.
+            if (!currentSlots.some((s) => `${s.model}|${s.effort}` === k)) continue;
+            const rawAgents = Array.isArray(entry.agents) ? entry.agents : [];
+            const clean: ExistingAgent[] = [];
+            for (const raw of rawAgents as CheckExistingAgent[]) {
+              if (!raw || typeof raw.agent_id !== "string" || typeof raw.log_id !== "string") {
+                continue;
+              }
+              if (raw.log_id === "" || !currentSelected.includes(raw.agent_id)) continue;
+              clean.push({
+                agent_id: raw.agent_id,
+                agent_name:
+                  typeof raw.agent_name === "string" && raw.agent_name.trim() !== ""
+                    ? raw.agent_name
+                    : raw.agent_id,
+                log_id: raw.log_id,
+                created_at: typeof raw.created_at === "string" ? raw.created_at : "",
+                cost_usd: typeof raw.cost_usd === "number" ? raw.cost_usd : null,
+              });
+            }
+            details[k] = clean;
+            if (clean.length > 0) {
+              anyReusable = true;
+              const map: Record<string, string> = {};
+              for (const c of clean) map[c.agent_id] = c.log_id;
+              reuse[k] = map;
+            }
+          }
+          // Every requested slot gets a details entry so the modal can show
+          // "will run fresh" for slots with no reusable output.
+          for (const s of currentSlots) {
+            const k = `${s.model}|${s.effort}`;
+            if (!(k in details)) details[k] = [];
+          }
+          if (!anyReusable) {
+            multi.start(currentSlots, basePayload);
+            return;
+          }
+          setPendingRun({
+            slots: currentSlots,
+            basePayload,
+            reuse,
+            details,
+            selectedIds: currentSelected,
+          });
         },
         () => {
           // Any error (including 404 on old backends): run as today.
@@ -891,40 +959,65 @@ export default function TestLab() {
             <ul className="grid gap-2">
               {pendingRun.slots.map((s) => {
                 const k = `${s.model}|${s.effort}`;
-                const existing = pendingRun.existing[k];
-                if (existing) {
+                const reusable = pendingRun.details[k] ?? [];
+                const freshIds = pendingRun.selectedIds.filter(
+                  (id) => !reusable.some((r) => r.agent_id === id),
+                );
+                const freshNames = freshIds.map(
+                  (id) => agents.find((a) => a.id === id)?.name ?? id,
+                );
+                if (reusable.length === 0) {
                   return (
                     <li
                       key={k}
-                      className="flex items-baseline justify-between gap-3 rounded-xl border border-[#e5e7eb] bg-[#f1f2f3]/60 px-3 py-2 dark:border-white/10 dark:bg-white/5"
+                      className="grid gap-1 rounded-xl border border-dashed border-[#e5e7eb] px-3 py-2 dark:border-white/10"
                     >
                       <span
-                        className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                        className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                         title={s.model}
                       >
                         {modelLabel(s.model, s.effort)}
                       </span>
-                      <span
-                        className="shrink-0 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
-                        title={existing.created_at}
-                      >
-                        {fmtRelative(existing.created_at)}
-                      </span>
+                      <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
                     </li>
                   );
                 }
                 return (
                   <li
                     key={k}
-                    className="flex items-baseline justify-between gap-3 rounded-xl border border-dashed border-[#e5e7eb] px-3 py-2 dark:border-white/10"
+                    className="grid gap-1.5 rounded-xl border border-[#e5e7eb] bg-[#f1f2f3]/60 px-3 py-2 dark:border-white/10 dark:bg-white/5"
                   >
                     <span
-                      className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                      className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
                       title={s.model}
                     >
                       {modelLabel(s.model, s.effort)}
                     </span>
-                    <span className="shrink-0 font-sans text-xs text-[#8a8f98]">will run</span>
+                    <ul className="grid gap-1">
+                      {reusable.map((r) => (
+                        <li
+                          key={r.agent_id}
+                          className="flex items-baseline justify-between gap-3 font-sans text-xs"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[#1d1d1d] dark:text-[#F0EFEC]">
+                            {r.agent_name}
+                          </span>
+                          <span
+                            className="shrink-0 text-[#4a5058] dark:text-[#C3C2B7]"
+                            title={r.created_at || undefined}
+                          >
+                            {r.created_at ? fmtRelative(r.created_at) : "previous run"}
+                            {" · "}
+                            {fmtCostBoth(r.cost_usd)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {freshNames.length > 0 && (
+                      <span className="font-sans text-xs text-[#8a8f98]">
+                        will run fresh: {freshNames.join(", ")}
+                      </span>
+                    )}
                   </li>
                 );
               })}
@@ -941,16 +1034,17 @@ export default function TestLab() {
                   multi.start(p.slots, p.basePayload);
                 }}
               >
-                Regenerate
+                Regenerate all
               </Button>
               <Button
+                autoFocus
                 onClick={() => {
                   const p = pendingRun;
                   setPendingRun(null);
-                  multi.start(p.slots, p.basePayload, { existing: p.existing });
+                  multi.start(p.slots, p.basePayload, { reuse: p.reuse });
                 }}
               >
-                Show last output
+                Reuse existing, run the rest
               </Button>
             </div>
           </div>

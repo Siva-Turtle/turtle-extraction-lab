@@ -607,6 +607,198 @@ def _plan_run(
     return resolved_type, resolved_data, effort, task_title, agents, snapshots, requests
 
 
+def _iso_str(value) -> str:
+    """ISO string for datetimes/strings ("" when absent)."""
+    from datetime import datetime as _dt
+
+    if isinstance(value, _dt):
+        try:
+            return value.isoformat()
+        except Exception:
+            return ""
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _num_or_none(value):
+    return value if isinstance(value, (int, float)) else None
+
+
+def _source_agent_info(log: RunLog, agent_id: str) -> tuple[str, float | None, float | None]:
+    """(created_at ISO, cost_usd, duration_ms) for one agent from a source log.
+
+    created_at is the ORIGINAL generation time: the per-agent
+    ``reused_from_created_at`` when the source agent was itself reused,
+    else the log-level ``reused_from_created_at`` (whole-log reuse chain),
+    else the log's ``created_at``. cost/duration come straight from the
+    source per-agent entry (None when absent).
+    """
+    usage = getattr(log, "usage", None) or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    per = usage.get("per_agent", {})
+    if not isinstance(per, dict):
+        per = {}
+    entry = per.get(agent_id)
+    if not isinstance(entry, dict):
+        entry = {}
+    cost = _num_or_none(entry.get("cost_usd"))
+    duration = _num_or_none(entry.get("duration_ms"))
+    reused_at = entry.get("reused_from_created_at")
+    if isinstance(reused_at, str) and reused_at:
+        created = reused_at
+    elif reused_at is not None and not isinstance(reused_at, str):
+        # datetime stored in-memory (SQLite returns datetime); JSON stores str.
+        try:
+            from datetime import datetime as _dt2
+
+            created = reused_at.isoformat() if isinstance(reused_at, _dt2) else ""
+        except Exception:
+            created = ""
+        if not created:
+            created = _iso_str(getattr(log, "created_at", ""))
+    else:
+        log_reused = getattr(log, "reused_from_created_at", None)
+        if isinstance(log_reused, str) and log_reused:
+            created = log_reused
+        elif log_reused is not None and not isinstance(log_reused, str):
+            try:
+                from datetime import datetime as _dt3
+
+                created = log_reused.isoformat() if isinstance(log_reused, _dt3) else ""
+            except Exception:
+                created = ""
+            if not created:
+                created = _iso_str(getattr(log, "created_at", ""))
+        else:
+            created = _iso_str(getattr(log, "created_at", ""))
+    return created, cost, duration
+
+
+def _find_existing_log_for_agent(
+    db: Session, *, model: str, reasoning_effort: str,
+    agent_id: str, expected_messages,
+) -> RunLog | None:
+    """Newest RunLog (same model+effort) with a usable output for one agent.
+
+    - SQL filter on model + reasoning_effort, newest first, limit 300.
+    - ``log.requests[agent_id]["messages"]`` must equal the would-be-sent
+      messages. Other agents in the log do not matter (any agent mix).
+    - ``log.outputs[agent_id]`` must exist, be a dict, and have no "_error".
+    """
+    effort = (reasoning_effort or "").strip()
+    rows = (
+        db.query(RunLog)
+        .filter(RunLog.model == model, RunLog.reasoning_effort == effort)
+        .order_by(RunLog.created_at.desc())
+        .limit(300)
+        .all()
+    )
+    for log in rows:
+        stored_reqs = log.requests or {}
+        if not isinstance(stored_reqs, dict):
+            continue
+        stored_body = stored_reqs.get(agent_id)
+        if not isinstance(stored_body, dict):
+            continue
+        if stored_body.get("messages") != expected_messages:
+            continue
+        outs = log.outputs or {}
+        if not isinstance(outs, dict):
+            continue
+        out = outs.get(agent_id)
+        if not isinstance(out, dict):
+            continue
+        if "_error" in out:
+            continue
+        return log
+    return None
+
+
+def _is_valid_reuse_source(
+    source: RunLog, *, agent_id: str, model: str,
+    reasoning_effort: str, expected_messages,
+) -> bool:
+    """Same rule as per-agent matching (server-side reuse validation)."""
+    try:
+        if (getattr(source, "model", None) or "") != model:
+            return False
+        if (getattr(source, "reasoning_effort", None) or "") != (reasoning_effort or ""):
+            return False
+        stored_reqs = getattr(source, "requests", None) or {}
+        if not isinstance(stored_reqs, dict):
+            return False
+        stored_body = stored_reqs.get(agent_id)
+        if not isinstance(stored_body, dict):
+            return False
+        if stored_body.get("messages") != expected_messages:
+            return False
+        outs = getattr(source, "outputs", None) or {}
+        if not isinstance(outs, dict):
+            return False
+        out = outs.get(agent_id)
+        if not isinstance(out, dict):
+            return False
+        if "_error" in out:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _build_reused_per_agent(source: RunLog, agent_id: str) -> tuple[dict, str, str]:
+    """Copy source per-agent entry + reused markers.
+
+    Returns (per_agent_entry, reused_from_log_id, reused_from_created_at).
+    When the source entry itself was reused, its original reused_from_*
+    values are kept. Whole-log reuse chains (log-level reused_from_*) are
+    honoured as the original when the per-agent entry carries no markers.
+    """
+    usage = getattr(source, "usage", None) or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    per = usage.get("per_agent", {})
+    if not isinstance(per, dict):
+        per = {}
+    raw = per.get(agent_id)
+    if isinstance(raw, dict):
+        entry = copy.deepcopy(raw)
+    else:
+        entry = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": None,
+            "input_cost_usd": None,
+            "output_cost_usd": None,
+            "duration_ms": 0.0,
+            "model": getattr(source, "model", None) or "",
+        }
+    existing_id = entry.get("reused_from_log_id")
+    existing_at = entry.get("reused_from_created_at")
+    if isinstance(existing_id, str) and existing_id:
+        rid = existing_id
+        rat = existing_at if isinstance(existing_at, str) and existing_at else _iso_str(
+            getattr(source, "created_at", ""))
+        entry["reused_from_log_id"] = rid
+        entry["reused_from_created_at"] = rat
+        return entry, rid, rat
+    log_rid = getattr(source, "reused_from_log_id", None) or ""
+    log_rat = getattr(source, "reused_from_created_at", None)
+    if isinstance(log_rid, str) and log_rid:
+        rat_iso = _iso_str(log_rat) or _iso_str(getattr(source, "created_at", ""))
+        entry["reused_from_log_id"] = log_rid
+        entry["reused_from_created_at"] = rat_iso
+        return entry, log_rid, rat_iso
+    rid2 = getattr(source, "id", "") or ""
+    rat2 = _iso_str(getattr(source, "created_at", ""))
+    entry["reused_from_log_id"] = rid2
+    entry["reused_from_created_at"] = rat2
+    return entry, rid2, rat2
+
+
 def _find_existing_log(
     db: Session, *, model: str, reasoning_effort: str, expected_requests: dict,
 ) -> RunLog | None:
@@ -699,13 +891,72 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             return (agent.id, {"_error": str(exc)}, 0, 0, 0, 0,
                     duration_ms, model)
 
-    bodies = [(a, copy.deepcopy(requests[a.id]), payload.model) for a in agents]
-    results = await asyncio.gather(*[_run_one(a, b, m) for a, b, m in bodies])
+    # --- Per-agent reuse: validate each reuse entry server-side ---------------
+    # Same rule as matching (messages equal, output present without _error,
+    # same model+effort). Invalid entries are ignored silently (fresh run).
+    reuse_map = getattr(payload, "reuse", None)
+    if not isinstance(reuse_map, dict):
+        reuse_map = {}
+    valid_reuse: dict[str, RunLog] = {}
+    for agent in agents:
+        try:
+            src_id = reuse_map.get(agent.id)
+        except Exception:
+            src_id = None
+        if not isinstance(src_id, str) or not src_id.strip():
+            continue
+        src_id = src_id.strip()
+        try:
+            source = db.query(RunLog).filter(RunLog.id == src_id).first()
+        except Exception:
+            source = None
+        if source is None:
+            continue
+        fresh_body = requests.get(agent.id)
+        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
+        if not _is_valid_reuse_source(
+            source, agent_id=agent.id, model=payload.model,
+            reasoning_effort=effort, expected_messages=fresh_msgs,
+        ):
+            continue
+        valid_reuse[agent.id] = source
+
     outputs: dict = {}
     per_agent: dict = {}
+    reused_agents: dict = {}
+    # Seed reused agents (no OpenRouter call; requests stay freshly built).
+    for aid, source in list(valid_reuse.items()):
+        try:
+            src_outs = getattr(source, "outputs", None) or {}
+            if not isinstance(src_outs, dict) or aid not in src_outs:
+                raise KeyError(aid)
+            outputs[aid] = copy.deepcopy(src_outs.get(aid))
+            entry, rid, rat = _build_reused_per_agent(source, aid)
+            per_agent[aid] = entry
+            reused_agents[aid] = {"log_id": rid, "created_at": rat}
+        except Exception:
+            # Treat as fresh on unexpected copy failure.
+            valid_reuse.pop(aid, None)
+            outputs.pop(aid, None)
+            per_agent.pop(aid, None)
+            reused_agents.pop(aid, None)
+            continue
+
+    fresh_agents = [a for a in agents if a.id not in valid_reuse]
+    fresh_bodies = [(a, copy.deepcopy(requests[a.id]), payload.model) for a in fresh_agents]
+    results = await asyncio.gather(*[_run_one(a, b, m) for a, b, m in fresh_bodies])
     total_in = 0
     total_out = 0
     total_in_reasoning = 0
+    # Add reused tokens to totals.
+    for aid in valid_reuse:
+        try:
+            e = per_agent.get(aid, {})
+            total_in += int(e.get("prompt_tokens", 0) or 0)
+            total_out += int(e.get("completion_tokens", 0) or 0)
+            total_in_reasoning += int(e.get("reasoning_tokens", 0) or 0)
+        except Exception:
+            pass
     agents_by_id = {a.id: a for a in agents}
     for (aid, parsed, prompt_tokens, completion_tokens,
          total_tokens, reasoning_tokens, duration_ms, model) in results:
@@ -731,36 +982,90 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             "duration_ms": duration_ms,
             "model": model,
         }
-    try:
-        prompt_price, completion_price = await get_model_pricing(payload.model)
-    except Exception:
+    if fresh_agents or not valid_reuse:
+        try:
+            prompt_price, completion_price = await get_model_pricing(payload.model)
+        except Exception:
+            prompt_price, completion_price = None, None
+    else:
+        # All reused: no OpenRouter calls at all (not even pricing).
         prompt_price, completion_price = None, None
-    total_cost: float | None = None
+    # Price ONLY fresh agents; reused keep their source numbers verbatim.
+    reused_ids = set(valid_reuse.keys())
     if prompt_price is not None and completion_price is not None:
-        total_cost = 0.0
-        for entry in per_agent.values():
-            cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
+        for aid, entry in per_agent.items():
+            if aid in reused_ids:
+                continue
+            try:
+                cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
+            except Exception:
+                continue
             entry["cost_usd"] = round(cost, 6)
-            total_cost += cost
-        total_cost = round(total_cost, 6)
-    for entry in per_agent.values():
-        if prompt_price is None:
-            entry["input_cost_usd"] = None
-        else:
-            entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
-        if completion_price is None:
-            entry["output_cost_usd"] = None
-        else:
-            entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
-    if prompt_price is None or any(v["input_cost_usd"] is None for v in per_agent.values()):
+    for aid, entry in per_agent.items():
+        if aid in reused_ids:
+            continue
+        try:
+            if prompt_price is None:
+                entry["input_cost_usd"] = None
+            else:
+                entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
+            if completion_price is None:
+                entry["output_cost_usd"] = None
+            else:
+                entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
+        except Exception:
+            pass
+    # Totals include reused agents' original numbers. Any None -> None,
+    # the same way the code treats unknown pricing today.
+    if any(not isinstance(v.get("cost_usd"), (int, float)) for v in per_agent.values()):
+        total_cost: float | None = None
+    else:
+        try:
+            total_cost = round(sum((v["cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_cost = None
+    if any(not isinstance(v.get("input_cost_usd"), (int, float)) for v in per_agent.values()):
         total_input_cost: float | None = None
     else:
-        total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
-    if completion_price is None or any(v["output_cost_usd"] is None for v in per_agent.values()):
+        try:
+            total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_input_cost = None
+    if any(not isinstance(v.get("output_cost_usd"), (int, float)) for v in per_agent.values()):
         total_output_cost: float | None = None
     else:
-        total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
+        try:
+            total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_output_cost = None
+    # Empty-run edge: no agents -> totals mirror the old zero-agent math
+    # (0.0 when pricing known, None when unknown). The any() above is
+    # False for {}, so sums are 0.0 — but only when pricing is known;
+    # when pricing is unknown there are no entries to be None, yet old
+    # code left total_cost None. Preserve that.
+    if not per_agent:
+        if prompt_price is None or completion_price is None:
+            total_cost = None
+            total_input_cost = None
+            total_output_cost = None
+        else:
+            total_cost = 0.0
+            total_input_cost = 0.0
+            total_output_cost = 0.0
+        # When fresh agents exist but pricing unknown, the any() above is
+        # already None-correct; nothing more to do.
+        if fresh_agents and (prompt_price is None or completion_price is None):
+            # total_cost already None via per-agent Nones; input/output too.
+            pass
     wall_ms = (perf_counter() - wall_start) * 1000.0
+    usage_duration_ms = wall_ms
+    try:
+        for aid in valid_reuse:
+            d = per_agent.get(aid, {}).get("duration_ms")
+            if isinstance(d, (int, float)) and d > usage_duration_ms:
+                usage_duration_ms = float(d)
+    except Exception:
+        pass
     usage = {
         "prompt_tokens": total_in,
         "completion_tokens": total_out,
@@ -769,9 +1074,10 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         "cost_usd": total_cost,
         "input_cost_usd": total_input_cost,
         "output_cost_usd": total_output_cost,
-        "duration_ms": wall_ms,
+        "duration_ms": usage_duration_ms,
         "model": payload.model,
         "per_agent": per_agent,
+        "reused_agents": reused_agents,
     }
     # Denormalized meeting snapshot — plain strings from the Test Lab
     # picker, never FKs. When meeting_id is present the server-known task
@@ -784,12 +1090,38 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.add(run)
     db.commit()
     db.refresh(run)
+    # Log-level reused markers: set (to the single source) only when EVERY
+    # agent was reused from the same source log; otherwise "" / None.
+    log_reused_id = ""
+    log_reused_at = None
+    try:
+        if agents and len(valid_reuse) == len(agents) and agents:
+            src_ids = set()
+            for _aid, _src in valid_reuse.items():
+                try:
+                    src_ids.add(_src.id)
+                except Exception:
+                    pass
+            if len(src_ids) == 1:
+                only_src = next(iter(valid_reuse.values()))
+                # Point at the ORIGINAL like POST /runs/reuse does.
+                only_orig_id = getattr(only_src, "reused_from_log_id", None) or getattr(
+                    only_src, "id", "") or ""
+                only_orig_at = getattr(only_src, "reused_from_created_at", None) or getattr(
+                    only_src, "created_at", None)
+                log_reused_id = only_orig_id or ""
+                log_reused_at = only_orig_at
+    except Exception:
+        log_reused_id = ""
+        log_reused_at = None
     # Denormalized log row — snapshots only, no FK to agents/attributes.
     log = RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback={},
                   usage=usage, filters=filters, requests=requests,
                   client=client, meeting_type=meeting_type, meeting_title=meeting_title,
-                  reasoning_effort=effort, run_group_id=payload.run_group_id or "")
+                  reasoning_effort=effort, run_group_id=payload.run_group_id or "",
+                  reused_from_log_id=log_reused_id or "",
+                  reused_from_created_at=log_reused_at)
     db.add(log)
     db.commit()
     db.refresh(log)
@@ -912,7 +1244,7 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=first_effort)
     agents = _load_run_agents(db, payload.agent_ids)
-    matches: list[dict] = []
+    slots: list[dict] = []
     for slot in payload.models:
         model = slot.model
         if not isinstance(model, str) or not model.strip():
@@ -920,16 +1252,32 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
         effort = (slot.reasoning_effort or "").strip()
         if effort and effort not in REASONING_EFFORTS:
             raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
+        # Per-slot request bodies (messages may differ per model, e.g. the
+        # Anthropic fallback appends the schema to the system message).
         _, expected_requests = _build_agent_requests(
             db, agents=agents, input_data=resolved_data,
             model=model, reasoning_effort=effort)
-        log = _find_existing_log(
-            db, model=model, reasoning_effort=effort,
-            expected_requests=expected_requests)
-        if log is not None:
-            matches.append({"model": model, "reasoning_effort": effort,
-                            "log": _out(log)})
-    return {"matches": matches}
+        slot_agents: list[dict] = []
+        for agent in agents:
+            exp_body = expected_requests.get(agent.id)
+            exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
+            log = _find_existing_log_for_agent(
+                db, model=model, reasoning_effort=effort,
+                agent_id=agent.id, expected_messages=exp_msgs)
+            if log is None:
+                continue
+            created_iso, cost, duration = _source_agent_info(log, agent.id)
+            slot_agents.append({
+                "agent_id": agent.id,
+                "agent_name": agent.name,
+                "log_id": log.id,
+                "created_at": created_iso,
+                "cost_usd": cost,
+                "duration_ms": duration,
+            })
+        slots.append({"model": model, "reasoning_effort": effort,
+                      "agents": slot_agents})
+    return {"slots": slots}
 
 
 @router.post("/feedback-batch")

@@ -656,7 +656,11 @@ def _check(client, aid, model, effort="", input_data="mail me at a@b.in"):
 def test_check_existing_no_match_empty(client):
     aid = client.post("/api/v1/agents", json={"name": "A"}).json()["id"]
     client.post("/api/v1/attributes", json={"agent_ids": [aid], "name": "email"})
-    assert _check(client, aid, "test-model") == {"matches": []}
+    data = _check(client, aid, "test-model")
+    assert len(data["slots"]) == 1
+    assert data["slots"][0]["model"] == "test-model"
+    assert data["slots"][0]["reasoning_effort"] == ""
+    assert data["slots"][0]["agents"] == []
 
 
 def test_check_existing_match_after_run(client, monkeypatch):
@@ -672,10 +676,14 @@ def test_check_existing_match_after_run(client, monkeypatch):
     monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
     before = client.get("/api/v1/logs").json()
     data = _check(client, aid, "test-model")
-    assert len(data["matches"]) == 1
-    assert data["matches"][0]["model"] == "test-model"
-    assert data["matches"][0]["reasoning_effort"] == ""
-    assert data["matches"][0]["log"]["id"] == log_id
+    assert len(data["slots"]) == 1
+    assert data["slots"][0]["model"] == "test-model"
+    assert data["slots"][0]["reasoning_effort"] == ""
+    assert len(data["slots"][0]["agents"]) == 1
+    entry = data["slots"][0]["agents"][0]
+    assert entry["agent_id"] == aid
+    assert entry["log_id"] == log_id
+    assert entry["created_at"]
     # Nothing written.
     assert client.get("/api/v1/logs").json() == before
 
@@ -685,10 +693,10 @@ def test_check_existing_different_effort_no_match(client, monkeypatch):
     client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "mail me at a@b.in",
         "agent_ids": [aid], "model": "test-model"}).json()
-    assert _check(client, aid, "test-model", effort="high") == {"matches": []}
-    assert _check(client, aid, "other-model") == {"matches": []}
+    assert _check(client, aid, "test-model", effort="high")["slots"][0]["agents"] == []
+    assert _check(client, aid, "other-model")["slots"][0]["agents"] == []
     # Same effort still matches.
-    assert len(_check(client, aid, "test-model")["matches"]) == 1
+    assert len(_check(client, aid, "test-model")["slots"][0]["agents"]) == 1
 
 
 def test_check_existing_changed_prompt_no_match(client, monkeypatch):
@@ -696,9 +704,9 @@ def test_check_existing_changed_prompt_no_match(client, monkeypatch):
     client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "mail me at a@b.in",
         "agent_ids": [aid], "model": "test-model"}).json()
-    assert len(_check(client, aid, "test-model")["matches"]) == 1
+    assert len(_check(client, aid, "test-model")["slots"][0]["agents"]) == 1
     client.patch(f"/api/v1/agents/{aid}", json={"system_instruction": "changed"})
-    assert _check(client, aid, "test-model") == {"matches": []}
+    assert _check(client, aid, "test-model")["slots"][0]["agents"] == []
 
 
 def test_check_existing_all_errored_no_match(client, monkeypatch):
@@ -718,7 +726,7 @@ def test_check_existing_all_errored_no_match(client, monkeypatch):
         raise AssertionError("check-existing must not call OpenRouter")
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _must_not_run)
-    assert _check(client, aid, "m", input_data="hello") == {"matches": []}
+    assert _check(client, aid, "m", input_data="hello")["slots"][0]["agents"] == []
 
 
 def test_reuse_creates_new_row(client, monkeypatch):

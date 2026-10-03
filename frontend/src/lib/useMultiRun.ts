@@ -32,10 +32,10 @@ function slotKey(model: string, effort: string): string {
 /**
  * Fire one `POST /runs` per model slot sharing a `run_group_id`, all at
  * once. Columns stay in picker order and fill in as each call settles.
- * Pass `{ existing }` to save a reused copy for matched slots: those columns
- * `POST /runs/reuse` (`{log_id, run_group_id}`) in parallel with the real
- * runs, starting "running" and settling from `res.data.log` exactly like a
- * real run (so the copy appears in Log history in the same group).
+ * Pass `{ reuse }` for per-agent reuse: every column POSTs /runs with
+ * `reuse` for that slot (`{agent_id: source_log_id}`), so reused agents
+ * are copied server-side while the rest run fresh. Single-model runs use
+ * the same path.
  */
 export function useMultiRun(): {
   groupId: string;
@@ -44,7 +44,7 @@ export function useMultiRun(): {
   start: (
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { existing?: Record<string, LogRow> },
+    opts?: { reuse?: Record<string, Record<string, string>> },
   ) => void;
   retry: (key: string) => void;
 } {
@@ -53,9 +53,9 @@ export function useMultiRun(): {
   const [columns, setColumns] = React.useState<CompareColumn[]>([]);
   const payloadRef = React.useRef<Record<string, unknown>>({});
   const groupRef = React.useRef("");
-  // Per-column flag: which columns are reuse copies + the source log id, so
-  // retry() re-posts to /runs/reuse instead of firing a fresh model run.
-  const reuseSourceRef = React.useRef<Record<string, string>>({});
+  // Per-column reuse map so retry() re-posts /runs with the same reuse map
+  // for that column.
+  const reuseRef = React.useRef<Record<string, Record<string, string>>>({});
 
   const invalidate = React.useCallback(() => {
     qc.invalidateQueries({ queryKey: ["logs"] });
@@ -86,21 +86,25 @@ export function useMultiRun(): {
   function start(
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { existing?: Record<string, LogRow> },
+    opts?: { reuse?: Record<string, Record<string, string>> },
   ) {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
-    const existing = opts?.existing ?? {};
-    // Every column starts "running" — matched slots POST /runs/reuse, the
-    // rest POST /runs — so the reused copy lands in Log history in this
-    // group with its cost/time/tokens. Single-model runs use the same path.
-    const reuseSource: Record<string, string> = {};
+    const reuse = opts?.reuse ?? {};
+    // Every column POSTs /runs with `reuse` for that slot ({} = fresh).
+    const reuseForColumn: Record<string, Record<string, string>> = {};
     const cols: CompareColumn[] = slots.map((s) => {
       const k = slotKey(s.model, s.effort);
-      const old = existing[k];
-      if (old && typeof old.id === "string" && old.id !== "") {
-        reuseSource[k] = old.id;
+      const m = reuse[k];
+      const clean: Record<string, string> = {};
+      if (m && typeof m === "object") {
+        for (const [agentId, logId] of Object.entries(m)) {
+          if (typeof agentId === "string" && typeof logId === "string" && logId !== "") {
+            clean[agentId] = logId;
+          }
+        }
       }
+      reuseForColumn[k] = clean;
       return {
         key: k,
         model: s.model,
@@ -110,7 +114,7 @@ export function useMultiRun(): {
         log: null,
       };
     });
-    reuseSourceRef.current = reuseSource;
+    reuseRef.current = reuseForColumn;
     groupRef.current = gid;
     payloadRef.current = { ...basePayload };
     setGroupId(gid);
@@ -119,21 +123,13 @@ export function useMultiRun(): {
       return;
     }
     const jobs = cols.map((col) => {
-      const sourceId = reuseSource[col.key];
-      if (sourceId) {
-        return api
-          .post("/runs/reuse", { log_id: sourceId, run_group_id: gid })
-          .then(
-            (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
-            (e: unknown) => applyHttpError(col.key, e),
-          );
-      }
       return api
         .post("/runs", {
           ...basePayload,
           model: col.model,
           reasoning_effort: col.effort,
           run_group_id: gid,
+          reuse: reuseForColumn[col.key] ?? {},
         })
         .then(
           (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
@@ -158,20 +154,13 @@ export function useMultiRun(): {
         c.key === key ? { ...c, status: "running" as const, error: undefined, startedAt: Date.now() } : c,
       ),
     );
-    const sourceId = reuseSourceRef.current[key];
-    if (sourceId) {
-      api.post("/runs/reuse", { log_id: sourceId, run_group_id: gid }).then(
-        (res) => applySuccess(key, (res.data as RunResponse).log ?? null),
-        (e: unknown) => applyHttpError(key, e),
-      );
-      return;
-    }
     api
       .post("/runs", {
         ...payloadRef.current,
         model: target.model,
         reasoning_effort: target.effort,
         run_group_id: gid,
+        reuse: reuseRef.current[key] ?? {},
       })
       .then(
         (res) => applySuccess(key, (res.data as RunResponse).log ?? null),
