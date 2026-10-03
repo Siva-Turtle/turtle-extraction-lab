@@ -1,10 +1,127 @@
 """Minimal OpenRouter client: chat-completions (structured JSON) + model listing."""
 
+import json
 import time
 
 import httpx
 
 from app.core.config import settings
+
+# Anthropic strict structured output allows at most 16 schema nodes that
+# are unions (a ``type`` list like ["string", "null"] or an ``anyOf``).
+ANTHROPIC_UNION_LIMIT = 16
+
+ANTHROPIC_FALLBACK_INSTRUCTION = (
+    "Respond with ONLY a single JSON object (no prose, no code fences) that "
+    "conforms exactly to this JSON Schema. Include every property; use null "
+    "when a value is unknown or not mentioned. Enum fields must use one of "
+    "the listed values or null."
+)
+
+
+def count_union_params(schema) -> int:
+    """Count union nodes in a JSON schema (Anthropic limit check).
+
+    Walks the whole schema recursively (properties, items, anyOf/oneOf/allOf
+    members, $defs/definitions — plus any other nested dict/list) and counts
+    every node whose ``type`` is a list with >1 entries, plus every node that
+    has ``anyOf`` (or ``oneOf``).
+    """
+    count = 0
+
+    def _walk(node, _stack: set[int]) -> None:
+        nonlocal count
+        if isinstance(node, dict):
+            nid = id(node)
+            if nid in _stack:
+                return
+            _stack.add(nid)
+            try:
+                t = node.get("type")
+                if isinstance(t, list) and len(t) > 1:
+                    count += 1
+                anyof = node.get("anyOf")
+                if isinstance(anyof, list):
+                    count += 1
+                elif "anyOf" in node:
+                    count += 1
+                oneof = node.get("oneOf")
+                if isinstance(oneof, list):
+                    count += 1
+                elif "oneOf" in node:
+                    count += 1
+                for v in node.values():
+                    _walk(v, _stack)
+            finally:
+                _stack.discard(nid)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v, _stack)
+
+    if isinstance(schema, (dict, list)):
+        _walk(schema, set())
+    return count
+
+
+def _strip_code_fence(text: str) -> str:
+    """Strip a leading ```json/``` fence and trailing ``` (fallback parsing)."""
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    nl = t.find("\n")
+    if nl == -1:
+        rest = t[3:].lstrip()
+        if rest[:4].lower() == "json":
+            rest = rest[4:].lstrip()
+        if rest.rstrip().endswith("```"):
+            rest = rest.rstrip()[:-3]
+        return rest.strip()
+    rest = t[nl + 1 :]
+    r = rest.rstrip()
+    if r.endswith("```"):
+        r = r[:-3]
+    return r.strip()
+
+
+def _parse_json_content(content):
+    """Parse model ``content`` tolerating fences/prose (fallback robustness).
+
+    Valid JSON parses exactly as before. When ``content`` is a string that
+    fails ``json.loads``, strips a leading ```json/``` fence and trailing
+    ``` and retries; if still failing, extracts the substring from the
+    first "{" to the last "}" and retries; otherwise re-raises the original
+    error. Non-string content passes through unchanged.
+    """
+    if not isinstance(content, str):
+        return content
+    try:
+        return json.loads(content)
+    except Exception as first_exc:
+        stripped = _strip_code_fence(content)
+        try:
+            return json.loads(stripped)
+        except Exception:
+            pass
+        try:
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(stripped[start : end + 1])
+        except Exception:
+            pass
+        if stripped != content:
+            try:
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(content[start : end + 1])
+            except Exception:
+                pass
+        raise first_exc
+
+
+# Public alias so tests can unit-test the parse helper without network.
+parse_json_content = _parse_json_content
 
 # Sensible defaults shown when no API key is configured (or the live list
 # cannot be reached). Free text is always allowed — this list is a shortcut.
@@ -43,19 +160,40 @@ def build_chat_payload(
     ``{"type": "json_object"}`` mode. When ``reasoning_effort`` is a
     non-blank string, ``{"reasoning": {"effort": value}}`` is added;
     None/blank leaves the payload byte-identical (no ``reasoning`` key).
+
+    Anthropic union-limit fallback: when ``json_schema`` is given AND the
+    model is ``anthropic/*`` AND ``count_union_params(json_schema)`` exceeds
+    ``ANTHROPIC_UNION_LIMIT`` (16), the strict json_schema envelope is
+    replaced with ``{"type": "json_object"}`` and the schema (serialised
+    with ``json.dumps(..., ensure_ascii=False, indent=2)``) plus an
+    instruction block is appended to the system message (after the existing
+    text, separated by a blank line). All other models, and Anthropic with
+    <=16 unions, stay byte-identical. Deterministic: same input ->
+    byte-identical payload.
     """
+    system_content = system
     if json_schema is None:
         response_format: dict = {"type": "json_object"}
     else:
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {"name": schema_name, "strict": True, "schema": json_schema},
-        }
+        try:
+            n_unions = count_union_params(json_schema)
+        except Exception:
+            n_unions = 0
+        is_anthropic = isinstance(model, str) and model.lower().startswith("anthropic/")
+        if is_anthropic and n_unions > ANTHROPIC_UNION_LIMIT:
+            response_format = {"type": "json_object"}
+            schema_json = json.dumps(json_schema, ensure_ascii=False, indent=2)
+            system_content = f"{system}\n\n{ANTHROPIC_FALLBACK_INSTRUCTION}\n{schema_json}"
+        else:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "strict": True, "schema": json_schema},
+            }
     payload = {
         "model": model,
         "response_format": response_format,
         "messages": [
-            {"role": "system", "content": system},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": user},
         ],
     }
@@ -99,10 +237,9 @@ async def complete_json_payload(payload: dict) -> tuple[dict, dict]:
                 ) from exc
             raise
         data = resp.json()
-    import json as _json
 
     content = data["choices"][0]["message"]["content"]
-    parsed = _json.loads(content) if isinstance(content, str) else content
+    parsed = _parse_json_content(content)
     return parsed, _extract_usage(data.get("usage"))
 
 
