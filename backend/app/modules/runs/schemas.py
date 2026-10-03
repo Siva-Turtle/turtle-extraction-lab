@@ -193,3 +193,7 @@ class BatchFeedbackItem(BaseModel):
 class BatchFeedbackIn(BaseModel):
     items: list[BatchFeedbackItem] = Field(default_factory=list)
     only_unrated: bool = False
+
+
+class RetryAgentIn(BaseModel):
+    agent_id: str = ""

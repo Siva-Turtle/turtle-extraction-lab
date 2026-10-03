@@ -56,10 +56,14 @@ def _out(r: RunLog) -> dict:
         reused_at_out = reused_at or None
     else:
         reused_at_out = None
+    consistency = getattr(r, "consistency", None)
+    if not isinstance(consistency, dict):
+        consistency = {}
     return {"id": r.id, "run_id": r.run_id, "input_type": r.input_type, "input_data": r.input_data,
             "model": r.model,
             "agent_snapshot": r.agent_snapshot or {}, "attribute_snapshot": r.attribute_snapshot or {},
             "outputs": r.outputs or {}, "feedback": r.feedback or {},
+            "consistency": consistency,
             "usage": getattr(r, "usage", None) or {}, "filters": getattr(r, "filters", None) or {},
             "requests": getattr(r, "requests", None) or {},
             # Denormalized meeting snapshot (plain strings, "" on old rows).

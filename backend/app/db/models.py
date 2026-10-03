@@ -114,4 +114,6 @@ class RunLog(Base):
     # "" = a real model call; otherwise the id of the log whose output was copied.
     reused_from_log_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
     reused_from_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    # Auto-select consistency snapshot ({} on manual runs). No FKs.
+    consistency: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

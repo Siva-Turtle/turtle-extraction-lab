@@ -12,7 +12,7 @@ from app.modules.logs.router import _out
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import (
     BatchFeedbackIn, CheckExistingIn, CheckExistingOut,
-    FeedbackCreate, FeedbackOut, ReuseRunIn, RunCreate, RunDetail, RunOut,
+    FeedbackCreate, FeedbackOut, RetryAgentIn, ReuseRunIn, RunCreate, RunDetail, RunOut,
 )
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -261,6 +261,249 @@ def normalize_identifier_output(parsed, candidates) -> object:
             seen_sel.add(agent_name)
             selected.append(agent_name)
     return {"fillable_attributes": fillable, "selected_agents": selected}
+
+
+AUTO_REMARK_MISSED = "Auto: identifier listed it, agent returned null"
+AUTO_REMARK_UNEXPECTED = "Auto: extracted but identifier did not list it"
+
+
+def _agent_display_name(agent) -> str:
+    if isinstance(agent, str):
+        return agent
+    if isinstance(agent, dict):
+        n = agent.get("name", "")
+        return n if isinstance(n, str) else ""
+    return str(getattr(agent, "name", "") or "")
+
+
+def _agent_kind_of(agent) -> str:
+    if isinstance(agent, dict):
+        k = agent.get("kind", "")
+        return k if isinstance(k, str) else ""
+    return str(getattr(agent, "kind", "") or "")
+
+
+def _valid_attr_names(value) -> list[str]:
+    out: list[str] = []
+    if value is None:
+        return out
+    items = value if isinstance(value, (list, tuple)) else []
+    for item in items:
+        if isinstance(item, str):
+            if item:
+                out.append(item)
+        elif isinstance(item, dict):
+            n = item.get("name", "")
+            if isinstance(n, str) and n:
+                out.append(n)
+        else:
+            n = getattr(item, "name", None)
+            if isinstance(n, str) and n:
+                out.append(n)
+    return out
+
+
+def _is_filled_entry(entry) -> bool:
+    if isinstance(entry, dict) and "value" in entry:
+        if entry.get("confidence_type") == "not_found":
+            return False
+        v = entry.get("value")
+    elif isinstance(entry, dict) and "confidence_type" in entry:
+        if entry.get("confidence_type") == "not_found":
+            return False
+        v = entry.get("value", entry)
+    else:
+        v = entry
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return bool(v.strip())
+    if isinstance(v, (list, tuple)):
+        return len(v) > 0
+    if isinstance(v, dict):
+        return len(v) > 0
+    return True
+
+
+def compute_consistency(identifier_output, outputs, agents_by_id, attrs_by_agent) -> dict:
+    """Pure consistency snapshot for an auto-select run.
+
+    - predicted: identifier fillable list for that agent (valid names only).
+    - extracted: output attrs that are filled (value not null/""/[]/{},
+      confidence_type != not_found).
+    - missed/unexpected + Jaccard score per agent; micro score overall.
+    """
+    agents_by_id = agents_by_id or {}
+    attrs_by_agent = attrs_by_agent or {}
+    outputs = outputs if isinstance(outputs, dict) else {}
+    # Find identifier id: agent with kind == identifier, else output identity.
+    identifier_agent_id = ""
+    try:
+        for aid, ag in (agents_by_id or {}).items():
+            if _agent_kind_of(ag) == IDENTIFIER_KIND:
+                identifier_agent_id = str(aid)
+                break
+    except Exception:
+        identifier_agent_id = ""
+    if not identifier_agent_id:
+        try:
+            for aid, out in outputs.items():
+                if out is identifier_output:
+                    identifier_agent_id = str(aid)
+                    break
+        except Exception:
+            pass
+    fillable_by_name: dict[str, list[str]] = {}
+    if isinstance(identifier_output, dict) and "_error" not in identifier_output:
+        raw_fillable = identifier_output.get("fillable_attributes", [])
+        if isinstance(raw_fillable, list):
+            for entry in raw_fillable:
+                if not isinstance(entry, dict):
+                    continue
+                an = entry.get("agent")
+                al = entry.get("attributes")
+                if not isinstance(an, str) or not isinstance(al, list):
+                    continue
+                seen: set[str] = set()
+                kept: list[str] = []
+                for n in al:
+                    if not isinstance(n, str) or not n:
+                        continue
+                    if n in seen:
+                        continue
+                    seen.add(n)
+                    kept.append(n)
+                if an not in fillable_by_name:
+                    fillable_by_name[an] = kept
+                else:
+                    for n in kept:
+                        if n not in fillable_by_name[an]:
+                            fillable_by_name[an].append(n)
+    agents_out: dict = {}
+    total_inter = 0
+    total_union = 0
+    for aid, out in outputs.items():
+        if str(aid) == identifier_agent_id:
+            continue
+        if not isinstance(out, dict) or "_error" in out:
+            continue
+        ag = (agents_by_id or {}).get(aid)
+        agent_name = _agent_display_name(ag) if ag is not None else ""
+        if not agent_name:
+            continue
+        valid_list = _valid_attr_names((attrs_by_agent or {}).get(aid, []))
+        valid_set = set(valid_list)
+        raw_pred = fillable_by_name.get(agent_name, [])
+        predicted: list[str] = []
+        seen_p: set[str] = set()
+        for n in raw_pred:
+            if n not in valid_set or n in seen_p:
+                continue
+            seen_p.add(n)
+            predicted.append(n)
+        extracted: list[str] = []
+        try:
+            for attr_name, entry in out.items():
+                if not isinstance(attr_name, str) or not attr_name:
+                    continue
+                if attr_name.startswith("_"):
+                    continue
+                if _is_filled_entry(entry):
+                    extracted.append(attr_name)
+        except Exception:
+            extracted = []
+        pred_set = set(predicted)
+        extr_set = set(extracted)
+        missed = [a for a in predicted if a not in extr_set]
+        unexpected = [a for a in extracted if a not in pred_set]
+        inter = len(pred_set & extr_set)
+        union = len(pred_set | extr_set)
+        score = 1.0 if union == 0 else inter / union
+        total_inter += inter
+        total_union += union
+        agents_out[str(aid)] = {
+            "agent_name": agent_name,
+            "predicted": predicted,
+            "extracted": extracted,
+            "missed": missed,
+            "unexpected": unexpected,
+            "score": float(score),
+        }
+    overall = None if total_union == 0 and not agents_out else (
+        1.0 if total_union == 0 else total_inter / total_union)
+    if not agents_out:
+        overall = None
+    return {"score": overall, "identifier_agent_id": identifier_agent_id, "agents": agents_out}
+
+
+def apply_auto_feedback(feedback, consistency) -> dict:
+    """Return a copy of feedback with auto thumbs for missed/unexpected.
+
+    Deletes that agent's previous auto entries first; never overwrites a
+    non-auto (manual) entry.
+    """
+    fb: dict = {}
+    try:
+        src = feedback if isinstance(feedback, dict) else {}
+        for k, v in src.items():
+            if isinstance(v, dict):
+                fb[k] = {ak: dict(av) if isinstance(av, dict) else {} for ak, av in v.items()}
+            else:
+                fb[k] = {}
+    except Exception:
+        fb = {}
+    agents = {}
+    try:
+        agents = (consistency or {}).get("agents", {}) or {}
+    except Exception:
+        agents = {}
+    if not isinstance(agents, dict):
+        agents = {}
+    for aid, cons in agents.items():
+        if not isinstance(cons, dict):
+            continue
+        agent_name = cons.get("agent_name", "")
+        if not isinstance(agent_name, str) or not agent_name:
+            continue
+        missed = cons.get("missed", []) if isinstance(cons.get("missed", []), list) else []
+        unexpected = cons.get("unexpected", []) if isinstance(cons.get("unexpected", []), list) else []
+        agent_map = fb.get(agent_name)
+        if not isinstance(agent_map, dict):
+            agent_map = {}
+            fb[agent_name] = agent_map
+        for attr in list(agent_map.keys()):
+            try:
+                cell = agent_map.get(attr)
+                if isinstance(cell, dict) and cell.get("auto") is True:
+                    del agent_map[attr]
+            except Exception:
+                continue
+        if not agent_map and agent_name in fb and not agent_map:
+            # Keep empty map for now; re-created below if autos apply.
+            pass
+        seen_attrs: set[str] = set()
+        ordered: list[tuple[str, str]] = []
+        for a in missed:
+            if isinstance(a, str) and a and a not in seen_attrs:
+                seen_attrs.add(a)
+                ordered.append((a, AUTO_REMARK_MISSED))
+        for a in unexpected:
+            if isinstance(a, str) and a and a not in seen_attrs:
+                seen_attrs.add(a)
+                ordered.append((a, AUTO_REMARK_UNEXPECTED))
+        for attr, remark in ordered:
+            existing = agent_map.get(attr)
+            if isinstance(existing, dict) and existing.get("auto") is not True:
+                # Manual entry (rating present without auto flag) wins.
+                # Empty dicts left from copies count as absent.
+                if existing.get("rating") in ("up", "down"):
+                    continue
+                if "rating" in existing and existing.get("rating"):
+                    continue
+            agent_map[attr] = {"rating": "down", "remarks": remark, "auto": True}
+        if not agent_map and agent_name in fb:
+            del fb[agent_name]
+    return fb
 
 
 def _attr_line(a: Attribute) -> str:
@@ -605,6 +848,216 @@ def _plan_run(
         db, agents=agents, input_data=resolved_data,
         model=model, reasoning_effort=effort)
     return resolved_type, resolved_data, effort, task_title, agents, snapshots, requests
+
+
+async def _call_single_payload(payload_body: dict):
+    """One OpenRouter call + timing (shared by create_run/retry/auto).
+
+    Returns (parsed, prompt_tokens, completion_tokens, total_tokens,
+    reasoning_tokens, duration_ms). Errors become ({"_error": ...}, zeros).
+    """
+    agent_start = perf_counter()
+    try:
+        parsed, usage = await complete_json_payload(payload_body)
+        try:
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            total_tokens = int(usage.get("total_tokens", 0) or 0)
+            reasoning_tokens = int(usage.get("reasoning_tokens", 0) or 0)
+        except Exception:
+            prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = 0, 0, 0, 0
+        if prompt_tokens < 0:
+            prompt_tokens = 0
+        if completion_tokens < 0:
+            completion_tokens = 0
+        if total_tokens < 0:
+            total_tokens = 0
+        if reasoning_tokens < 0:
+            reasoning_tokens = 0
+        duration_ms = (perf_counter() - agent_start) * 1000.0
+        return parsed, prompt_tokens, completion_tokens, total_tokens, reasoning_tokens, duration_ms
+    except Exception as exc:
+        duration_ms = (perf_counter() - agent_start) * 1000.0
+        return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms
+
+
+def _per_agent_entry(prompt_tokens: int, completion_tokens: int, total_tokens: int,
+                     reasoning_tokens: int, duration_ms: float, model: str) -> dict:
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "cost_usd": None,
+        "input_cost_usd": None,
+        "output_cost_usd": None,
+        "duration_ms": duration_ms,
+        "model": model,
+    }
+
+
+def _fill_pricing(per_agent: dict, prompt_price, completion_price, skip_ids=frozenset()) -> None:
+    skip = set(skip_ids or ())
+    if prompt_price is not None and completion_price is not None:
+        for aid, entry in per_agent.items():
+            if aid in skip or not isinstance(entry, dict):
+                continue
+            try:
+                cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
+            except Exception:
+                continue
+            entry["cost_usd"] = round(cost, 6)
+    for aid, entry in per_agent.items():
+        if aid in skip or not isinstance(entry, dict):
+            continue
+        try:
+            if prompt_price is None:
+                entry["input_cost_usd"] = None
+            else:
+                entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
+            if completion_price is None:
+                entry["output_cost_usd"] = None
+            else:
+                entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
+        except Exception:
+            pass
+
+
+def _totals_from_per_agent(per_agent: dict, prompt_price=None, completion_price=None) -> dict:
+    total_in = 0
+    total_out = 0
+    total_reason = 0
+    try:
+        for v in (per_agent or {}).values():
+            if not isinstance(v, dict):
+                continue
+            try:
+                total_in += int(v.get("prompt_tokens", 0) or 0)
+                total_out += int(v.get("completion_tokens", 0) or 0)
+                total_reason += int(v.get("reasoning_tokens", 0) or 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if any(not isinstance(v.get("cost_usd"), (int, float)) for v in (per_agent or {}).values()):
+        total_cost = None
+    else:
+        try:
+            total_cost = round(sum((v["cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_cost = None
+    if any(not isinstance(v.get("input_cost_usd"), (int, float)) for v in (per_agent or {}).values()):
+        total_input_cost = None
+    else:
+        try:
+            total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_input_cost = None
+    if any(not isinstance(v.get("output_cost_usd"), (int, float)) for v in (per_agent or {}).values()):
+        total_output_cost = None
+    else:
+        try:
+            total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
+        except Exception:
+            total_output_cost = None
+    if not per_agent:
+        if prompt_price is None or completion_price is None:
+            total_cost = None
+            total_input_cost = None
+            total_output_cost = None
+        else:
+            total_cost = 0.0
+            total_input_cost = 0.0
+            total_output_cost = 0.0
+    return {
+        "prompt_tokens": total_in,
+        "completion_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "reasoning_tokens": total_reason,
+        "cost_usd": total_cost,
+        "input_cost_usd": total_input_cost,
+        "output_cost_usd": total_output_cost,
+    }
+
+
+def _build_usage(per_agent: dict, model: str, totals: dict, duration_ms: float,
+                 reused_agents: dict | None = None) -> dict:
+    return {
+        "prompt_tokens": totals["prompt_tokens"],
+        "completion_tokens": totals["completion_tokens"],
+        "total_tokens": totals["total_tokens"],
+        "reasoning_tokens": totals["reasoning_tokens"],
+        "cost_usd": totals["cost_usd"],
+        "input_cost_usd": totals["input_cost_usd"],
+        "output_cost_usd": totals["output_cost_usd"],
+        "duration_ms": duration_ms,
+        "model": model,
+        "per_agent": per_agent,
+        "reused_agents": reused_agents or {},
+    }
+
+
+async def _execute_agents(db: Session, agents: list[Agent], requests: dict, model: str):
+    """Run per-agent payloads concurrently (shared machinery).
+
+    Returns (outputs, per_agent) with costs None; caller prices + totals.
+    Identifier outputs are normalised.
+    """
+    async def _run_one(agent, payload_body):
+        parsed, pt, ct, tt, rt, dur = await _call_single_payload(copy.deepcopy(payload_body))
+        return (agent.id, parsed, pt, ct, tt, rt, dur)
+
+    bodies = [(a, copy.deepcopy(requests[a.id])) for a in agents if a.id in (requests or {})]
+    results = await asyncio.gather(*[_run_one(a, b) for a, b in bodies])
+    agents_by_id = {a.id: a for a in agents}
+    outputs: dict = {}
+    per_agent: dict = {}
+    for aid, parsed, pt, ct, tt, rt, dur in results:
+        agent_row = agents_by_id.get(aid)
+        if agent_row is not None and is_identifier(agent_row):
+            try:
+                cands = identifier_candidates_with_attributes(db, exclude_id=aid)
+                parsed = normalize_identifier_output(parsed, cands)
+            except Exception:
+                pass
+        outputs[aid] = parsed
+        per_agent[aid] = _per_agent_entry(pt, ct, tt, rt, dur, model)
+    return outputs, per_agent
+
+
+def _snapshot_attr_names(snapshot: dict) -> list[str]:
+    try:
+        attrs = (snapshot or {}).get("attributes", [])
+        return [a.get("name", "") for a in attrs if isinstance(a, dict) and isinstance(a.get("name"), str)]
+    except Exception:
+        return []
+
+
+def _consistency_inputs_from_log(log: RunLog):
+    """Derive (identifier_output, outputs, agents_by_id, attrs_by_agent) from a log."""
+    outputs = log.outputs if isinstance(getattr(log, "outputs", None), dict) else {}
+    snaps = log.agent_snapshot if isinstance(getattr(log, "agent_snapshot", None), dict) else {}
+    agents_by_id: dict = {}
+    attrs_by_agent: dict = {}
+    for aid, snap in snaps.items():
+        if not isinstance(snap, dict):
+            continue
+        agents_by_id[str(aid)] = {"name": snap.get("name", "") or "", "kind": snap.get("kind", "") or ""}
+        attrs_by_agent[str(aid)] = _snapshot_attr_names(snap)
+    identifier_agent_id = ""
+    try:
+        cons = getattr(log, "consistency", None) or {}
+        if isinstance(cons, dict) and isinstance(cons.get("identifier_agent_id"), str):
+            identifier_agent_id = cons.get("identifier_agent_id") or ""
+    except Exception:
+        identifier_agent_id = ""
+    if not identifier_agent_id:
+        for aid, info in agents_by_id.items():
+            if info.get("kind") == IDENTIFIER_KIND:
+                identifier_agent_id = str(aid)
+                break
+    identifier_output = outputs.get(identifier_agent_id, {}) if identifier_agent_id else {}
+    return identifier_output, outputs, agents_by_id, attrs_by_agent, identifier_agent_id
 
 
 def _iso_str(value) -> str:
@@ -1121,7 +1574,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                   client=client, meeting_type=meeting_type, meeting_title=meeting_title,
                   reasoning_effort=effort, run_group_id=payload.run_group_id or "",
                   reused_from_log_id=log_reused_id or "",
-                  reused_from_created_at=log_reused_at)
+                  reused_from_created_at=log_reused_at, consistency={})
     db.add(log)
     db.commit()
     db.refresh(log)
@@ -1198,6 +1651,12 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
     filters = copy.deepcopy(source.filters or {})
     requests = copy.deepcopy(source.requests or {})
     try:
+        _reuse_cons = copy.deepcopy(getattr(source, "consistency", None) or {})
+        if not isinstance(_reuse_cons, dict):
+            _reuse_cons = {}
+    except Exception:
+        _reuse_cons = {}
+    try:
         agent_ids = list(agent_snapshot.keys()) if isinstance(agent_snapshot, dict) else []
     except Exception:
         agent_ids = []
@@ -1225,6 +1684,7 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
         run_group_id=payload.run_group_id or "",
         reused_from_log_id=original_id,
         reused_from_created_at=original_created_at,
+        consistency=_reuse_cons,
     )
     db.add(log)
     db.commit()
@@ -1313,6 +1773,294 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
         applied += 1
     db.commit()
     return {"ok": True, "applied": applied, "skipped": skipped}
+
+
+@router.post("/auto")
+async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
+    """Auto Select Agents: run identifier, then its selected extraction agents.
+
+    One log per call (one model). Body is RunCreate minus agent_ids/reuse
+    (those are ignored). Response shape identical to POST /runs.
+    """
+    wall_start = perf_counter()
+    resolved_type, resolved_data, effort, task_title = _resolve_run_input(
+        meeting_id=payload.meeting_id, input_type=payload.input_type,
+        input_data=payload.input_data, reasoning_effort=payload.reasoning_effort)
+    identifier = (
+        db.query(Agent).filter(Agent.kind == IDENTIFIER_KIND)
+        .order_by(Agent.name.asc()).first()
+    )
+    if identifier is None:
+        raise HTTPException(400, "No agent identifier defined")
+    ident_id = identifier.id
+    snapshots_ident, requests_ident = _build_agent_requests(
+        db, agents=[identifier], input_data=resolved_data,
+        model=payload.model, reasoning_effort=effort)
+    ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
+    parsed_ident, ipt, ict, itt, irt, idur = await _call_single_payload(ident_body)
+    if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
+        try:
+            cands = identifier_candidates_with_attributes(db, exclude_id=ident_id)
+            parsed_ident = normalize_identifier_output(parsed_ident, cands)
+        except Exception:
+            pass
+    per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model)
+    ident_errored = not isinstance(parsed_ident, dict) or "_error" in parsed_ident
+    if ident_errored:
+        outputs: dict = {ident_id: parsed_ident}
+        per_agent: dict = {ident_id: per_ident}
+        snapshots = snapshots_ident
+        requests = requests_ident
+        agents = [identifier]
+        agent_ids = [ident_id]
+        consistency = {"score": None, "identifier_agent_id": ident_id, "agents": {}}
+        feedback: dict = {}
+    else:
+        raw_selected = parsed_ident.get("selected_agents", []) if isinstance(parsed_ident, dict) else []
+        selected_names: list[str] = []
+        if isinstance(raw_selected, list):
+            seen_sel: set[str] = set()
+            for n in raw_selected:
+                if not isinstance(n, str) or not n or n in seen_sel:
+                    continue
+                seen_sel.add(n)
+                selected_names.append(n)
+        rows = (
+            db.query(Agent).filter(Agent.name.in_(selected_names)).all()
+            if selected_names else []
+        )
+        by_name: dict[str, Agent] = {}
+        for r in rows:
+            try:
+                if is_identifier(r):
+                    continue
+                if r.name not in by_name:
+                    by_name[r.name] = r
+            except Exception:
+                continue
+        selected_agents: list[Agent] = []
+        for n in selected_names:
+            ag = by_name.get(n)
+            if ag is not None and ag.id not in {a.id for a in selected_agents}:
+                selected_agents.append(ag)
+        if not selected_agents:
+            outputs = {ident_id: parsed_ident}
+            per_agent = {ident_id: per_ident}
+            snapshots = snapshots_ident
+            requests = requests_ident
+            agents = [identifier]
+            agent_ids = [ident_id]
+            # No checked agents -> score None, but still an auto log.
+            agents_by_id0 = {ident_id: identifier}
+            attrs_by_agent0 = {ident_id: []}
+            try:
+                attrs_by_agent0.update({
+                    k: _snapshot_attr_names(v) for k, v in snapshots.items()
+                })
+            except Exception:
+                pass
+            consistency = compute_consistency(parsed_ident, outputs, agents_by_id0, attrs_by_agent0)
+            # Ensure identifier id present even when no extraction agents.
+            try:
+                if not consistency.get("identifier_agent_id"):
+                    consistency["identifier_agent_id"] = ident_id
+            except Exception:
+                pass
+            feedback = apply_auto_feedback({}, consistency)
+        else:
+            snapshots_sel, requests_sel = _build_agent_requests(
+                db, agents=selected_agents, input_data=resolved_data,
+                model=payload.model, reasoning_effort=effort)
+            snapshots = {**snapshots_ident, **snapshots_sel}
+            requests = {**requests_ident, **requests_sel}
+            outputs_sel, per_agent_sel = await _execute_agents(db, selected_agents, requests_sel, payload.model)
+            outputs = {ident_id: parsed_ident, **outputs_sel}
+            per_agent = {ident_id: per_ident, **per_agent_sel}
+            agents = [identifier] + selected_agents
+            agent_ids = [ident_id] + [a.id for a in selected_agents]
+            agents_by_id = {a.id: a for a in agents}
+            attrs_by_agent = {}
+            for aid, snap in snapshots.items():
+                attrs_by_agent[str(aid)] = _snapshot_attr_names(snap)
+            consistency = compute_consistency(parsed_ident, outputs, agents_by_id, attrs_by_agent)
+            feedback = apply_auto_feedback({}, consistency)
+    try:
+        prompt_price, completion_price = await get_model_pricing(payload.model)
+    except Exception:
+        prompt_price, completion_price = None, None
+    _fill_pricing(per_agent, prompt_price, completion_price)
+    totals = _totals_from_per_agent(per_agent, prompt_price, completion_price)
+    wall_ms = (perf_counter() - wall_start) * 1000.0
+    usage = _build_usage(per_agent, payload.model, totals, wall_ms, {})
+    filters = payload.filters if isinstance(payload.filters, dict) else {}
+    client_name = (payload.client or "").strip()
+    meeting_type = (payload.meeting_type or "").strip() or task_title
+    meeting_title = (payload.meeting_title or "").strip() or task_title
+    run = Run(input_type=resolved_type, input_data=resolved_data, model=payload.model,
+              agent_ids=agent_ids, outputs=outputs)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    log = RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
+                  agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback=feedback,
+                  usage=usage, filters=filters, requests=requests,
+                  client=client_name, meeting_type=meeting_type, meeting_title=meeting_title,
+                  reasoning_effort=effort, run_group_id=payload.run_group_id or "",
+                  reused_from_log_id="", reused_from_created_at=None,
+                  consistency=consistency)
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {"id": run.id, "outputs": outputs, "usage": usage, "requests": requests,
+            "log_id": log.id, "run_group_id": log.run_group_id or "", "log": _out(log)}
+
+
+@router.post("/logs/{log_id}/retry-agent")
+async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(get_db)):
+    """Re-run one agent's stored request and patch the same log in place."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    log = db.query(RunLog).filter(RunLog.id == log_id).first()
+    if not log:
+        raise HTTPException(404, "log not found")
+    agent_id = (payload.agent_id or "").strip() if isinstance(payload.agent_id, str) else ""
+    stored_requests = log.requests if isinstance(getattr(log, "requests", None), dict) else {}
+    if not agent_id or not isinstance(stored_requests.get(agent_id), dict):
+        raise HTTPException(400, "agent_id has no stored request")
+    stored_body = copy.deepcopy(stored_requests[agent_id])
+    parsed, pt, ct, tt, rt, dur = await _call_single_payload(stored_body)
+    # Identifier normalisation when the retried agent is the identifier.
+    try:
+        snap_kind = ""
+        snaps = log.agent_snapshot if isinstance(getattr(log, "agent_snapshot", None), dict) else {}
+        snap = snaps.get(agent_id) if isinstance(snaps, dict) else None
+        if isinstance(snap, dict):
+            snap_kind = str(snap.get("kind", "") or "")
+        is_ident = snap_kind == IDENTIFIER_KIND
+        if not snap_kind:
+            row = db.query(Agent).filter(Agent.id == agent_id).first()
+            if row is not None:
+                is_ident = is_identifier(row)
+        if is_ident and isinstance(parsed, dict) and "_error" not in parsed:
+            cands = identifier_candidates_with_attributes(db, exclude_id=agent_id)
+            parsed = normalize_identifier_output(parsed, cands)
+    except Exception:
+        pass
+    outputs = log.outputs if isinstance(getattr(log, "outputs", None), dict) else {}
+    outputs = dict(outputs)
+    outputs[agent_id] = parsed
+    log.outputs = outputs
+    flag_modified(log, "outputs")
+    usage = log.usage if isinstance(getattr(log, "usage", None), dict) else {}
+    usage = copy.deepcopy(usage) if isinstance(usage, dict) else {}
+    per_agent = usage.get("per_agent", {})
+    if not isinstance(per_agent, dict):
+        per_agent = {}
+    else:
+        per_agent = dict(per_agent)
+    try:
+        prompt_price, completion_price = await get_model_pricing(log.model or "")
+    except Exception:
+        prompt_price, completion_price = None, None
+    entry = _per_agent_entry(pt, ct, tt, rt, dur, log.model or "")
+    _fill_pricing({agent_id: entry}, prompt_price, completion_price)
+    # Drop any reused markers on the retried agent.
+    for k in ("reused_from_log_id", "reused_from_created_at"):
+        try:
+            entry.pop(k, None)
+        except Exception:
+            pass
+    per_agent[agent_id] = entry
+    reused_agents = usage.get("reused_agents", {})
+    if isinstance(reused_agents, dict) and agent_id in reused_agents:
+        reused_agents = dict(reused_agents)
+        reused_agents.pop(agent_id, None)
+    else:
+        reused_agents = dict(reused_agents) if isinstance(reused_agents, dict) else {}
+    totals = _totals_from_per_agent(per_agent)
+    old_dur = usage.get("duration_ms", 0)
+    try:
+        new_dur = float(dur)
+        old_f = float(old_dur) if isinstance(old_dur, (int, float)) else 0.0
+        duration_ms = old_f if old_f >= new_dur else new_dur
+    except Exception:
+        duration_ms = dur
+    usage["prompt_tokens"] = totals["prompt_tokens"]
+    usage["completion_tokens"] = totals["completion_tokens"]
+    usage["total_tokens"] = totals["total_tokens"]
+    usage["reasoning_tokens"] = totals["reasoning_tokens"]
+    usage["cost_usd"] = totals["cost_usd"]
+    usage["input_cost_usd"] = totals["input_cost_usd"]
+    usage["output_cost_usd"] = totals["output_cost_usd"]
+    usage["duration_ms"] = duration_ms
+    usage["per_agent"] = per_agent
+    usage["reused_agents"] = reused_agents
+    if "model" not in usage:
+        usage["model"] = log.model or ""
+    log.usage = usage
+    flag_modified(log, "usage")
+    # Clear feedback for the retried agent (it rated the old output).
+    fb = log.feedback if isinstance(getattr(log, "feedback", None), dict) else {}
+    fb = {k: dict(v) if isinstance(v, dict) else {} for k, v in fb.items()} if isinstance(fb, dict) else {}
+    agent_name = ""
+    try:
+        snaps2 = log.agent_snapshot if isinstance(getattr(log, "agent_snapshot", None), dict) else {}
+        s2 = snaps2.get(agent_id) if isinstance(snaps2, dict) else None
+        if isinstance(s2, dict) and isinstance(s2.get("name"), str) and s2.get("name"):
+            agent_name = s2.get("name")
+    except Exception:
+        agent_name = ""
+    if not agent_name:
+        try:
+            row2 = db.query(Agent).filter(Agent.id == agent_id).first()
+            if row2 is not None:
+                agent_name = getattr(row2, "name", "") or ""
+        except Exception:
+            pass
+    if agent_name and agent_name in fb:
+        try:
+            del fb[agent_name]
+        except Exception:
+            pass
+    # Recompute consistency + auto feedback when this is an auto log.
+    try:
+        cons_existing = getattr(log, "consistency", None)
+    except Exception:
+        cons_existing = None
+    if isinstance(cons_existing, dict) and bool(cons_existing):
+        try:
+            ident_out, all_outputs, agents_by_id, attrs_by_agent, _iid = _consistency_inputs_from_log(log)
+            # all_outputs already includes the fresh retry output via log.outputs.
+            new_cons = compute_consistency(ident_out, dict(log.outputs or {}), agents_by_id, attrs_by_agent)
+            # Preserve identifier id when recompute cannot find it.
+            try:
+                if not new_cons.get("identifier_agent_id"):
+                    old_iid = cons_existing.get("identifier_agent_id", "")
+                    if isinstance(old_iid, str) and old_iid:
+                        new_cons["identifier_agent_id"] = old_iid
+            except Exception:
+                pass
+            log.consistency = new_cons
+            flag_modified(log, "consistency")
+            fb = apply_auto_feedback(fb, new_cons)
+        except Exception:
+            pass
+    log.feedback = fb
+    flag_modified(log, "feedback")
+    # Mirror the fresh output onto the Run row.
+    try:
+        run_row = db.query(Run).filter(Run.id == log.run_id).first()
+        if run_row is not None:
+            outs = run_row.outputs if isinstance(getattr(run_row, "outputs", None), dict) else {}
+            outs = dict(outs) if isinstance(outs, dict) else {}
+            outs[agent_id] = parsed
+            run_row.outputs = outs
+            flag_modified(run_row, "outputs")
+    except Exception:
+        pass
+    db.commit()
+    db.refresh(log)
+    return {"log": _out(log)}
 
 
 @router.get("/{run_id}", response_model=RunDetail)
