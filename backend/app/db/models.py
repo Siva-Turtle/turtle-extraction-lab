@@ -111,4 +111,7 @@ class RunLog(Base):
     reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     # Multi-model compare group key ("" on old rows = own id is the group).
     run_group_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="", index=True)
+    # "" = a real model call; otherwise the id of the log whose output was copied.
+    reused_from_log_id: Mapped[str] = mapped_column(String(36), nullable=False, default="", server_default="")
+    reused_from_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

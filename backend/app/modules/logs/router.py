@@ -49,6 +49,13 @@ def _log_date(value) -> str | None:
 
 
 def _out(r: RunLog) -> dict:
+    reused_at = getattr(r, "reused_from_created_at", None)
+    if isinstance(reused_at, datetime):
+        reused_at_out = reused_at.isoformat()
+    elif isinstance(reused_at, str):
+        reused_at_out = reused_at or None
+    else:
+        reused_at_out = None
     return {"id": r.id, "run_id": r.run_id, "input_type": r.input_type, "input_data": r.input_data,
             "model": r.model,
             "agent_snapshot": r.agent_snapshot or {}, "attribute_snapshot": r.attribute_snapshot or {},
@@ -61,6 +68,8 @@ def _out(r: RunLog) -> dict:
             "meeting_title": getattr(r, "meeting_title", None) or "",
             "reasoning_effort": getattr(r, "reasoning_effort", None) or "",
             "run_group_id": getattr(r, "run_group_id", None) or "",
+            "reused_from_log_id": getattr(r, "reused_from_log_id", None) or "",
+            "reused_from_created_at": reused_at_out,
             "created_at": r.created_at}
 
 

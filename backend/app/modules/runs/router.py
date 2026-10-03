@@ -11,7 +11,7 @@ from app.modules.logs.router import _out
 from app.modules.meetings.router import get_scrubbed_transcript
 from app.modules.runs.schemas import (
     BatchFeedbackIn, CheckExistingIn, CheckExistingOut,
-    FeedbackCreate, FeedbackOut, RunCreate, RunDetail, RunOut,
+    FeedbackCreate, FeedbackOut, ReuseRunIn, RunCreate, RunDetail, RunOut,
 )
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -670,6 +670,57 @@ def _cell_is_rated(fb: dict, agent_name: str, attribute_name: str) -> bool:
     cell = _cell_existing(fb, agent_name or "agent", attribute_name or "attribute")
     rating = cell.get("rating", "")
     return isinstance(rating, str) and bool(rating.strip())
+
+
+@router.post("/reuse")
+def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
+    source = db.query(RunLog).filter(RunLog.id == payload.log_id).first()
+    if not source:
+        raise HTTPException(404, "log not found")
+    # If the source itself is a reuse, point at the ORIGINAL source.
+    original_id = getattr(source, "reused_from_log_id", None) or source.id
+    original_created_at = getattr(source, "reused_from_created_at", None) or source.created_at
+    agent_snapshot = copy.deepcopy(source.agent_snapshot or {})
+    attribute_snapshot = copy.deepcopy(source.attribute_snapshot or {})
+    outputs = copy.deepcopy(source.outputs or {})
+    usage = copy.deepcopy(source.usage or {})
+    filters = copy.deepcopy(source.filters or {})
+    requests = copy.deepcopy(source.requests or {})
+    try:
+        agent_ids = list(agent_snapshot.keys()) if isinstance(agent_snapshot, dict) else []
+    except Exception:
+        agent_ids = []
+    run = Run(input_type=source.input_type or "", input_data=source.input_data or "",
+              model=source.model or "", agent_ids=agent_ids, outputs=outputs)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    log = RunLog(
+        run_id=run.id,
+        input_type=source.input_type or "",
+        input_data=source.input_data or "",
+        model=source.model or "",
+        agent_snapshot=agent_snapshot,
+        attribute_snapshot=attribute_snapshot,
+        outputs=outputs,
+        feedback={},
+        usage=usage,
+        filters=filters,
+        requests=requests,
+        client=getattr(source, "client", None) or "",
+        meeting_type=getattr(source, "meeting_type", None) or "",
+        meeting_title=getattr(source, "meeting_title", None) or "",
+        reasoning_effort=getattr(source, "reasoning_effort", None) or "",
+        run_group_id=payload.run_group_id or "",
+        reused_from_log_id=original_id,
+        reused_from_created_at=original_created_at,
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {"id": run.id, "outputs": log.outputs or {}, "usage": log.usage or {},
+            "requests": log.requests or {}, "log_id": log.id,
+            "run_group_id": log.run_group_id or "", "log": _out(log)}
 
 
 @router.post("/check-existing", response_model=CheckExistingOut)

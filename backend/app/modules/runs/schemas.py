@@ -101,6 +101,24 @@ class CheckExistingOut(BaseModel):
     matches: list[CheckExistingMatch] = Field(default_factory=list)
 
 
+class ReuseRunIn(BaseModel):
+    log_id: str = ""
+    run_group_id: str = ""
+
+    @field_validator("run_group_id", mode="before")
+    @classmethod
+    def _coerce_run_group_id(cls, v):
+        import re
+        if not isinstance(v, str):
+            return ""
+        s = v.strip()
+        if not s:
+            return ""
+        if not re.fullmatch(r"[0-9a-f]{32}", s):
+            raise ValueError("run_group_id must be 32 lowercase hex chars")
+        return s
+
+
 class RunOut(BaseModel):
     id: str
     input_type: str

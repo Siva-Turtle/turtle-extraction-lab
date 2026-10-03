@@ -594,3 +594,81 @@ def test_check_existing_all_errored_no_match(client, monkeypatch):
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _must_not_run)
     assert _check(client, aid, "m", input_data="hello") == {"matches": []}
+
+
+def test_reuse_creates_new_row(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    run = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()
+    log_id = run["log_id"]
+
+    # Normal rows carry "" / null reuse markers.
+    logs = client.get("/api/v1/logs").json()
+    assert len(logs) == 1
+    assert logs[0]["reused_from_log_id"] == ""
+    assert logs[0]["reused_from_created_at"] is None
+
+    gid = "d" * 32
+
+    async def _boom(payload):
+        raise AssertionError("reuse must not call OpenRouter")
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
+    reused = client.post("/api/v1/runs/reuse", json={
+        "log_id": log_id, "run_group_id": gid}).json()
+    assert reused["log_id"] != log_id
+    assert reused["id"] != run["id"]
+    assert reused["outputs"] == run["outputs"]
+    assert reused["usage"] == run["usage"]
+    assert reused["requests"] == run["requests"]
+    assert reused["run_group_id"] == gid
+    assert reused["log"]["id"] == reused["log_id"]
+    assert reused["log"]["run_group_id"] == gid
+    assert reused["log"]["reused_from_log_id"] == log_id
+    assert reused["log"]["feedback"] == {}
+    assert reused["log"]["reused_from_created_at"] is not None
+
+    # Copied snapshots match the source.
+    assert reused["log"]["input_type"] == run["log"]["input_type"]
+    assert reused["log"]["input_data"] == run["log"]["input_data"]
+    assert reused["log"]["model"] == run["log"]["model"]
+
+    logs = client.get("/api/v1/logs").json()
+    assert len(logs) == 2
+    by_id = {l["id"]: l for l in logs}
+    assert by_id[log_id]["reused_from_log_id"] == ""
+    assert by_id[log_id]["reused_from_created_at"] is None
+    assert by_id[reused["log_id"]]["reused_from_log_id"] == log_id
+
+
+def test_reuse_of_reused_points_at_original(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    run = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()
+    first = client.post("/api/v1/runs/reuse", json={
+        "log_id": run["log_id"], "run_group_id": "e" * 32}).json()
+    second = client.post("/api/v1/runs/reuse", json={
+        "log_id": first["log_id"], "run_group_id": "f" * 32}).json()
+    assert second["log_id"] != first["log_id"]
+    assert second["log"]["reused_from_log_id"] == run["log_id"]
+    assert second["log"]["reused_from_created_at"] == first["log"]["reused_from_created_at"]
+    assert second["run_group_id"] == "f" * 32
+
+
+def test_reuse_unknown_log_404(client):
+    resp = client.post("/api/v1/runs/reuse", json={
+        "log_id": "missing", "run_group_id": "d" * 32})
+    assert resp.status_code == 404
+
+
+def test_reuse_bad_group_id_422(client, monkeypatch):
+    aid = _setup(client, monkeypatch)
+    log_id = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "mail me at a@b.in",
+        "agent_ids": [aid], "model": "test-model"}).json()["log_id"]
+    assert client.post("/api/v1/runs/reuse", json={
+        "log_id": log_id, "run_group_id": "not-hex"}).status_code == 422
+    assert client.post("/api/v1/runs/reuse", json={
+        "log_id": log_id, "run_group_id": "ABC"}).status_code == 422

@@ -209,8 +209,12 @@ def test_logs_group_fields_default_empty(client):
     logs = client.get("/api/v1/logs").json()
     assert len(logs) == 1
     assert logs[0]["run_group_id"] == ""
+    assert logs[0]["reused_from_log_id"] == ""
+    assert logs[0]["reused_from_created_at"] is None
     detail = client.get(f"/api/v1/logs/{logs[0]['id']}").json()
     assert detail["run_group_id"] == ""
+    assert detail["reused_from_log_id"] == ""
+    assert detail["reused_from_created_at"] is None
 
 
 def test_logs_filter_by_run_group_ids(client):
