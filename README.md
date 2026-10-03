@@ -88,6 +88,27 @@ npm install
 npm run dev
 ```
 
+## Auto Select Agents
+
+`POST /runs/auto` runs the Agent Identifier (11 fixed yes/no questions about
+the CLIENT's own situation) then deterministic routing (`plan_auto_agents`):
+
+- `has_assets` → `asset`, `has_accounts` → `account`, `expenses` → `expense`,
+  `goals` → `goal`, `income` → `income`, `liabilities` → `liability` (all attrs).
+- `credit_cards` → `basic_info` Banking, `employment_changed` → Employment,
+  `alumni` → Education / Alumni (subset, DB order).
+- `insurance` → `tax_and_insurance` Insurance only; `tax` → Tax + Tax / Compliance;
+  both → all attributes.
+- Always-run (unscored): `behavioral`, `query`, `kc_and_feedback`
+  (without Karma Conversation group unless the meeting is a Karma Conversation).
+- Meeting-type rules (case-insensitive on `meeting_type`): Karma Conversation
+  runs `kc_and_feedback` full + `basic_info` full; Kick-off (`kick-off` /
+  `kickoff` / `kick off`) runs `basic_info` full.
+
+Consistency v2 is agent-level (`hit` / `miss` / `not_scored` / `error`,
+score = hits / (hits + misses)); misses get an auto thumbs-down on the agent
+(`feedback[agent]["__agent__"]`). Old logs (no `version`) keep the old rendering.
+
 ## Tests
 
 From `backend/`:

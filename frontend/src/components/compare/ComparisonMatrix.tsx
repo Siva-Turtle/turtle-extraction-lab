@@ -381,6 +381,41 @@ export function ComparisonMatrix({
               const agreeLabel = agentAgreementLabel(totalRows);
               if (agentRows.length === 0) return null;
               const isCollapsed = collapsed.has(agent.id);
+              // v2 auto entries + __agent__ feedback per column (never a fake row).
+              const v2Badges: { key: string; label: string; title: string; auto: boolean }[] = [];
+              for (const col of columns) {
+                const log = col.log;
+                if (!log) continue;
+                const cons = (log.consistency ?? {}) as {
+                  version?: unknown;
+                  agents?: Record<string, { status?: unknown; reasons?: unknown }>;
+                };
+                if (cons?.version !== 2) continue;
+                const entry = cons.agents?.[agent.id];
+                if (!entry || typeof entry !== "object") continue;
+                const status = typeof entry.status === "string" ? entry.status : "";
+                const reasons = Array.isArray(entry.reasons)
+                  ? (entry.reasons as unknown[]).filter((x): x is string => typeof x === "string")
+                  : [];
+                if (!status) continue;
+                const short = status === "not_scored" && reasons.includes("always") ? "always" : status;
+                let title = reasons.length > 0 ? `${short} · ${reasons.join(", ")}` : short;
+                let auto = false;
+                try {
+                  const fb = (log.feedback ?? {}) as Record<string, unknown>;
+                  const byAgent = fb[agent.name] as Record<string, unknown> | undefined;
+                  const cell = byAgent?.["__agent__"] as { remarks?: unknown; auto?: unknown } | undefined;
+                  if (cell && typeof cell === "object" && cell.auto === true) {
+                    auto = status === "miss";
+                    if (typeof cell.remarks === "string" && cell.remarks.trim() !== "") {
+                      title = cell.remarks;
+                    }
+                  }
+                } catch {
+                  // ignore
+                }
+                v2Badges.push({ key: col.key, label: short, title, auto });
+              }
               return (
                 <React.Fragment key={agent.id}>
                   <tr>
@@ -392,13 +427,23 @@ export function ComparisonMatrix({
                         type="button"
                         onClick={() => toggleAgent(agent.id)}
                         aria-expanded={!isCollapsed}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left font-heading text-xs font-bold text-[#1d1d1d] hover:text-[#0d5c4a] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#F0EFEC]"
+                        className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left font-heading text-xs font-bold text-[#1d1d1d] hover:text-[#0d5c4a] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#F0EFEC]"
                       >
                         <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
                         <span className="truncate">
                           {agent.name} · {totalRows.length} attrs · {agreeLabel} agreement ·{" "}
                           {emptyCount} empty everywhere
                         </span>
+                        {v2Badges.map((b) => (
+                          <span
+                            key={b.key}
+                            title={b.title}
+                            className="inline-flex items-center gap-1 rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold normal-case text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+                          >
+                            {b.auto && <span aria-hidden="true">👎</span>}
+                            {b.label}
+                          </span>
+                        ))}
                       </button>
                     </td>
                   </tr>

@@ -123,6 +123,7 @@ class CheckExistingAutoSlot(BaseModel):
     model: str
     reasoning_effort: str = ""
     log: dict | None = None
+    agents: list[CheckExistingAgentEntry] = Field(default_factory=list)
 
 
 class CheckExistingAutoOut(BaseModel):

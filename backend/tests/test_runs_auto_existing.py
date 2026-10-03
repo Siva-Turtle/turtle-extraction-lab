@@ -1,20 +1,23 @@
-"""Auto existing check + auto reuse (spec-be-auto-existing)."""
+"""Auto existing check + auto reuse (v2)."""
 
 import app.modules.runs.router as runs_router
-from app.modules.runs.router import AUTO_REMARK_MISSED, AUTO_REMARK_UNEXPECTED
+from app.modules.runs.router import IDENTIFIER_QUESTIONS
 
 
 async def _known_pricing(model):
     return (0.000001, 0.000002)
 
 
-def _make_extraction(client, name, attrs):
+def _make_extraction(client, name, attrs, groups=None):
     aid = client.post(
         "/api/v1/agents",
         json={"name": name, "system_instruction": f"sys-{name}"}).json()["id"]
-    for attr in attrs:
+    for i, attr in enumerate(attrs):
+        g = ""
+        if groups and i < len(groups):
+            g = groups[i]
         client.post("/api/v1/attributes", json={
-            "agent_ids": [aid], "name": attr})
+            "agent_ids": [aid], "name": attr, "group": g})
     return aid
 
 
@@ -29,11 +32,19 @@ def _filled(value, ctype="quoted"):
             "confidence_type": ctype, "evidence": "e"}
 
 
+def _empty():
+    return {"value": None, "confidence": 0.0,
+            "confidence_type": "not_found", "evidence": ""}
+
+
 def _setup_auto_agents(client):
-    e1 = _make_extraction(client, "auto_e1", ["email", "phone"])
-    e2 = _make_extraction(client, "auto_e2", ["city", "country"])
+    beh = _make_extraction(client, "behavioral", ["b_attr"])
+    qry = _make_extraction(client, "query", ["q_attr"])
+    kc = _make_extraction(client, "kc_and_feedback",
+                          ["kc_karma", "kc_fb"],
+                          groups=["Karma Conversation", "Feedback"])
     ident = _make_identifier(client)
-    return ident, e1, e2
+    return ident, beh, qry, kc
 
 
 def _auto_route():
@@ -41,40 +52,38 @@ def _auto_route():
         rf = payload.get("response_format", {})
         js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
         if isinstance(js, dict) and js.get("name") == "agent_selection":
-            return ({
-                "fillable_attributes": [
-                    {"agent": "auto_e1", "attributes": ["email"]},
-                    {"agent": "auto_e2", "attributes": ["city", "country"]},
-                ],
-                "selected_agents": ["auto_e1", "auto_e2"]},
-                {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
         schema = {}
         try:
             schema = js.get("schema", {})
         except Exception:
             schema = {}
         required = schema.get("required", []) if isinstance(schema, dict) else []
-        if "email" in required:
-            return ({"email": _filled("a@b.in"), "phone": _filled("999")},
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        return ({"city": _filled("Pune"),
-                 "country": {"value": None, "confidence": 0.0,
-                             "confidence_type": "not_found", "evidence": ""}},
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        return ({"kc_fb": _filled("z")},
                 {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30})
     return _route
 
 
-def _run_auto(client, model="m", effort="", input_data="hello"):
+def _run_auto(client, model="m", effort="", input_data="hello", meeting_type=""):
     body = {"input_type": "mail", "input_data": input_data,
-            "agent_ids": ["ignored"], "model": model}
+            "agent_ids": ["ignored"], "model": model,
+            "meeting_type": meeting_type}
     if effort:
         body["reasoning_effort"] = effort
     return client.post("/api/v1/runs/auto", json=body).json()
 
 
-def _check_auto(client, model="m", effort="", input_data="hello"):
+def _check_auto(client, model="m", effort="", input_data="hello", meeting_type=""):
     body = {"input_type": "mail", "input_data": input_data,
             "agent_ids": ["ignored-too"],
+            "meeting_type": meeting_type,
             "models": [{"model": model, "reasoning_effort": effort}]}
     resp = client.post("/api/v1/runs/check-existing-auto", json=body)
     assert resp.status_code == 200, resp.text
@@ -89,10 +98,12 @@ def test_auto_consistency_always_marked(client, monkeypatch):
     body = _run_auto(client)
     cons = body["log"]["consistency"]
     assert cons["auto"] is True
+    assert cons["version"] == 2
     assert cons["identifier_agent_id"]
-    assert cons["score"] == 0.5
+    # No scored agents -> score None.
+    assert cons["score"] is None
+    assert set(cons["agents"]) != set()
 
-    # Non-auto logs keep consistency {}.
     logs = client.get("/api/v1/logs").json()
     assert len(logs) == 1
     manual_aid = client.post(
@@ -107,19 +118,47 @@ def test_auto_consistency_always_marked(client, monkeypatch):
 
 def test_auto_identifier_error_still_marked(client, monkeypatch):
     ident = _make_identifier(client)
-    _make_extraction(client, "err_e1", ["email"])
+    _make_extraction(client, "behavioral", ["b_attr"])
+    _make_extraction(client, "query", ["q_attr"])
+    _make_extraction(client, "kc_and_feedback", ["kc_fb"])
 
     async def _fail(payload):
-        raise RuntimeError("provider down")
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            raise RuntimeError("provider down")
+        return ({"b_attr": _filled("x")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
-    monkeypatch.setattr(runs_router, "complete_json_payload", _fail)
+    # Need a route that handles all always-run attrs.
+    async def _fail2(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            raise RuntimeError("provider down")
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc_fb": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _fail2)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     body = _run_auto(client)
     cons = body["log"]["consistency"]
     assert cons["auto"] is True
+    assert cons["version"] == 2
     assert cons["identifier_agent_id"] == ident
     assert cons["score"] is None
-    assert cons["agents"] == {}
 
 
 def test_check_existing_auto_found(client, monkeypatch):
@@ -141,8 +180,28 @@ def test_check_existing_auto_found(client, monkeypatch):
     assert slot["log"] is not None
     assert slot["log"]["id"] == created["log_id"]
     assert slot["log"]["consistency"]["auto"] is True
-    # Nothing written.
     assert client.get("/api/v1/logs").json() == before
+
+
+def test_check_existing_auto_returns_always_agents(client, monkeypatch):
+    ident, beh, qry, kc = _setup_auto_agents(client)
+    monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+    _run_auto(client)
+
+    async def _boom(payload):
+        raise AssertionError("must not call OpenRouter")
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
+    data = _check_auto(client)
+    slot = data["slots"][0]
+    assert slot["log"] is not None
+    by_id = {a["agent_id"]: a for a in slot["agents"]}
+    assert set(by_id) == {beh, qry, kc}
+    for entry in slot["agents"]:
+        assert entry["log_id"]
+        assert entry["agent_name"]
+        assert "created_at" in entry
 
 
 def test_check_existing_auto_different_effort_no_match(client, monkeypatch):
@@ -161,7 +220,8 @@ def test_check_existing_auto_different_effort_no_match(client, monkeypatch):
 
 
 def test_check_existing_auto_changed_identifier_prompt_no_match(client, monkeypatch):
-    ident, _, _ = _setup_auto_agents(client)
+    # Identifier prompt is code-owned; changing DB instruction must NOT break matching.
+    ident, _, _, _ = _setup_auto_agents(client)
     monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     _run_auto(client)
@@ -172,7 +232,8 @@ def test_check_existing_auto_changed_identifier_prompt_no_match(client, monkeypa
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
     client.patch(f"/api/v1/agents/{ident}", json={"system_instruction": "changed"})
-    assert _check_auto(client)["slots"][0]["log"] is None
+    # Code-owned prompt ignores DB instruction -> still matches.
+    assert _check_auto(client)["slots"][0]["log"] is not None
 
 
 def test_check_existing_auto_ignores_non_auto_log(client, monkeypatch):
@@ -196,10 +257,8 @@ def test_check_existing_auto_ignores_non_auto_log(client, monkeypatch):
         raise AssertionError("must not call OpenRouter")
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
-    # Same input data / model, but only a manual log exists -> no match.
     assert _check_auto(client)["slots"][0]["log"] is None
 
-    # After a real auto run with the same data, the auto log is found.
     monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
     created = _run_auto(client)
     monkeypatch.setattr(runs_router, "complete_json_payload", _boom)
@@ -210,10 +269,29 @@ def test_check_existing_auto_ignores_non_auto_log(client, monkeypatch):
 
 def test_check_existing_auto_ignores_identifier_error(client, monkeypatch):
     _make_identifier(client)
-    _make_extraction(client, "err_e1", ["email"])
+    _make_extraction(client, "behavioral", ["b_attr"])
+    _make_extraction(client, "query", ["q_attr"])
+    _make_extraction(client, "kc_and_feedback", ["kc"])
 
     async def _fail(payload):
-        raise RuntimeError("provider down")
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            raise RuntimeError("provider down")
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _fail)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
@@ -229,25 +307,51 @@ def test_check_existing_auto_ignores_identifier_error(client, monkeypatch):
 
 def test_reuse_auto_copies_consistency_and_only_auto_feedback(client, monkeypatch):
     _setup_auto_agents(client)
-    monkeypatch.setattr(runs_router, "complete_json_payload", _auto_route())
+
+    # Route where asset misses (to get a __agent__ auto entry).
+    _make_extraction(client, "asset", ["holding"])
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            out["has_assets"] = True
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "holding" in required:
+            return ({"holding": _empty()},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc_fb": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     body = _run_auto(client)
     run_id = body["id"]
     log_id = body["log_id"]
-    assert body["log"]["feedback"]["auto_e1"]["phone"]["auto"] is True
-    assert body["log"]["feedback"]["auto_e2"]["country"]["auto"] is True
+    assert body["log"]["feedback"]["asset"]["__agent__"]["auto"] is True
 
-    # Manual rating REPLACES one auto entry (drops "auto").
+    # Manual rating on __agent__ replaces auto (drops "auto").
     assert client.post(f"/api/v1/runs/{run_id}/feedback", json={
-        "agent_name": "auto_e1", "attribute_name": "phone",
+        "agent_name": "asset", "attribute_name": "__agent__",
         "rating": "up", "remarks": "human says ok"}).json() == {"ok": True}
     logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
     src = logs[run_id]
-    assert src["feedback"]["auto_e1"]["phone"] == {
+    assert src["feedback"]["asset"]["__agent__"] == {
         "rating": "up", "remarks": "human says ok"}
-    assert "auto" not in src["feedback"]["auto_e1"]["phone"]
-    assert src["feedback"]["auto_e2"]["country"] == {
-        "rating": "down", "remarks": AUTO_REMARK_MISSED, "auto": True}
+    assert "auto" not in src["feedback"]["asset"]["__agent__"]
 
     async def _boom(payload):
         raise AssertionError("reuse must not call OpenRouter")
@@ -259,9 +363,7 @@ def test_reuse_auto_copies_consistency_and_only_auto_feedback(client, monkeypatc
     assert reused["log"]["consistency"]["auto"] is True
     fb = reused["log"]["feedback"]
     # Only auto entries copied; manual rating left behind.
-    assert "auto_e1" not in fb
-    assert fb == {"auto_e2": {"country": {
-        "rating": "down", "remarks": AUTO_REMARK_MISSED, "auto": True}}}
+    assert fb == {}
 
 
 def test_reuse_non_auto_feedback_starts_empty(client, monkeypatch):

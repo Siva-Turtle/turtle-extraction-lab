@@ -45,9 +45,10 @@ function stripAgentIds(payload: Record<string, unknown>): Record<string, unknown
 /**
  * Fire one `POST /runs` (or `/runs/auto`) per model slot sharing a
  * `run_group_id`, all at once. Columns stay in picker order and fill in as
- * each call settles. Pass `{ reuse }` for per-agent reuse (non-auto only);
- * pass `{ auto: true }` to post `/runs/auto` per slot (payload minus
- * agent_ids). Pass `{ auto: true, reuseLogs }` (slotKey -> log_id) to POST
+ * each call settles. Pass `{ reuse }` for per-agent reuse (slotKey ->
+ * agent_id -> log_id, both manual and auto); pass `{ auto: true }` to post
+ * `/runs/auto` per slot (payload minus agent_ids, plus `reuse` for that
+ * slot). Pass `{ auto: true, reuseLogs }` (slotKey -> log_id) to POST
  * `/runs/reuse` for those columns instead of `/runs/auto`; `retry()` always
  * re-posts `/runs/auto` (fresh). Single-model runs use the same path.
  */
@@ -117,7 +118,7 @@ export function useMultiRun(): {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
     const auto = opts?.auto === true;
-    const reuse = auto ? {} : (opts?.reuse ?? {});
+    const reuse = opts?.reuse ?? {};
     // SlotKey -> log_id, only honoured when auto is true. Cleaned defensively.
     const reuseLogs: Record<string, string> = {};
     if (auto && opts?.reuseLogs && typeof opts.reuseLogs === "object") {
@@ -174,6 +175,7 @@ export function useMultiRun(): {
             model: col.model,
             reasoning_effort: col.effort,
             run_group_id: gid,
+            reuse: reuseForColumn[col.key] ?? {},
           }
         : {
             ...basePayload,

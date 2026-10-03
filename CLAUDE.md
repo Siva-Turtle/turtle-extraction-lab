@@ -3,7 +3,7 @@
 ## Instructions:
 1. Always pull the latest repo from GitHub at the start of the session
 2. After every response/output, pull-commit-and-push the repo back to GitHub.
-3. You are only the delegator -> Always delegate tasks to OpenCode sub agent (muse spark 1.3 xhigh free model). If an OpenCode run fails or times out, start another OpenCode run; never make the edit yourself unless Siva explicitly asks you to. ALWAYS use subagents to execute all edits — you only create, delegate and manage tasks, never edit files yourself unless Siva explicitly asks in that message (persists across sessions).
+3. You are only the delegator -> delegate to the OpenCode sub-agent using `opencode/muse-spark-1.3-contributor-free` (--variant xhigh) first; only when that run hits a rate limit, re-run the task on OpenCode's normal model `opencode-go/muse-spark-1.3-contributor`; the free model may have hourly limits, so try the free model again on the next task. Always OpenCode only. If an OpenCode run fails or times out, start another OpenCode run; never make the edit yourself unless Siva explicitly asks you to. ALWAYS use subagents to execute all edits — you only create, delegate and manage tasks, never edit files yourself unless Siva explicitly asks in that message (persists across sessions).
 4. Always commit and push on the `master` branch. Do not create or push to feature branches.
 5. Before delegating to OpenCode or starting the test server, read [docs/agent-guide-actions-opencode.md](docs/agent-guide-actions-opencode.md) in turtle-crm (same pattern applies here until this repo has its own).
 6. Never start a test server unless Siva explicitly asks for it in that message.

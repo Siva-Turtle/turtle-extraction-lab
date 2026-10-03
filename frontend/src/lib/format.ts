@@ -43,7 +43,7 @@ export function fmtCostBoth(cost: unknown): string {
   return `${fmtCost(cost)} (₹${(cost * USD_TO_INR).toFixed(2)})`;
 }
 
-/** Identifier-kind output shape: {selected_agents: string[]}. Null when not identifier. */
+/** Identifier-kind output shape (old): {selected_agents: string[]}. Null when not old. */
 export function selectedAgentsOf(out: unknown): string[] | null {
   if (!out || typeof out !== "object" || Array.isArray(out)) return null;
   const v = (out as Record<string, unknown>).selected_agents;
@@ -52,6 +52,53 @@ export function selectedAgentsOf(out: unknown): string[] | null {
     .filter((x): x is string => typeof x === "string")
     .map((s) => s.trim())
     .filter((s) => s !== "");
+}
+
+/** Fixed 11 identifier question keys (v2 routing). */
+export const IDENTIFIER_QUESTION_KEYS = [
+  "has_assets",
+  "has_accounts",
+  "credit_cards",
+  "employment_changed",
+  "alumni",
+  "expenses",
+  "goals",
+  "income",
+  "insurance",
+  "liabilities",
+  "tax",
+] as const;
+
+/** New identifier answers: {key: bool}. Null when not a v2 answer object. */
+export function identifierAnswersOf(out: unknown): Record<string, boolean> | null {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return null;
+  const rec = out as Record<string, unknown>;
+  if ("selected_agents" in rec || "fillable_attributes" in rec) return null;
+  if ("_error" in rec) return null;
+  let found = false;
+  const ans: Record<string, boolean> = {};
+  for (const k of IDENTIFIER_QUESTION_KEYS) {
+    const v = rec[k];
+    if (typeof v === "boolean") {
+      ans[k] = v;
+      found = true;
+    } else if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (s === "true") {
+        ans[k] = true;
+        found = true;
+      } else if (s === "false") {
+        ans[k] = false;
+        found = true;
+      }
+    }
+  }
+  if (!found) return null;
+  // Fill missing keys as false for stable rendering.
+  for (const k of IDENTIFIER_QUESTION_KEYS) {
+    if (!(k in ans)) ans[k] = false;
+  }
+  return ans;
 }
 
 /**

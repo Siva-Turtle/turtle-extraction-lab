@@ -8,16 +8,33 @@ export type FeedbackMap = Record<string, Record<string, FeedbackEntry>>;
 
 export type ConsistencyAgent = {
   agent_name: string;
-  predicted: string[];
+  // v1 (old logs): predicted / missed / unexpected.
+  predicted?: string[];
+  missed?: string[];
+  unexpected?: string[];
+  // v2.
+  reasons?: string[];
+  scored?: boolean;
+  status?: "hit" | "miss" | "not_scored" | "error";
   extracted: string[];
-  missed: string[];
-  unexpected: string[];
-  score: number;
+  score: number | null;
+};
+
+export type ConsistencyPlanEntry = {
+  agent_id: string;
+  agent_name: string;
+  reasons: string[];
+  scored: boolean;
+  attributes: string[];
 };
 
 export type Consistency = {
+  auto?: boolean;
+  version?: number;
   score: number | null;
   identifier_agent_id?: string;
+  answers?: Record<string, boolean>;
+  plan?: ConsistencyPlanEntry[];
   agents: Record<string, ConsistencyAgent>;
 };
 

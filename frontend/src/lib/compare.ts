@@ -467,47 +467,35 @@ function identifierCandidates(agent: CompareAgent, columns: CompareColumn[]): st
   return order;
 }
 
-function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): CompareRow[] {
-  const rows: CompareRow[] = [];
-  // Keep the raw selected_agents row (array Jaccard via similarity).
-  const selCells: Record<string, CellState> = {};
-  for (const col of columns) {
-    const log = col.log;
-    if (!log || (col.status !== "done" && col.status !== "partial")) {
-      selCells[col.key] = {
-        value: undefined,
-        canon: PENDING_CANON,
-        error: col.error,
-        feedback: null,
-      };
-      continue;
-    }
-    if (!hasAgentOutput(log, agent.id, agent.name)) {
-      selCells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
-      continue;
-    }
-    const out = agentOutput(log, agent.id, agent.name);
-    const agentErr = hasAgentError(out);
-    if (agentErr !== null) {
-      selCells[col.key] = { value: undefined, canon: ERROR_CANON, error: agentErr, feedback: null };
-      continue;
-    }
-    const part = extractCell(out, agent.kind, "selected_agents");
-    const canon = canonicalKey(part.value);
-    const lookupName = columnAgentName(log, agent.id, agent.name);
-    selCells[col.key] = {
-      value: part.value,
-      confidence: part.confidence,
-      confidenceType: part.confidenceType,
-      evidence: part.evidence,
-      canon,
-      feedback: cellFeedback(log, lookupName, "selected_agents"),
-    };
-  }
-  rows.push(finalizeRow(agent.id, agent.name, "selected_agents", undefined, selCells, columns));
+/** Fixed 11 question keys for v2 identifier answers. */
+const IDENTIFIER_QUESTION_KEYS = [
+  "has_assets",
+  "has_accounts",
+  "credit_cards",
+  "employment_changed",
+  "alumni",
+  "expenses",
+  "goals",
+  "income",
+  "insurance",
+  "liabilities",
+  "tax",
+];
 
-  const candidates = identifierCandidates(agent, columns);
-  for (const cand of candidates) {
+function hasNewIdentifierAnswers(out: unknown): boolean {
+  if (!out || typeof out !== "object" || Array.isArray(out)) return false;
+  const rec = out as Record<string, unknown>;
+  if ("selected_agents" in rec || "fillable_attributes" in rec) return false;
+  if ("_error" in rec) return false;
+  return IDENTIFIER_QUESTION_KEYS.some((k) => typeof rec[k] === "boolean");
+}
+
+function buildIdentifierQuestionRows(
+  agent: CompareAgent,
+  columns: CompareColumn[],
+): CompareRow[] {
+  const rows: CompareRow[] = [];
+  for (const qkey of IDENTIFIER_QUESTION_KEYS) {
     const cells: Record<string, CellState> = {};
     for (const col of columns) {
       const log = col.log;
@@ -530,18 +518,121 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
         cells[col.key] = { value: undefined, canon: ERROR_CANON, error: agentErr, feedback: null };
         continue;
       }
-      const lookupName = columnAgentName(log, agent.id, agent.name);
-      const feedback = cellFeedback(log, lookupName, cand);
-      const sel = selectedListOf(out);
-      if (!sel || !sel.includes(cand)) {
-        cells[col.key] = { value: undefined, canon: NOT_FOUND_CANON, feedback };
+      if (!hasNewIdentifierAnswers(out)) {
+        cells[col.key] = { value: undefined, canon: NOT_FOUND_CANON, feedback: null };
         continue;
       }
-      const fmap = fillableMapOf(out);
-      const list = fmap[cand] ?? [];
-      cells[col.key] = { value: list, canon: canonicalKey(list), feedback };
+      const rec = out as Record<string, unknown>;
+      const v = rec[qkey];
+      const boolVal = v === true ? true : v === false ? false : undefined;
+      const canon = boolVal === undefined ? NOT_FOUND_CANON : canonicalKey(boolVal);
+      cells[col.key] = { value: boolVal, canon, feedback: null };
     }
-    rows.push(finalizeRow(agent.id, agent.name, cand, undefined, cells, columns));
+    rows.push(finalizeRow(agent.id, agent.name, qkey, "boolean", cells, columns));
+  }
+  return rows;
+}
+
+function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): CompareRow[] {
+  const rows: CompareRow[] = [];
+  let anyOld = false;
+  let anyNew = false;
+  for (const col of columns) {
+    const log = col.log;
+    if (!log || (col.status !== "done" && col.status !== "partial")) continue;
+    const out = agentOutput(log, agent.id, agent.name);
+    if (hasAgentError(out) !== null) continue;
+    if (selectedListOf(out) !== null) anyOld = true;
+    else if (hasNewIdentifierAnswers(out)) anyNew = true;
+    else {
+      // Fallback: old logs without selection? Treat as old to keep rendering.
+      if (out && typeof out === "object" && "fillable_attributes" in (out as Record<string, unknown>)) {
+        anyOld = true;
+      }
+    }
+  }
+  // Old rendering (selected_agents + candidates).
+  if (anyOld || (!anyOld && !anyNew)) {
+    const selCells: Record<string, CellState> = {};
+    for (const col of columns) {
+      const log = col.log;
+      if (!log || (col.status !== "done" && col.status !== "partial")) {
+        selCells[col.key] = {
+          value: undefined,
+          canon: PENDING_CANON,
+          error: col.error,
+          feedback: null,
+        };
+        continue;
+      }
+      if (!hasAgentOutput(log, agent.id, agent.name)) {
+        selCells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
+        continue;
+      }
+      const out = agentOutput(log, agent.id, agent.name);
+      const agentErr = hasAgentError(out);
+      if (agentErr !== null) {
+        selCells[col.key] = { value: undefined, canon: ERROR_CANON, error: agentErr, feedback: null };
+        continue;
+      }
+      if (selectedListOf(out) === null) {
+        selCells[col.key] = { value: undefined, canon: NOT_FOUND_CANON, feedback: null };
+        continue;
+      }
+      const part = extractCell(out, agent.kind, "selected_agents");
+      const canon = canonicalKey(part.value);
+      const lookupName = columnAgentName(log, agent.id, agent.name);
+      selCells[col.key] = {
+        value: part.value,
+        confidence: part.confidence,
+        confidenceType: part.confidenceType,
+        evidence: part.evidence,
+        canon,
+        feedback: cellFeedback(log, lookupName, "selected_agents"),
+      };
+    }
+    rows.push(finalizeRow(agent.id, agent.name, "selected_agents", undefined, selCells, columns));
+
+    const candidates = identifierCandidates(agent, columns);
+    for (const cand of candidates) {
+      const cells: Record<string, CellState> = {};
+      for (const col of columns) {
+        const log = col.log;
+        if (!log || (col.status !== "done" && col.status !== "partial")) {
+          cells[col.key] = {
+            value: undefined,
+            canon: PENDING_CANON,
+            error: col.error,
+            feedback: null,
+          };
+          continue;
+        }
+        if (!hasAgentOutput(log, agent.id, agent.name)) {
+          cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
+          continue;
+        }
+        const out = agentOutput(log, agent.id, agent.name);
+        const agentErr = hasAgentError(out);
+        if (agentErr !== null) {
+          cells[col.key] = { value: undefined, canon: ERROR_CANON, error: agentErr, feedback: null };
+          continue;
+        }
+        const lookupName = columnAgentName(log, agent.id, agent.name);
+        const feedback = cellFeedback(log, lookupName, cand);
+        const sel = selectedListOf(out);
+        if (!sel || !sel.includes(cand)) {
+          cells[col.key] = { value: undefined, canon: NOT_FOUND_CANON, feedback };
+          continue;
+        }
+        const fmap = fillableMapOf(out);
+        const list = fmap[cand] ?? [];
+        cells[col.key] = { value: list, canon: canonicalKey(list), feedback };
+      }
+      rows.push(finalizeRow(agent.id, agent.name, cand, undefined, cells, columns));
+    }
+  }
+  if (anyNew) {
+    rows.push(...buildIdentifierQuestionRows(agent, columns));
   }
   return rows;
 }

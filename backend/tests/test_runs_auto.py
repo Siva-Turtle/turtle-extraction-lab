@@ -1,11 +1,10 @@
-"""Auto Select Agents + consistency pure functions."""
+"""Auto Select Agents v2: 11 questions -> deterministic routing + consistency v2."""
 
 import copy
 
 import app.modules.runs.router as runs_router
 from app.modules.runs.router import (
-    AUTO_REMARK_MISSED,
-    AUTO_REMARK_UNEXPECTED,
+    IDENTIFIER_QUESTIONS,
     apply_auto_feedback,
     compute_consistency,
 )
@@ -15,13 +14,16 @@ async def _known_pricing(model):
     return (0.000001, 0.000002)
 
 
-def _make_extraction(client, name, attrs):
+def _make_extraction(client, name, attrs, groups=None):
     aid = client.post(
         "/api/v1/agents",
         json={"name": name, "system_instruction": f"sys-{name}"}).json()["id"]
-    for attr in attrs:
+    for i, attr in enumerate(attrs):
+        g = ""
+        if groups and i < len(groups):
+            g = groups[i]
         client.post("/api/v1/attributes", json={
-            "agent_ids": [aid], "name": attr})
+            "agent_ids": [aid], "name": attr, "group": g})
     return aid
 
 
@@ -36,107 +38,108 @@ def _filled(value, ctype="quoted"):
             "confidence_type": ctype, "evidence": "e"}
 
 
-def _setup_auto_agents(client):
-    e1 = _make_extraction(client, "auto_e1", ["email", "phone"])
-    e2 = _make_extraction(client, "auto_e2", ["city", "country"])
-    e3 = _make_extraction(client, "auto_e3", ["nickname"])
+def _empty():
+    return {"value": None, "confidence": 0.0,
+            "confidence_type": "not_found", "evidence": ""}
+
+
+def _setup_minimal_auto(client):
+    beh = _make_extraction(client, "behavioral", ["b_attr"])
+    qry = _make_extraction(client, "query", ["q_attr"])
+    kc = _make_extraction(client, "kc_and_feedback",
+                          ["kc_karma", "kc_fb"],
+                          groups=["Karma Conversation", "Feedback"])
     ident = _make_identifier(client)
-    return ident, e1, e2, e3
+    return ident, beh, qry, kc
 
 
-def test_compute_consistency_unit():
-    ident_out = {
-        "fillable_attributes": [
-            {"agent": "E1", "attributes": ["email"]},
-            {"agent": "E2", "attributes": ["city", "country"]},
-        ],
-        "selected_agents": ["E1", "E2"],
-    }
+def test_compute_consistency_v2_hit_miss_not_scored():
+    answers = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+    answers["has_assets"] = True
+    plan = [
+        {"agent_id": "a1", "agent_name": "asset",
+         "reasons": ["has_assets"], "scored": True,
+         "attributes": ["holding"]},
+        {"agent_id": "a2", "agent_name": "behavioral",
+         "reasons": ["always"], "scored": False,
+         "attributes": ["b_attr"]},
+        {"agent_id": "a3", "agent_name": "income",
+         "reasons": ["income"], "scored": True,
+         "attributes": ["salary"]},
+    ]
     outputs = {
-        "ident": ident_out,
-        "a1": {"email": _filled("a@b.in"), "phone": _filled("123")},
-        "a2": {"city": _filled("Pune"), "country": {"value": None, "confidence": 0.0,
-                                                    "confidence_type": "not_found", "evidence": ""}},
+        "ident": dict(answers),
+        "a1": {"holding": _filled("house")},
+        "a2": {},
+        "a3": {"salary": _empty()},
     }
-    agents_by_id = {
-        "ident": {"name": "IDENT", "kind": "identifier"},
-        "a1": {"name": "E1", "kind": "extraction"},
-        "a2": {"name": "E2", "kind": "extraction"},
-    }
-    attrs_by_agent = {
-        "ident": [],
-        "a1": ["email", "phone"],
-        "a2": ["city", "country"],
-    }
-    cons = compute_consistency(ident_out, outputs, agents_by_id, attrs_by_agent)
+    cons = compute_consistency(answers, outputs, "ident", plan)
+    assert cons["auto"] is True
+    assert cons["version"] == 2
     assert cons["identifier_agent_id"] == "ident"
-    assert set(cons["agents"]) == {"a1", "a2"}
-    assert cons["agents"]["a1"]["predicted"] == ["email"]
-    assert cons["agents"]["a1"]["extracted"] == ["email", "phone"]
-    assert cons["agents"]["a1"]["missed"] == []
-    assert cons["agents"]["a1"]["unexpected"] == ["phone"]
-    assert cons["agents"]["a1"]["score"] == 0.5
-    assert cons["agents"]["a2"]["predicted"] == ["city", "country"]
-    assert cons["agents"]["a2"]["extracted"] == ["city"]
-    assert cons["agents"]["a2"]["missed"] == ["country"]
-    assert cons["agents"]["a2"]["unexpected"] == []
-    assert cons["agents"]["a2"]["score"] == 0.5
+    assert cons["answers"] == answers
+    assert cons["plan"] == plan
+    assert cons["agents"]["a1"]["status"] == "hit"
+    assert cons["agents"]["a1"]["score"] == 1.0
+    assert cons["agents"]["a3"]["status"] == "miss"
+    assert cons["agents"]["a3"]["score"] == 0.0
+    assert cons["agents"]["a2"]["status"] == "not_scored"
+    assert cons["agents"]["a2"]["score"] is None
     assert cons["score"] == 0.5
 
-    # Both empty -> 1.0; no checked agents -> None.
-    cons2 = compute_consistency(
-        {"fillable_attributes": [], "selected_agents": []},
-        {"ident": {"fillable_attributes": [], "selected_agents": []}},
-        {"ident": {"name": "IDENT", "kind": "identifier"}},
-        {"ident": []})
-    assert cons2["score"] is None
-    assert cons2["agents"] == {}
-    # Errored agent skipped.
-    cons3 = compute_consistency(
-        ident_out,
-        {"ident": ident_out, "a1": {"_error": "boom"},
-         "a2": {"city": _filled("Pune"), "country": _filled("IN")}},
-        agents_by_id, attrs_by_agent)
-    assert set(cons3["agents"]) == {"a2"}
-    assert cons3["agents"]["a2"]["score"] == 1.0
-    assert cons3["score"] == 1.0
+    # Errored excluded.
+    outputs2 = dict(outputs)
+    outputs2["a1"] = {"_error": "boom"}
+    cons2 = compute_consistency(answers, outputs2, "ident", plan)
+    assert cons2["agents"]["a1"]["status"] == "error"
+    assert cons2["score"] == 0.0  # only a3 scored (miss)
+
+    # No scored agents -> None.
+    plan3 = [p for p in plan if not p["scored"]]
+    cons3 = compute_consistency(answers, {"a2": {}}, "ident", plan3)
+    assert cons3["score"] is None
 
 
-def test_apply_auto_feedback_unit():
+def test_apply_auto_feedback_v2():
     cons = {
-        "score": 0.5, "identifier_agent_id": "ident",
+        "auto": True, "version": 2, "score": 0.0,
+        "identifier_agent_id": "ident",
+        "answers": {}, "plan": [],
         "agents": {
-            "a1": {"agent_name": "E1", "predicted": ["email"],
-                   "extracted": ["email", "phone"], "missed": [],
-                   "unexpected": ["phone"], "score": 0.5},
-            "a2": {"agent_name": "E2", "predicted": ["city", "country"],
-                   "extracted": ["city"], "missed": ["country"],
-                   "unexpected": [], "score": 0.5},
+            "a1": {"agent_name": "E1", "reasons": ["has_assets"],
+                   "scored": True, "extracted": [],
+                   "status": "miss", "score": 0.0},
+            "a2": {"agent_name": "E2", "reasons": ["always"],
+                   "scored": False, "extracted": [],
+                   "status": "not_scored", "score": None},
         },
     }
     fb = apply_auto_feedback({}, cons)
-    assert fb["E1"]["phone"] == {"rating": "down", "remarks": AUTO_REMARK_UNEXPECTED, "auto": True}
-    assert fb["E2"]["country"] == {"rating": "down", "remarks": AUTO_REMARK_MISSED, "auto": True}
+    assert fb["E1"]["__agent__"]["rating"] == "down"
+    assert fb["E1"]["__agent__"]["auto"] is True
+    assert "has_assets" in fb["E1"]["__agent__"]["remarks"]
+    assert "E2" not in fb
 
-    # Manual entries are never overwritten; stale autos are refreshed.
-    manual = {"E1": {"phone": {"rating": "up", "remarks": "looks right"}},
-              "E2": {"country": {"rating": "down", "remarks": "auto old", "auto": True},
-                     "city": {"rating": "up", "remarks": "mine"}}}
+    # Manual never overwritten.
+    manual = {"E1": {"__agent__": {"rating": "up", "remarks": "mine"}}}
     fb2 = apply_auto_feedback(manual, cons)
-    assert fb2["E1"]["phone"] == {"rating": "up", "remarks": "looks right"}
-    assert fb2["E2"]["country"]["auto"] is True
-    assert fb2["E2"]["city"] == {"rating": "up", "remarks": "mine"}
-    # Removing an attr from missed/unexpected drops its auto entry.
-    cons_shrunk = copy.deepcopy(cons)
-    cons_shrunk["agents"]["a1"]["unexpected"] = []
-    cons_shrunk["agents"]["a1"]["missed"] = []
-    fb3 = apply_auto_feedback(fb, cons_shrunk)
+    assert fb2["E1"]["__agent__"] == {"rating": "up", "remarks": "mine"}
+
+    # Hit removes stale auto.
+    cons_hit = copy.deepcopy(cons)
+    cons_hit["agents"]["a1"]["status"] = "hit"
+    cons_hit["agents"]["a1"]["extracted"] = ["x"]
+    fb3 = apply_auto_feedback(fb, cons_hit)
     assert "E1" not in fb3
-    assert fb3["E2"]["country"]["auto"] is True
+
+    # Old shape returns copy unchanged, never crashes.
+    assert apply_auto_feedback({"A": {"x": {"rating": "up"}}},
+                               {"auto": True, "agents": {}}) == \
+        {"A": {"x": {"rating": "up"}}}
 
 
-def test_auto_picks_two_of_three(client, monkeypatch):
-    ident, e1, e2, e3 = _setup_auto_agents(client)
+def test_auto_all_false_runs_always_only(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
     calls = {"n": 0}
 
     async def _route(payload):
@@ -144,99 +147,194 @@ def test_auto_picks_two_of_three(client, monkeypatch):
         rf = payload.get("response_format", {})
         js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
         if isinstance(js, dict) and js.get("name") == "agent_selection":
-            return ({
-                "fillable_attributes": [
-                    {"agent": "auto_e1", "attributes": ["email"]},
-                    {"agent": "auto_e2", "attributes": ["city", "country"]},
-                ],
-                "selected_agents": ["auto_e1", "auto_e2"]},
-                {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
         schema = {}
         try:
             schema = js.get("schema", {})
         except Exception:
             schema = {}
         required = schema.get("required", []) if isinstance(schema, dict) else []
-        if "email" in required:
-            return ({"email": _filled("a@b.in"), "phone": _filled("999")},
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        if "city" in required:
-            return ({"city": _filled("Pune"),
-                     "country": {"value": None, "confidence": 0.0,
-                                 "confidence_type": "not_found", "evidence": ""}},
-                    {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30})
-        raise AssertionError(f"unexpected agent call: {required}")
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        if "kc_fb" in required:
+            # kc subset without Karma group: only kc_fb.
+            assert "kc_karma" not in required
+            return ({"kc_fb": _filled("z")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        raise AssertionError(f"unexpected: {required}")
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
 
-    before_logs = len(client.get("/api/v1/logs").json())
     body = client.post("/api/v1/runs/auto", json={
-        "input_type": "mail", "input_data": "hello",
-        "agent_ids": ["ignored"], "model": "m"}).json()
-    # Identifier + 2 selected = exactly 3 calls; e3 never runs.
-    assert calls["n"] == 3
-    after_logs = client.get("/api/v1/logs").json()
-    assert len(after_logs) == before_logs + 1
-    assert set(body["outputs"]) == {ident, e1, e2}
-    assert e3 not in body["outputs"]
-    assert set(body["requests"]) == {ident, e1, e2}
-    assert body["id"] and body["log_id"]
-    assert body["log"]["id"] == body["log_id"]
-    # Identifier tokens included in totals.
-    usage = body["usage"]
-    assert usage["prompt_tokens"] == 5 + 10 + 20
-    assert set(usage["per_agent"]) == {ident, e1, e2}
-
-    log = body["log"]
-    cons = log["consistency"]
-    assert cons["identifier_agent_id"] == ident
-    assert set(cons["agents"]) == {e1, e2}
-    assert cons["agents"][e1]["predicted"] == ["email"]
-    assert cons["agents"][e1]["extracted"] == ["email", "phone"]
-    assert cons["agents"][e1]["missed"] == []
-    assert cons["agents"][e1]["unexpected"] == ["phone"]
-    assert cons["agents"][e2]["predicted"] == ["city", "country"]
-    assert cons["agents"][e2]["missed"] == ["country"]
-    assert cons["agents"][e2]["unexpected"] == []
-    assert cons["score"] == 0.5
-
-    fb = log["feedback"]
-    assert fb["auto_e1"]["phone"] == {
-        "rating": "down", "remarks": AUTO_REMARK_UNEXPECTED, "auto": True}
-    assert fb["auto_e2"]["country"] == {
-        "rating": "down", "remarks": AUTO_REMARK_MISSED, "auto": True}
-
-    # Manual rating REPLACES the auto entry and drops "auto".
-    run_id = body["id"]
-    assert client.post(f"/api/v1/runs/{run_id}/feedback", json={
-        "agent_name": "auto_e1", "attribute_name": "phone",
-        "rating": "up", "remarks": "human says ok"}).json() == {"ok": True}
-    logs = {l["run_id"]: l for l in client.get("/api/v1/logs").json()}
-    assert logs[run_id]["feedback"]["auto_e1"]["phone"] == {
-        "rating": "up", "remarks": "human says ok"}
-    assert "auto" not in logs[run_id]["feedback"]["auto_e1"]["phone"]
+        "input_type": "mail", "input_data": "hello", "model": "m",
+        "meeting_type": "Quarterly Review"}).json()
+    assert calls["n"] == 4  # identifier + 3 always-run
+    assert set(body["outputs"]) == {ident, beh, qry, kc}
+    cons = body["log"]["consistency"]
+    assert cons["version"] == 2
+    assert cons["answers"] == {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+    assert {p["agent_name"] for p in cons["plan"]} == \
+        {"behavioral", "query", "kc_and_feedback"}
+    # kc plan subset excludes Karma group.
+    kc_plan = next(p for p in cons["plan"] if p["agent_name"] == "kc_and_feedback")
+    assert kc_plan["attributes"] == ["kc_fb"]
+    assert cons["score"] is None  # no scored agents
+    assert body["log"]["feedback"] == {}
 
 
-def test_auto_identifier_error_runs_no_agents(client, monkeypatch):
-    ident = _make_identifier(client)
-    e1 = _make_extraction(client, "err_e1", ["email"])
-    calls = {"n": 0}
+def test_auto_question_routes_and_subset_schema(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
+    asset = _make_extraction(client, "asset", ["holding"])
+    bi = _make_extraction(client, "basic_info",
+                          ["cc_attr", "emp_attr"],
+                          groups=["Banking", "Employment"])
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            out["has_assets"] = True
+            out["credit_cards"] = True
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "holding" in required:
+            return ({"holding": _filled("house")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        if "cc_attr" in required:
+            # basic_info subset: only Banking.
+            assert "emp_attr" not in required
+            return ({"cc_attr": _filled("card")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        # always-run agents return empty (miss for scored? they are unscored).
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "kc_fb" in required:
+            return ({"kc_fb": _filled("z")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        raise AssertionError(f"unexpected: {required}")
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+
+    body = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m",
+        "meeting_type": "Other"}).json()
+    assert set(body["outputs"]) == {ident, beh, qry, kc, asset, bi}
+    cons = body["log"]["consistency"]
+    assert cons["answers"]["has_assets"] is True
+    assert cons["answers"]["credit_cards"] is True
+    bi_entry = cons["agents"][bi]
+    assert bi_entry["status"] == "hit"
+    assert bi_entry["reasons"] == ["credit_cards"]
+    asset_entry = cons["agents"][asset]
+    assert asset_entry["status"] == "hit"
+    assert cons["score"] == 1.0
+
+
+def test_auto_miss_creates_agent_feedback(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
+    asset = _make_extraction(client, "asset", ["holding"])
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            out["has_assets"] = True
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "holding" in required:
+            return ({"holding": _empty()},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc_fb": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+    body = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m"}).json()
+    cons = body["log"]["consistency"]
+    assert cons["agents"][asset]["status"] == "miss"
+    assert cons["score"] == 0.0
+    fb = body["log"]["feedback"]
+    assert fb["asset"]["__agent__"]["rating"] == "down"
+    assert "has_assets" in fb["asset"]["__agent__"]["remarks"]
+    assert "__agent__" not in str(body["outputs"][asset])
+
+
+def test_auto_identifier_error_runs_always(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
+    e1 = _make_extraction(client, "asset", ["holding"])
 
     async def _fail_ident(payload):
-        calls["n"] += 1
-        raise RuntimeError("provider down")
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            raise RuntimeError("provider down")
+        # always-run agents still run.
+        return ({"b_attr": _filled("x")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
-    monkeypatch.setattr(runs_router, "complete_json_payload", _fail_ident)
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            raise RuntimeError("provider down")
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc_fb": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
 
     body = client.post("/api/v1/runs/auto", json={
         "input_type": "mail", "input_data": "hi", "model": "m"}).json()
-    assert calls["n"] == 1  # no extraction calls
-    assert set(body["outputs"]) == {ident}
     assert "_error" in body["outputs"][ident]
+    assert beh in body["outputs"]
+    assert qry in body["outputs"]
+    assert kc in body["outputs"]
     assert e1 not in body["outputs"]
-    assert body["log"]["consistency"]["agents"] == {}
+    cons = body["log"]["consistency"]
+    assert cons["version"] == 2
+    assert cons["answers"] == {q["key"]: False for q in IDENTIFIER_QUESTIONS}
 
 
 def test_auto_no_identifier_400(client):
@@ -246,55 +344,114 @@ def test_auto_no_identifier_400(client):
     assert resp.status_code == 400
 
 
-def test_retry_on_auto_log_recomputes_consistency(client, monkeypatch):
-    ident, e1, e2, _e3 = _setup_auto_agents(client)
+def test_auto_honours_reuse(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
 
     async def _route(payload):
         rf = payload.get("response_format", {})
         js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
         if isinstance(js, dict) and js.get("name") == "agent_selection":
-            return ({
-                "fillable_attributes": [
-                    {"agent": "auto_e1", "attributes": ["email"]},
-                    {"agent": "auto_e2", "attributes": ["city", "country"]},
-                ],
-                "selected_agents": ["auto_e1", "auto_e2"]},
-                {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
         schema = {}
         try:
             schema = js.get("schema", {})
         except Exception:
             schema = {}
         required = schema.get("required", []) if isinstance(schema, dict) else []
-        if "email" in required:
-            return ({"email": _filled("a@b.in"), "phone": _filled("999")},
+        if "b_attr" in required:
+            return ({"b_attr": _filled("first")},
                     {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-        return ({"city": _filled("Pune"),
-                 "country": {"value": None, "confidence": 0.0,
-                             "confidence_type": "not_found", "evidence": ""}},
-                {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("qy")},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        return ({"kc_fb": _filled("kz")},
+                {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _route)
+    monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
+    first = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m"}).json()
+    first_log = first["log_id"]
+
+    # Second auto run reuses behavioral; others run fresh.
+    async def _second(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        # behavioral must NOT be called (reused).
+        assert "b_attr" not in required, "reused agent should not run"
+        if "q_attr" in required:
+            return ({"q_attr": _filled("qy2")},
+                    {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
+        return ({"kc_fb": _filled("kz2")},
+                {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
+
+    monkeypatch.setattr(runs_router, "complete_json_payload", _second)
+    second = client.post("/api/v1/runs/auto", json={
+        "input_type": "mail", "input_data": "hello", "model": "m",
+        "reuse": {beh: first_log, "bogus": "missing"}}).json()
+    assert second["outputs"][beh] == first["outputs"][beh]
+    assert second["usage"]["reused_agents"][beh]["log_id"] == first_log
+    assert "reused_from_log_id" in second["usage"]["per_agent"][beh]
+
+    # Invalid reuse ignored (agent runs normally) — covered by bogus above.
+
+
+def test_retry_on_auto_log_recomputes_v2(client, monkeypatch):
+    ident, beh, qry, kc = _setup_minimal_auto(client)
+    asset = _make_extraction(client, "asset", ["holding"])
+
+    async def _route(payload):
+        rf = payload.get("response_format", {})
+        js = rf.get("json_schema", {}) if isinstance(rf, dict) else {}
+        if isinstance(js, dict) and js.get("name") == "agent_selection":
+            out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            out["has_assets"] = True
+            return (out, {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+        schema = {}
+        try:
+            schema = js.get("schema", {})
+        except Exception:
+            schema = {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        if "holding" in required:
+            return ({"holding": _empty()},
+                    {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+        if "b_attr" in required:
+            return ({"b_attr": _filled("x")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        if "q_attr" in required:
+            return ({"q_attr": _filled("y")},
+                    {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return ({"kc_fb": _filled("z")},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _route)
     monkeypatch.setattr(runs_router, "get_model_pricing", _known_pricing)
     body = client.post("/api/v1/runs/auto", json={
         "input_type": "mail", "input_data": "hello", "model": "m"}).json()
     log_id = body["log_id"]
-    assert body["log"]["consistency"]["agents"][e1]["unexpected"] == ["phone"]
+    assert body["log"]["consistency"]["agents"][asset]["status"] == "miss"
+    assert body["log"]["feedback"]["asset"]["__agent__"]["auto"] is True
 
-    # Retry e1 with a clean output (no unexpected phone).
     async def _retry(payload):
-        return ({"email": _filled("a@b.in"),
-                 "phone": {"value": None, "confidence": 0.0,
-                           "confidence_type": "not_found", "evidence": ""}},
+        return ({"holding": _filled("house")},
                 {"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17})
 
     monkeypatch.setattr(runs_router, "complete_json_payload", _retry)
     log = client.post(f"/api/v1/runs/logs/{log_id}/retry-agent",
-                      json={"agent_id": e1}).json()["log"]
+                      json={"agent_id": asset}).json()["log"]
     cons = log["consistency"]
-    assert cons["agents"][e1]["extracted"] == ["email"]
-    assert cons["agents"][e1]["unexpected"] == []
-    assert cons["agents"][e1]["score"] == 1.0
-    # e1 autos gone; e2 autos preserved.
-    assert "auto_e1" not in log["feedback"]
-    assert log["feedback"]["auto_e2"]["country"]["auto"] is True
+    assert cons["version"] == 2
+    assert cons["agents"][asset]["status"] == "hit"
+    assert cons["agents"][asset]["extracted"] == ["holding"]
+    assert "asset" not in log["feedback"]

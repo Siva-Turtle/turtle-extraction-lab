@@ -266,19 +266,51 @@ export function CompareCardList({
         const emptyCount = emptyRowCount(totalRows);
         const agreeLabel = agentAgreementLabel(totalRows);
         const isCollapsed = collapsed.has(agent.id);
+        const v2Badges: { key: string; label: string; title: string }[] = [];
+        for (const col of columns) {
+          const log = col.log;
+          if (!log) continue;
+          const cons = (log.consistency ?? {}) as {
+            version?: unknown;
+            agents?: Record<string, { status?: unknown; reasons?: unknown }>;
+          };
+          if (cons?.version !== 2) continue;
+          const entry = cons.agents?.[agent.id];
+          if (!entry || typeof entry !== "object") continue;
+          const status = typeof entry.status === "string" ? entry.status : "";
+          if (!status) continue;
+          const reasons = Array.isArray(entry.reasons)
+            ? (entry.reasons as unknown[]).filter((x): x is string => typeof x === "string")
+            : [];
+          const short = status === "not_scored" && reasons.includes("always") ? "always" : status;
+          v2Badges.push({
+            key: col.key,
+            label: short,
+            title: reasons.length > 0 ? `${short} · ${reasons.join(", ")}` : short,
+          });
+        }
         return (
           <section key={agent.id} className="grid gap-2">
             <button
               type="button"
               onClick={() => toggleAgent(agent.id)}
               aria-expanded={!isCollapsed}
-              className="flex w-full items-center gap-2 text-left font-heading text-xs font-bold text-[#1d1d1d] hover:text-[#0d5c4a] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#F0EFEC]"
+              className="flex w-full flex-wrap items-center gap-2 text-left font-heading text-xs font-bold text-[#1d1d1d] hover:text-[#0d5c4a] focus-visible:outline-2 focus-visible:outline-brand dark:text-[#F0EFEC]"
             >
               <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
               <span className="truncate">
                 {agent.name} · {totalRows.length} attrs · {agreeLabel} agreement · {emptyCount}{" "}
                 empty everywhere
               </span>
+              {v2Badges.map((b) => (
+                <span
+                  key={b.key}
+                  title={b.title}
+                  className="inline-flex items-center gap-1 rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold normal-case text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+                >
+                  {b.label}
+                </span>
+              ))}
             </button>
             {!isCollapsed &&
               agentRows.map((row) => {

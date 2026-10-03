@@ -46,21 +46,50 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 # --- Agent Identifier meta-agent (kind == "identifier") -------------------
-# The identifier lists EVERY extraction agent followed by ALL its
-# attributes, then reports which attributes are fillable. An agent is
-# selected when at least one of its attributes can be extracted.
-# Its prompt is built at prompt/preview/run time, never stored per-run
-# except inside the denormalized log snapshots/requests.
+# The identifier answers 11 fixed yes/no questions about the CLIENT's own
+# situation, then deterministic routing rules (plan_auto_agents) select
+# extraction agents. The prompt is code-owned: the identifier agent's stored
+# system_instruction in the DB is IGNORED. Prompt is built at
+# prompt/preview/run time, never stored per-run except inside the
+# denormalized log snapshots/requests.
 
 IDENTIFIER_KIND = "identifier"
 EXTRACTION_KIND = "extraction"
 IDENTIFIER_SCHEMA_NAME = "agent_selection"
 
+IDENTIFIER_QUESTIONS: list[dict] = [
+    {"key": "has_assets",
+     "question": "Did the Client mention about their assets? (Any mention of asset type like - bonds, cash, commodity, ETFs, mutual funds, crypto, debt instruments, deposits, equity, personal debt that they have given to someone, real estate or property, REITS, unlisted stocks or any other asset type)"},
+    {"key": "has_accounts",
+     "question": "Did the Client mention about any of their accounts that they hold? (Any mention of accounts like - alternate investment fund accounts, bank account, bank deposit, crypto broker, EPF, investment account, NPS, PMS, PPF, Self-custody investment/crypto accounts or wallets, SSY (Sukanya Samriddhi Yojana) or any other account type)"},
+    {"key": "credit_cards",
+     "question": "Did the Client mention that they have or don't have credit card(s)?"},
+    {"key": "employment_changed",
+     "question": "Did the Client mention that their employment status or current employer has changed (they have switched company)?"},
+    {"key": "alumni",
+     "question": "Did the Client mention anything regarding their old organisation or institution - them being any sort of alumni?"},
+    {"key": "expenses",
+     "question": "Did the Client mention anything related to their current general monthly expenses, family expenses or annual expenses? (like charity donations, childcare school fees, entertainment dining, family support, groceries, household staff, insurance premiums, Loan EMIs, medical expenses, miscellaneous, rent, shopping purchases, subscriptions memberships, transport fuel, travel vacations, utilities)"},
+    {"key": "goals",
+     "question": "Did the Client mention any of their goals or aspirations (where money is linked)? (Like buying a house, buying a vehicle, children college or higher education, financial freedom fire, legacy inheritance, parents healthcare fund, planning a child, vacation travel fund, wedding, any other goals)"},
+    {"key": "income",
+     "question": "Did the Client mention anything related to their Income? (Like salary, business, capital gains, rentals, speculative income or any other income)"},
+    {"key": "insurance",
+     "question": "Did the Client mention anything related to their insurance?"},
+    {"key": "liabilities",
+     "question": "Did the Client mention anything related to their Liabilities? (Like credit card debt, education loan, gold loan, home loan, personal loan, vehicle loan or any other loan)"},
+    {"key": "tax",
+     "question": 'Did the Client mention anything related to "Advance Tax, Rental TDS, tax filing in India, tax filing outside India, GST services, W8 BEN"'},
+]
+
 IDENTIFIER_INSTRUCTION = (
-    "You are an agent router. Read the input and, for every candidate agent, "
-    "check each of its attributes against the input. Select an agent when "
-    "even one of its attributes can be extracted. Return strictly the "
-    "selection object."
+    "You are the Agent Identifier for a financial advisory firm (Turtle Finance). "
+    "The input is a conversation between the firm's advisors/team and a client, "
+    "used for financial advisory purposes. "
+    "Read the input and answer each question with true or false. "
+    "Answer true only when the CLIENT's own situation is mentioned "
+    "(explicitly or clearly implied). "
+    "Return strictly the JSON object."
 )
 
 
@@ -72,195 +101,257 @@ def is_identifier(agent: Agent) -> bool:
 def build_identifier_schema() -> dict:
     """Strict structured-output schema for the identifier.
 
-    Property ORDER matters — fillable_attributes first, then
-    selected_agents. No nullable/union fields.
+    One boolean per question key in IDENTIFIER_QUESTIONS order, each with
+    the question text as description. All required, no additional props.
     """
+    props: dict = {}
+    for q in IDENTIFIER_QUESTIONS:
+        props[q["key"]] = {"type": "boolean", "description": q["question"]}
     return {
         "type": "object",
-        "properties": {
-            "fillable_attributes": {
-                "type": "array",
-                "description": "Each agent with at least one fillable attribute",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "agent": {"type": "string", "description": "Agent name"},
-                        "attributes": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Fillable attribute names",
-                        },
-                    },
-                    "required": ["agent", "attributes"],
-                    "additionalProperties": False,
-                },
-            },
-            "selected_agents": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Names of the extraction agents to run",
-            },
-        },
-        "required": ["fillable_attributes", "selected_agents"],
+        "properties": props,
+        "required": [q["key"] for q in IDENTIFIER_QUESTIONS],
         "additionalProperties": False,
     }
 
 
-def _identifier_candidates(db: Session, exclude_id: str = "") -> list[Agent]:
-    """Extraction-kind agents (the identifier itself excluded), ordered by name."""
-    q = db.query(Agent).filter(Agent.kind != IDENTIFIER_KIND).order_by(Agent.name.asc())
-    rows = q.all()
-    if exclude_id:
-        rows = [a for a in rows if a.id != exclude_id]
-    return rows
+def _identifier_system_content(agent: Agent, _ignored=None) -> str:
+    """System prompt for the identifier: code-owned instruction + 11 questions.
 
-
-def _identifier_system_content(
-    agent: Agent, candidates: list[tuple[str, str, list[tuple[str, str]]]]
-) -> str:
-    """System prompt for the identifier: base instruction + full attribute roster.
-
-    ``candidates`` is [(name, description, [(attr_name, attr_description)])]
-    in the same order ``_attrs_for_agent`` returns. Deterministic and
-    byte-stable for the same DB state. Uses attribute NAMES, not serials.
+    The identifier agent's stored system_instruction is IGNORED. The
+    optional second arg exists only for backward compatibility with old
+    callers (candidate roster dropped).
     """
-    base = agent.system_instruction or IDENTIFIER_INSTRUCTION
-    if candidates:
-        blocks: list[str] = []
-        for name, desc, attrs in candidates:
-            header = f"## {name}"
-            if (desc or "").strip():
-                header += f": {desc.strip()}"
-            if attrs:
-                attr_lines = []
-                for attr_name, attr_desc in attrs:
-                    if (attr_desc or "").strip():
-                        attr_lines.append(f"- {attr_name}: {attr_desc.strip()}")
-                    else:
-                        attr_lines.append(f"- {attr_name}")
-            else:
-                attr_lines = ["- (no attributes defined)"]
-            blocks.append("\n".join([header] + attr_lines))
-        roster = "\n\n".join(blocks)
-    else:
-        roster = "- (no candidate agents defined)"
-    return (
-        f"{base}\n\nCandidate agents and their attributes:\n\n{roster}\n\n"
-        "Rules:\n"
-        "- Go through every agent and every attribute. An attribute is fillable when "
-        "the input contains information that answers it (explicitly or clearly implied).\n"
-        "- Select an agent if AT LEAST ONE of its attributes is fillable. Even a single "
-        "fillable attribute is enough.\n"
-        '- In "fillable_attributes", list each selected agent with the exact attribute '
-        "names (copy them verbatim from the list above) that can be filled.\n"
-        '- "selected_agents" must be exactly the agent names that appear in '
-        '"fillable_attributes".\n'
-        '- If nothing applies, return {"fillable_attributes": [], "selected_agents": []}.'
-    )
+    lines: list[str] = []
+    for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
+        lines.append(f"Q{i} ({q['key']}): {q['question']}")
+    return f"{IDENTIFIER_INSTRUCTION}\n\n" + "\n".join(lines)
 
 
-def identifier_candidates_with_attributes(
-    db: Session, exclude_id: str = "",
-) -> list[tuple[str, str, list[tuple[str, str]]]]:
-    """Candidate (name, description, [(attr_name, attr_desc)]) rows for prompt building."""
-    out: list[tuple[str, str, list[tuple[str, str]]]] = []
-    for cand in _identifier_candidates(db, exclude_id):
-        attrs = [(a.name, a.description or "") for a in _attrs_for_agent(db, cand.id)]
-        out.append((cand.name, cand.description or "", attrs))
-    return out
+def normalize_identifier_output(parsed, _candidates=None) -> object:
+    """Normalise the identifier's parsed output to {key: bool} answers.
 
-
-def _candidate_attr_names(attrs) -> list[str]:
-    """Real attribute names from a candidate's attr list.
-
-    Accepts the new [(name, description)] shape, plain [name] lists, or
-    [{"name": ...}] dicts (defensive — keeps the normaliser pure).
-    """
-    names: list[str] = []
-    for a in attrs or []:
-        if isinstance(a, (list, tuple)) and a:
-            names.append(str(a[0]))
-        elif isinstance(a, dict):
-            n = a.get("name", "")
-            if isinstance(n, str) and n:
-                names.append(n)
-        elif isinstance(a, str):
-            names.append(a)
-    return names
-
-
-def normalize_identifier_output(parsed, candidates) -> object:
-    """Normalise the identifier's parsed output against the candidate roster.
-
-    - Drop fillable entries whose agent is not a candidate name or whose
-      attributes list is empty after filtering to that agent's real
-      attribute names (keep order, dedupe).
-    - selected_agents = de-duplicated union of the model's selected_agents
-      (only valid candidate names) and agents with non-empty fillable
-      entries, preserving first-seen order.
+    - Returns {key: bool} for every question key; missing/non-bool values
+      become False (accepts "true"/"false" strings case-insensitively).
     - Non-dict inputs (and {"_error": ...} payloads) are returned untouched.
+    - The optional second arg is ignored (backward compat with the old
+      candidate-roster signature).
     """
     if not isinstance(parsed, dict):
         return parsed
     if "_error" in parsed:
         return parsed
-    valid: dict[str, set[str]] = {}
-    candidate_names: set[str] = set()
-    for cand in candidates or []:
+    out: dict[str, bool] = {}
+    for q in IDENTIFIER_QUESTIONS:
+        k = q["key"]
+        v = parsed.get(k, False)
+        if isinstance(v, bool):
+            out[k] = v
+        elif isinstance(v, str):
+            s = v.strip().lower()
+            if s == "true":
+                out[k] = True
+            elif s == "false":
+                out[k] = False
+            else:
+                out[k] = False
+        else:
+            out[k] = False
+    return out
+
+
+def _all_false_answers() -> dict[str, bool]:
+    return {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+
+
+def _answer_true(answers, key: str) -> bool:
+    try:
+        v = (answers or {}).get(key, False)
+    except Exception:
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() == "true"
+    return False
+
+
+def _norm_group_name(value) -> str:
+    try:
+        return str(value or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _group_of_attr(attr) -> str:
+    try:
+        g = getattr(attr, "group_name", "")
+    except Exception:
+        g = ""
+    if isinstance(attr, dict):
         try:
-            cname, _cdesc, cattrs = cand
+            g = attr.get("group_name", attr.get("group", ""))
         except Exception:
-            continue
-        candidate_names.add(cname)
-        valid[cname] = set(_candidate_attr_names(cattrs))
-    raw_fillable = parsed.get("fillable_attributes", [])
-    if not isinstance(raw_fillable, list):
-        raw_fillable = []
-    fillable: list[dict] = []
-    for entry in raw_fillable:
-        if not isinstance(entry, dict):
-            continue
-        agent_name = entry.get("agent")
-        attr_list = entry.get("attributes")
-        if not isinstance(agent_name, str) or agent_name not in candidate_names:
-            continue
-        if not isinstance(attr_list, list):
-            continue
-        allowed = valid.get(agent_name, set())
-        seen: set[str] = set()
-        kept: list[str] = []
-        for attr_name in attr_list:
-            if not isinstance(attr_name, str):
-                continue
-            if attr_name not in allowed:
-                continue
-            if attr_name in seen:
-                continue
-            seen.add(attr_name)
-            kept.append(attr_name)
-        if not kept:
-            continue
-        fillable.append({"agent": agent_name, "attributes": kept})
-    raw_selected = parsed.get("selected_agents", [])
-    if not isinstance(raw_selected, list):
-        raw_selected = []
-    selected: list[str] = []
-    seen_sel: set[str] = set()
-    for name in raw_selected:
-        if not isinstance(name, str):
-            continue
-        if name not in candidate_names:
-            continue
-        if name in seen_sel:
-            continue
-        seen_sel.add(name)
-        selected.append(name)
-    for entry in fillable:
-        agent_name = entry["agent"]
-        if agent_name not in seen_sel:
-            seen_sel.add(agent_name)
-            selected.append(agent_name)
-    return {"fillable_attributes": fillable, "selected_agents": selected}
+            g = ""
+    return _norm_group_name(g)
+
+
+def plan_auto_agents(
+    answers: dict,
+    meeting_type: str,
+    agents_by_name: dict,
+    attrs_by_agent_name: dict,
+) -> list[dict]:
+    """Deterministic routing from identifier answers + meeting type.
+
+    Returns ordered [{agent, attribute_ids (list[str]) or None (None = all),
+    reasons: list[str], scored: bool}]. Skips agents that don't exist, are
+    the identifier, have is_enabled False, or whose subset is empty.
+    """
+    answers = answers if isinstance(answers, dict) else {}
+    mt = str(meeting_type or "")
+    mt_low = mt.lower()
+    is_kc = "karma conversation" in mt_low
+    is_kickoff = ("kick-off" in mt_low) or ("kickoff" in mt_low) or ("kick off" in mt_low)
+    agents_by_name = agents_by_name or {}
+    attrs_by_agent_name = attrs_by_agent_name or {}
+
+    def _get(name: str):
+        try:
+            ag = agents_by_name.get(name)
+        except Exception:
+            return None
+        if ag is None:
+            return None
+        try:
+            if is_identifier(ag):
+                return None
+        except Exception:
+            pass
+        try:
+            if getattr(ag, "is_enabled", True) is False:
+                return None
+        except Exception:
+            pass
+        return ag
+
+    def _attrs(name: str) -> list:
+        try:
+            lst = attrs_by_agent_name.get(name, [])
+        except Exception:
+            return []
+        return list(lst or [])
+
+    result: list[dict] = []
+
+    def _push_all(name: str, reasons: list[str], scored: bool) -> None:
+        ag = _get(name)
+        if ag is None:
+            return
+        attrs = _attrs(name)
+        if len(attrs) == 0:
+            return
+        result.append({"agent": ag, "attribute_ids": None,
+                       "reasons": list(reasons), "scored": bool(scored)})
+
+    def _push_subset(name: str, ids: list[str], reasons: list[str], scored: bool) -> None:
+        ag = _get(name)
+        if ag is None:
+            return
+        if not ids:
+            return
+        result.append({"agent": ag, "attribute_ids": list(ids),
+                       "reasons": list(reasons), "scored": bool(scored)})
+
+    # a. behavioral: always, all.
+    _push_all("behavioral", ["always"], False)
+    # b. query: always, all.
+    _push_all("query", ["always"], False)
+    # c. kc_and_feedback: always (subset unless KC).
+    _kc_ag = _get("kc_and_feedback")
+    if _kc_ag is not None:
+        _kc_attrs = _attrs("kc_and_feedback")
+        if len(_kc_attrs) > 0:
+            if is_kc:
+                result.append({"agent": _kc_ag, "attribute_ids": None,
+                               "reasons": ["always", "meeting:karma_conversation"],
+                               "scored": False})
+            else:
+                sub = [a.id for a in _kc_attrs
+                       if _group_of_attr(a) != "karma conversation"]
+                if sub:
+                    result.append({"agent": _kc_ag, "attribute_ids": sub,
+                                   "reasons": ["always"], "scored": False})
+    # d. basic_info.
+    _bi_ag = _get("basic_info")
+    if _bi_ag is not None:
+        _bi_attrs = _attrs("basic_info")
+        if len(_bi_attrs) > 0:
+            if is_kc or is_kickoff:
+                reasons: list[str] = []
+                if is_kc:
+                    reasons.append("meeting:karma_conversation")
+                if is_kickoff:
+                    reasons.append("meeting:kick_off")
+                result.append({"agent": _bi_ag, "attribute_ids": None,
+                               "reasons": reasons, "scored": False})
+            else:
+                need_cc = _answer_true(answers, "credit_cards")
+                need_emp = _answer_true(answers, "employment_changed")
+                need_al = _answer_true(answers, "alumni")
+                if need_cc or need_emp or need_al:
+                    allowed: set[str] = set()
+                    if need_cc:
+                        allowed.add("banking")
+                    if need_emp:
+                        allowed.add("employment")
+                    if need_al:
+                        allowed.add("education / alumni")
+                    sub_ids = [a.id for a in _bi_attrs if _group_of_attr(a) in allowed]
+                    if sub_ids:
+                        rs: list[str] = []
+                        if need_cc:
+                            rs.append("credit_cards")
+                        if need_emp:
+                            rs.append("employment_changed")
+                        if need_al:
+                            rs.append("alumni")
+                        result.append({"agent": _bi_ag, "attribute_ids": sub_ids,
+                                       "reasons": rs, "scored": True})
+    # e-j. single-question full agents.
+    _single_map = [
+        ("has_assets", "asset"),
+        ("has_accounts", "account"),
+        ("expenses", "expense"),
+        ("goals", "goal"),
+        ("income", "income"),
+        ("liabilities", "liability"),
+    ]
+    for qkey, aname in _single_map:
+        if _answer_true(answers, qkey):
+            _push_all(aname, [qkey], True)
+    # k. tax_and_insurance.
+    _ti_ag = _get("tax_and_insurance")
+    if _ti_ag is not None:
+        _ti_attrs = _attrs("tax_and_insurance")
+        if len(_ti_attrs) > 0:
+            need_ins = _answer_true(answers, "insurance")
+            need_tax = _answer_true(answers, "tax")
+            if need_ins and need_tax:
+                result.append({"agent": _ti_ag, "attribute_ids": None,
+                               "reasons": ["insurance", "tax"], "scored": True})
+            elif need_ins:
+                sub_ins = [a.id for a in _ti_attrs if _group_of_attr(a) == "insurance"]
+                if sub_ins:
+                    result.append({"agent": _ti_ag, "attribute_ids": sub_ins,
+                                   "reasons": ["insurance"], "scored": True})
+            elif need_tax:
+                sub_tax = [a.id for a in _ti_attrs
+                           if _group_of_attr(a) in ("tax", "tax / compliance")]
+                if sub_tax:
+                    result.append({"agent": _ti_ag, "attribute_ids": sub_tax,
+                                   "reasons": ["tax"], "scored": True})
+    return result
 
 
 AUTO_REMARK_MISSED = "Auto: identifier listed it, agent returned null"
@@ -325,122 +416,149 @@ def _is_filled_entry(entry) -> bool:
     return True
 
 
-def compute_consistency(identifier_output, outputs, agents_by_id, attrs_by_agent) -> dict:
-    """Pure consistency snapshot for an auto-select run.
+def compute_consistency(answers, outputs, identifier_agent_id="", plan=None) -> dict:
+    """Pure consistency v2 snapshot for an auto-select run.
 
-    - predicted: identifier fillable list for that agent (valid names only).
-    - extracted: output attrs that are filled (value not null/""/[]/{},
-      confidence_type != not_found).
-    - missed/unexpected + Jaccard score per agent; micro score overall.
+    - answers: normalized {key: bool} (11 questions).
+    - outputs: {agent_id: output dict}.
+    - identifier_agent_id: str.
+    - plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
+
+    Per agent: hit (score 1.0) if >=1 filled attr, miss (0.0) if none;
+    errored outputs -> "error" excluded from score; unscored -> "not_scored".
+    Overall = hits / (hits + misses), None when no scored agents.
+    Old positional callers (identifier_output, outputs, agents_by_id,
+    attrs_by_agent) are detected and handled defensively: if ``plan`` looks
+    like an old attrs map, fall back to a minimal v2 with empty plan.
     """
-    agents_by_id = agents_by_id or {}
-    attrs_by_agent = attrs_by_agent or {}
-    outputs = outputs if isinstance(outputs, dict) else {}
-    # Find identifier id: agent with kind == identifier, else output identity.
-    identifier_agent_id = ""
+    # Backward-compat shim: old call shape
+    # compute_consistency(identifier_output, outputs, agents_by_id, attrs_by_agent)
+    # where 3rd arg is a dict and 4th is a dict/None. Detect and degrade.
     try:
-        for aid, ag in (agents_by_id or {}).items():
-            if _agent_kind_of(ag) == IDENTIFIER_KIND:
-                identifier_agent_id = str(aid)
-                break
+        if isinstance(identifier_agent_id, dict) or isinstance(plan, dict):
+            # Old shape: return empty v2 (callers are being migrated; tests updated).
+            _old_outputs = outputs if isinstance(outputs, dict) else {}
+            return {"auto": True, "version": 2, "score": None,
+                    "identifier_agent_id": "",
+                    "answers": _all_false_answers(),
+                    "plan": [],
+                    "agents": {}}
     except Exception:
-        identifier_agent_id = ""
-    if not identifier_agent_id:
+        pass
+    try:
+        answers_norm = normalize_identifier_output(
+            answers if isinstance(answers, dict) else {})
+        if not isinstance(answers_norm, dict) or "_error" in answers_norm:
+            answers_norm = _all_false_answers()
+    except Exception:
+        answers_norm = _all_false_answers()
+    try:
+        outputs_d = outputs if isinstance(outputs, dict) else {}
+    except Exception:
+        outputs_d = {}
+    try:
+        iid = str(identifier_agent_id or "")
+    except Exception:
+        iid = ""
+    try:
+        plan_list = list(plan or [])
+    except Exception:
+        plan_list = []
+    # Deep-copy plan for storage safety.
+    plan_copy: list[dict] = []
+    for entry in plan_list:
+        if not isinstance(entry, dict):
+            continue
         try:
-            for aid, out in outputs.items():
-                if out is identifier_output:
-                    identifier_agent_id = str(aid)
-                    break
+            aid = str(entry.get("agent_id", "") or "")
         except Exception:
-            pass
-    fillable_by_name: dict[str, list[str]] = {}
-    if isinstance(identifier_output, dict) and "_error" not in identifier_output:
-        raw_fillable = identifier_output.get("fillable_attributes", [])
-        if isinstance(raw_fillable, list):
-            for entry in raw_fillable:
-                if not isinstance(entry, dict):
-                    continue
-                an = entry.get("agent")
-                al = entry.get("attributes")
-                if not isinstance(an, str) or not isinstance(al, list):
-                    continue
-                seen: set[str] = set()
-                kept: list[str] = []
-                for n in al:
-                    if not isinstance(n, str) or not n:
-                        continue
-                    if n in seen:
-                        continue
-                    seen.add(n)
-                    kept.append(n)
-                if an not in fillable_by_name:
-                    fillable_by_name[an] = kept
-                else:
-                    for n in kept:
-                        if n not in fillable_by_name[an]:
-                            fillable_by_name[an].append(n)
+            continue
+        if not aid:
+            continue
+        aname = entry.get("agent_name", "")
+        if not isinstance(aname, str):
+            aname = ""
+        reasons = entry.get("reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+        reasons = [r for r in reasons if isinstance(r, str) and r]
+        try:
+            scored = bool(entry.get("scored", False))
+        except Exception:
+            scored = False
+        attrs = entry.get("attributes", [])
+        if not isinstance(attrs, list):
+            attrs = []
+        attrs = [a for a in attrs if isinstance(a, str) and a]
+        plan_copy.append({"agent_id": aid, "agent_name": aname,
+                          "reasons": reasons, "scored": scored,
+                          "attributes": attrs})
     agents_out: dict = {}
-    total_inter = 0
-    total_union = 0
-    for aid, out in outputs.items():
-        if str(aid) == identifier_agent_id:
+    hits = 0
+    misses = 0
+    for entry in plan_copy:
+        aid = entry["agent_id"]
+        aname = entry["agent_name"]
+        reasons = entry["reasons"]
+        scored = entry["scored"]
+        out = outputs_d.get(aid)
+        if isinstance(out, dict) and "_error" in out:
+            agents_out[aid] = {"agent_name": aname, "reasons": reasons,
+                               "scored": scored, "extracted": [],
+                               "status": "error", "score": None}
             continue
-        if not isinstance(out, dict) or "_error" in out:
+        if not isinstance(out, dict):
+            agents_out[aid] = {"agent_name": aname, "reasons": reasons,
+                               "scored": scored, "extracted": [],
+                               "status": "error", "score": None}
             continue
-        ag = (agents_by_id or {}).get(aid)
-        agent_name = _agent_display_name(ag) if ag is not None else ""
-        if not agent_name:
-            continue
-        valid_list = _valid_attr_names((attrs_by_agent or {}).get(aid, []))
-        valid_set = set(valid_list)
-        raw_pred = fillable_by_name.get(agent_name, [])
-        predicted: list[str] = []
-        seen_p: set[str] = set()
-        for n in raw_pred:
-            if n not in valid_set or n in seen_p:
-                continue
-            seen_p.add(n)
-            predicted.append(n)
         extracted: list[str] = []
         try:
-            for attr_name, entry in out.items():
+            for attr_name, ent in out.items():
                 if not isinstance(attr_name, str) or not attr_name:
                     continue
                 if attr_name.startswith("_"):
                     continue
-                if _is_filled_entry(entry):
+                if _is_filled_entry(ent):
                     extracted.append(attr_name)
         except Exception:
             extracted = []
-        pred_set = set(predicted)
-        extr_set = set(extracted)
-        missed = [a for a in predicted if a not in extr_set]
-        unexpected = [a for a in extracted if a not in pred_set]
-        inter = len(pred_set & extr_set)
-        union = len(pred_set | extr_set)
-        score = 1.0 if union == 0 else inter / union
-        total_inter += inter
-        total_union += union
-        agents_out[str(aid)] = {
-            "agent_name": agent_name,
-            "predicted": predicted,
-            "extracted": extracted,
-            "missed": missed,
-            "unexpected": unexpected,
-            "score": float(score),
-        }
-    overall = None if total_union == 0 and not agents_out else (
-        1.0 if total_union == 0 else total_inter / total_union)
-    if not agents_out:
-        overall = None
-    return {"auto": True, "score": overall, "identifier_agent_id": identifier_agent_id, "agents": agents_out}
+        if not scored:
+            agents_out[aid] = {"agent_name": aname, "reasons": reasons,
+                               "scored": False, "extracted": extracted,
+                               "status": "not_scored", "score": None}
+        else:
+            if len(extracted) >= 1:
+                hits += 1
+                agents_out[aid] = {"agent_name": aname, "reasons": reasons,
+                                   "scored": True, "extracted": extracted,
+                                   "status": "hit", "score": 1.0}
+            else:
+                misses += 1
+                agents_out[aid] = {"agent_name": aname, "reasons": reasons,
+                                   "scored": True, "extracted": [],
+                                   "status": "miss", "score": 0.0}
+    denom = hits + misses
+    overall = None if denom == 0 else (hits / denom)
+    try:
+        overall_f = None if overall is None else float(overall)
+    except Exception:
+        overall_f = None
+    return {"auto": True, "version": 2, "score": overall_f,
+            "identifier_agent_id": iid,
+            "answers": dict(answers_norm),
+            "plan": plan_copy,
+            "agents": agents_out}
 
 
 def apply_auto_feedback(feedback, consistency) -> dict:
-    """Return a copy of feedback with auto thumbs for missed/unexpected.
+    """Return a copy of feedback with v2 auto thumbs-down on missed agents.
 
-    Deletes that agent's previous auto entries first; never overwrites a
-    non-auto (manual) entry.
+    For each miss, feedback[agent_name]["__agent__"] = {rating down,
+    remarks "Auto: identifier said <reasons> but agent extracted nothing",
+    auto True}. Removes previous auto entries for that agent first; never
+    overwrites manual entries. No attribute-level autos. Old consistency
+    shapes (no version==2) return a copy unchanged (never crash).
     """
     fb: dict = {}
     try:
@@ -452,21 +570,29 @@ def apply_auto_feedback(feedback, consistency) -> dict:
                 fb[k] = {}
     except Exception:
         fb = {}
+    try:
+        cons_d = consistency if isinstance(consistency, dict) else {}
+    except Exception:
+        return fb
+    try:
+        if cons_d.get("version") != 2:
+            return fb
+    except Exception:
+        return fb
     agents = {}
     try:
-        agents = (consistency or {}).get("agents", {}) or {}
+        agents = cons_d.get("agents", {}) or {}
     except Exception:
         agents = {}
     if not isinstance(agents, dict):
-        agents = {}
+        return fb
     for aid, cons in agents.items():
         if not isinstance(cons, dict):
             continue
         agent_name = cons.get("agent_name", "")
         if not isinstance(agent_name, str) or not agent_name:
             continue
-        missed = cons.get("missed", []) if isinstance(cons.get("missed", []), list) else []
-        unexpected = cons.get("unexpected", []) if isinstance(cons.get("unexpected", []), list) else []
+        # Remove previous auto entries for this agent first.
         agent_map = fb.get(agent_name)
         if not isinstance(agent_map, dict):
             agent_map = {}
@@ -478,31 +604,34 @@ def apply_auto_feedback(feedback, consistency) -> dict:
                     del agent_map[attr]
             except Exception:
                 continue
-        if not agent_map and agent_name in fb and not agent_map:
-            # Keep empty map for now; re-created below if autos apply.
-            pass
-        seen_attrs: set[str] = set()
-        ordered: list[tuple[str, str]] = []
-        for a in missed:
-            if isinstance(a, str) and a and a not in seen_attrs:
-                seen_attrs.add(a)
-                ordered.append((a, AUTO_REMARK_MISSED))
-        for a in unexpected:
-            if isinstance(a, str) and a and a not in seen_attrs:
-                seen_attrs.add(a)
-                ordered.append((a, AUTO_REMARK_UNEXPECTED))
-        for attr, remark in ordered:
-            existing = agent_map.get(attr)
-            if isinstance(existing, dict) and existing.get("auto") is not True:
-                # Manual entry (rating present without auto flag) wins.
-                # Empty dicts left from copies count as absent.
-                if existing.get("rating") in ("up", "down"):
-                    continue
-                if "rating" in existing and existing.get("rating"):
-                    continue
-            agent_map[attr] = {"rating": "down", "remarks": remark, "auto": True}
+        status = cons.get("status", "")
+        if status != "miss":
+            if not agent_map and agent_name in fb:
+                try:
+                    del fb[agent_name]
+                except Exception:
+                    pass
+            continue
+        reasons = cons.get("reasons", [])
+        if not isinstance(reasons, list):
+            reasons = []
+        reasons = [r for r in reasons if isinstance(r, str) and r]
+        remark = f"Auto: identifier said {', '.join(reasons)} but agent extracted nothing"
+        existing = agent_map.get("__agent__")
+        if isinstance(existing, dict) and existing.get("auto") is not True:
+            if existing.get("rating") in ("up", "down"):
+                if not agent_map and agent_name in fb:
+                    # Keep manual-only map.
+                    pass
+                continue
+            if "rating" in existing and existing.get("rating"):
+                continue
+        agent_map["__agent__"] = {"rating": "down", "remarks": remark, "auto": True}
         if not agent_map and agent_name in fb:
-            del fb[agent_name]
+            try:
+                del fb[agent_name]
+            except Exception:
+                pass
     return fb
 
 
@@ -789,17 +918,36 @@ def _load_run_agents(db: Session, agent_ids: list[str]) -> list[Agent]:
 def _build_agent_requests(
     db: Session, *, agents: list[Agent], input_data: str,
     model: str, reasoning_effort: str,
+    attr_subsets: dict | None = None,
 ) -> tuple[dict, dict]:
     """Build (snapshots, requests) exactly like create_run's loop prelude.
 
     Pure DB reads + prompt building. No OpenRouter call, no writes.
     requests[agent.id] is the exact payload_body create_run would POST.
+
+    attr_subsets: optional {agent_id: list[attribute_id] | None} (None = all).
+    When a subset is given, the snapshot, system prompt and schema include
+    only those attributes (in DB order). Default None keeps create_run and
+    every other caller byte-identical for extraction agents.
     """
     effort = (reasoning_effort or "").strip()
     snapshots: dict = {}
     requests: dict = {}
     for agent in agents:
-        attrs = _attrs_for_agent(db, agent.id)
+        all_attrs = _attrs_for_agent(db, agent.id)
+        attrs = all_attrs
+        try:
+            if isinstance(attr_subsets, dict) and agent.id in attr_subsets:
+                sub = attr_subsets.get(agent.id)
+                if sub is None:
+                    attrs = all_attrs
+                elif isinstance(sub, (list, tuple)):
+                    wanted = set(sub)
+                    attrs = [a for a in all_attrs if a.id in wanted]
+                else:
+                    attrs = all_attrs
+        except Exception:
+            attrs = all_attrs
         snapshots[agent.id] = {
             "name": agent.name, "description": agent.description or "",
             "kind": getattr(agent, "kind", None) or EXTRACTION_KIND,
@@ -812,10 +960,8 @@ def _build_agent_requests(
         }
         user_content = input_data
         if is_identifier(agent):
-            # Router path: full attribute list per candidate; strict
-            # agent_selection envelope with fillable_attributes + selected_agents.
-            candidates = identifier_candidates_with_attributes(db, exclude_id=agent.id)
-            system_content = _identifier_system_content(agent, candidates)
+            # Router path: code-owned 11-question prompt; strict boolean envelope.
+            system_content = _identifier_system_content(agent)
             schema: dict | None = build_identifier_schema()
             payload_body = build_chat_payload(
                 model=model, system=system_content, user=user_content,
@@ -1001,7 +1147,7 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     """Run per-agent payloads concurrently (shared machinery).
 
     Returns (outputs, per_agent) with costs None; caller prices + totals.
-    Identifier outputs are normalised.
+    Identifier outputs are normalised to 11 yes/no answers.
     """
     async def _run_one(agent, payload_body):
         parsed, pt, ct, tt, rt, dur = await _call_single_payload(copy.deepcopy(payload_body))
@@ -1016,13 +1162,37 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
         agent_row = agents_by_id.get(aid)
         if agent_row is not None and is_identifier(agent_row):
             try:
-                cands = identifier_candidates_with_attributes(db, exclude_id=aid)
-                parsed = normalize_identifier_output(parsed, cands)
+                parsed = normalize_identifier_output(parsed)
             except Exception:
                 pass
         outputs[aid] = parsed
         per_agent[aid] = _per_agent_entry(pt, ct, tt, rt, dur, model)
     return outputs, per_agent
+
+
+def _agents_by_name_for_planning(db: Session) -> tuple[dict, dict]:
+    """All agents keyed by name + attrs keyed by agent name (DB order)."""
+    try:
+        rows = db.query(Agent).all()
+    except Exception:
+        return {}, {}
+    by_name: dict = {}
+    attrs_by_name: dict = {}
+    for a in rows or []:
+        try:
+            n = getattr(a, "name", "") or ""
+        except Exception:
+            continue
+        if not isinstance(n, str) or not n:
+            continue
+        if n not in by_name:
+            by_name[n] = a
+        try:
+            attrs = _attrs_for_agent(db, a.id)
+        except Exception:
+            attrs = []
+        attrs_by_name[n] = list(attrs or [])
+    return by_name, attrs_by_name
 
 
 def _snapshot_attr_names(snapshot: dict) -> list[str]:
@@ -1416,8 +1586,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         agent_row = agents_by_id.get(aid)
         if agent_row is not None and is_identifier(agent_row):
             try:
-                cands = identifier_candidates_with_attributes(db, exclude_id=aid)
-                parsed = normalize_identifier_output(parsed, cands)
+                parsed = normalize_identifier_output(parsed)
             except Exception:
                 pass
         outputs[aid] = parsed
@@ -1822,10 +1991,13 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
     For each model slot (same order): find the newest auto RunLog with the
     same model + reasoning_effort whose identifier request messages equal
     the identifier request /runs/auto would send now, and whose identifier
-    output has no "_error".
+    output has no "_error". Additionally returns ``agents``: per-agent
+    existing-output info for the always-run agents (planned with all
+    answers false for this meeting_type), via the same matching as
+    check-existing.
     """
     first_effort = (payload.models[0].reasoning_effort or "").strip()
-    _, resolved_data, _, _ = _resolve_run_input(
+    _, resolved_data, _, task_title = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=first_effort)
     identifier = (
@@ -1835,6 +2007,31 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
     if identifier is None:
         raise HTTPException(400, "No agent identifier defined")
     ident_id = identifier.id
+    try:
+        meeting_type = (payload.meeting_type or "").strip() or (task_title or "")
+    except Exception:
+        meeting_type = ""
+    try:
+        agents_by_name, attrs_by_agent_name = _agents_by_name_for_planning(db)
+    except Exception:
+        agents_by_name, attrs_by_agent_name = {}, {}
+    try:
+        always_plan = plan_auto_agents(
+            _all_false_answers(), meeting_type, agents_by_name, attrs_by_agent_name)
+    except Exception:
+        always_plan = []
+    always_agents = []
+    always_subsets: dict = {}
+    try:
+        for entry in always_plan or []:
+            ag = entry.get("agent")
+            if ag is None:
+                continue
+            always_agents.append(ag)
+            always_subsets[ag.id] = entry.get("attribute_ids")
+    except Exception:
+        always_agents = []
+        always_subsets = {}
     slots: list[dict] = []
     for slot in payload.models:
         model = slot.model
@@ -1851,8 +2048,41 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
         log = _find_existing_auto_log(
             db, model=model, reasoning_effort=effort,
             identifier_id=ident_id, expected_messages=exp_msgs)
+        slot_agents: list[dict] = []
+        try:
+            if always_agents:
+                _, always_requests = _build_agent_requests(
+                    db, agents=always_agents, input_data=resolved_data,
+                    model=model, reasoning_effort=effort,
+                    attr_subsets=always_subsets)
+                for ag in always_agents:
+                    try:
+                        exp_b = always_requests.get(ag.id)
+                        exp_m = exp_b.get("messages") if isinstance(exp_b, dict) else None
+                        found = _find_existing_log_for_agent(
+                            db, model=model, reasoning_effort=effort,
+                            agent_id=ag.id, expected_messages=exp_m)
+                    except Exception:
+                        found = None
+                    if found is None:
+                        continue
+                    try:
+                        created_iso, cost, duration = _source_agent_info(found, ag.id)
+                    except Exception:
+                        created_iso, cost, duration = "", None, None
+                    slot_agents.append({
+                        "agent_id": ag.id,
+                        "agent_name": ag.name,
+                        "log_id": found.id,
+                        "created_at": created_iso,
+                        "cost_usd": cost,
+                        "duration_ms": duration,
+                    })
+        except Exception:
+            slot_agents = []
         slots.append({"model": model, "reasoning_effort": effort,
-                      "log": _out(log) if log is not None else None})
+                      "log": _out(log) if log is not None else None,
+                      "agents": slot_agents})
     return {"slots": slots}
 
 
@@ -1893,10 +2123,12 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
 
 @router.post("/auto")
 async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
-    """Auto Select Agents: run identifier, then its selected extraction agents.
+    """Auto Select Agents: 11 yes/no questions, then deterministic routing.
 
-    One log per call (one model). Body is RunCreate minus agent_ids/reuse
-    (those are ignored). Response shape identical to POST /runs.
+    One log per call (one model). Body is RunCreate minus agent_ids
+    (those are ignored); ``reuse`` ({agent_id: source_log_id}) is honoured
+    for any planned agent like create_run. Response shape identical to
+    POST /runs.
     """
     wall_start = perf_counter()
     resolved_type, resolved_data, effort, task_title = _resolve_run_input(
@@ -1909,6 +2141,10 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     if identifier is None:
         raise HTTPException(400, "No agent identifier defined")
     ident_id = identifier.id
+    try:
+        meeting_type = (payload.meeting_type or "").strip() or (task_title or "")
+    except Exception:
+        meeting_type = ""
     snapshots_ident, requests_ident = _build_agent_requests(
         db, agents=[identifier], input_data=resolved_data,
         model=payload.model, reasoning_effort=effort)
@@ -1916,102 +2152,156 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     parsed_ident, ipt, ict, itt, irt, idur = await _call_single_payload(ident_body)
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
         try:
-            cands = identifier_candidates_with_attributes(db, exclude_id=ident_id)
-            parsed_ident = normalize_identifier_output(parsed_ident, cands)
+            parsed_ident = normalize_identifier_output(parsed_ident)
         except Exception:
             pass
     per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model)
     ident_errored = not isinstance(parsed_ident, dict) or "_error" in parsed_ident
     if ident_errored:
-        outputs: dict = {ident_id: parsed_ident}
-        per_agent: dict = {ident_id: per_ident}
-        snapshots = snapshots_ident
-        requests = requests_ident
-        agents = [identifier]
-        agent_ids = [ident_id]
-        consistency = {"auto": True, "score": None, "identifier_agent_id": ident_id, "agents": {}}
-        feedback: dict = {}
+        answers = _all_false_answers()
     else:
-        raw_selected = parsed_ident.get("selected_agents", []) if isinstance(parsed_ident, dict) else []
-        selected_names: list[str] = []
-        if isinstance(raw_selected, list):
-            seen_sel: set[str] = set()
-            for n in raw_selected:
-                if not isinstance(n, str) or not n or n in seen_sel:
-                    continue
-                seen_sel.add(n)
-                selected_names.append(n)
-        rows = (
-            db.query(Agent).filter(Agent.name.in_(selected_names)).all()
-            if selected_names else []
-        )
-        by_name: dict[str, Agent] = {}
-        for r in rows:
-            try:
-                if is_identifier(r):
-                    continue
-                if r.name not in by_name:
-                    by_name[r.name] = r
-            except Exception:
+        try:
+            norm = normalize_identifier_output(parsed_ident)
+            answers = norm if isinstance(norm, dict) and "_error" not in norm else _all_false_answers()
+        except Exception:
+            answers = _all_false_answers()
+    try:
+        agents_by_name, attrs_by_agent_name = _agents_by_name_for_planning(db)
+    except Exception:
+        agents_by_name, attrs_by_agent_name = {}, {}
+    try:
+        planned = plan_auto_agents(answers, meeting_type, agents_by_name, attrs_by_agent_name)
+    except Exception:
+        planned = []
+    planned_agents: list[Agent] = []
+    attr_subsets: dict = {}
+    try:
+        for entry in planned or []:
+            ag = entry.get("agent")
+            if ag is None:
                 continue
-        selected_agents: list[Agent] = []
-        for n in selected_names:
-            ag = by_name.get(n)
-            if ag is not None and ag.id not in {a.id for a in selected_agents}:
-                selected_agents.append(ag)
-        if not selected_agents:
-            outputs = {ident_id: parsed_ident}
-            per_agent = {ident_id: per_ident}
-            snapshots = snapshots_ident
-            requests = requests_ident
-            agents = [identifier]
-            agent_ids = [ident_id]
-            # No checked agents -> score None, but still an auto log.
-            agents_by_id0 = {ident_id: identifier}
-            attrs_by_agent0 = {ident_id: []}
+            planned_agents.append(ag)
+            attr_subsets[ag.id] = entry.get("attribute_ids")
+    except Exception:
+        planned_agents = []
+        attr_subsets = {}
+    snapshots_sel, requests_sel = _build_agent_requests(
+        db, agents=planned_agents, input_data=resolved_data,
+        model=payload.model, reasoning_effort=effort,
+        attr_subsets=attr_subsets)
+    snapshots = {**snapshots_ident, **snapshots_sel}
+    requests = {**requests_ident, **requests_sel}
+    # Per-agent reuse exactly like create_run (invalid entries ignored).
+    reuse_map = getattr(payload, "reuse", None)
+    if not isinstance(reuse_map, dict):
+        reuse_map = {}
+    valid_reuse: dict[str, RunLog] = {}
+    for ag in planned_agents:
+        try:
+            src_id = reuse_map.get(ag.id)
+        except Exception:
+            src_id = None
+        if not isinstance(src_id, str) or not src_id.strip():
+            continue
+        src_id = src_id.strip()
+        try:
+            source = db.query(RunLog).filter(RunLog.id == src_id).first()
+        except Exception:
+            source = None
+        if source is None:
+            continue
+        fresh_body = requests.get(ag.id)
+        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
+        if not _is_valid_reuse_source(
+            source, agent_id=ag.id, model=payload.model,
+            reasoning_effort=effort, expected_messages=fresh_msgs,
+        ):
+            continue
+        valid_reuse[ag.id] = source
+    outputs: dict = {ident_id: parsed_ident}
+    per_agent: dict = {ident_id: per_ident}
+    reused_agents: dict = {}
+    for aid, source in list(valid_reuse.items()):
+        try:
+            src_outs = getattr(source, "outputs", None) or {}
+            if not isinstance(src_outs, dict) or aid not in src_outs:
+                raise KeyError(aid)
+            outputs[aid] = copy.deepcopy(src_outs.get(aid))
+            entry, rid, rat = _build_reused_per_agent(source, aid)
+            per_agent[aid] = entry
+            reused_agents[aid] = {"log_id": rid, "created_at": rat}
+        except Exception:
+            valid_reuse.pop(aid, None)
+            outputs.pop(aid, None)
+            per_agent.pop(aid, None)
+            reused_agents.pop(aid, None)
+            continue
+    fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
+    fresh_requests = {a.id: requests[a.id] for a in fresh_agents if a.id in requests}
+    if fresh_agents:
+        outputs_sel, per_agent_sel = await _execute_agents(db, fresh_agents, fresh_requests, payload.model)
+        for k, v in outputs_sel.items():
+            outputs[k] = v
+        for k, v in per_agent_sel.items():
+            per_agent[k] = v
+    agents = [identifier] + planned_agents
+    agent_ids = [ident_id] + [a.id for a in planned_agents]
+    # Stored plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
+    plan_stored: list[dict] = []
+    try:
+        for entry in planned or []:
+            ag = entry.get("agent")
+            if ag is None:
+                continue
             try:
-                attrs_by_agent0.update({
-                    k: _snapshot_attr_names(v) for k, v in snapshots.items()
-                })
+                snap = snapshots.get(ag.id, {})
+                names = _snapshot_attr_names(snap)
             except Exception:
-                pass
-            consistency = compute_consistency(parsed_ident, outputs, agents_by_id0, attrs_by_agent0)
-            # Ensure identifier id present even when no extraction agents.
-            try:
-                if not consistency.get("identifier_agent_id"):
-                    consistency["identifier_agent_id"] = ident_id
-            except Exception:
-                pass
-            feedback = apply_auto_feedback({}, consistency)
-        else:
-            snapshots_sel, requests_sel = _build_agent_requests(
-                db, agents=selected_agents, input_data=resolved_data,
-                model=payload.model, reasoning_effort=effort)
-            snapshots = {**snapshots_ident, **snapshots_sel}
-            requests = {**requests_ident, **requests_sel}
-            outputs_sel, per_agent_sel = await _execute_agents(db, selected_agents, requests_sel, payload.model)
-            outputs = {ident_id: parsed_ident, **outputs_sel}
-            per_agent = {ident_id: per_ident, **per_agent_sel}
-            agents = [identifier] + selected_agents
-            agent_ids = [ident_id] + [a.id for a in selected_agents]
-            agents_by_id = {a.id: a for a in agents}
-            attrs_by_agent = {}
-            for aid, snap in snapshots.items():
-                attrs_by_agent[str(aid)] = _snapshot_attr_names(snap)
-            consistency = compute_consistency(parsed_ident, outputs, agents_by_id, attrs_by_agent)
-            feedback = apply_auto_feedback({}, consistency)
+                names = []
+            plan_stored.append({
+                "agent_id": ag.id,
+                "agent_name": ag.name,
+                "reasons": list(entry.get("reasons", []) or []),
+                "scored": bool(entry.get("scored", False)),
+                "attributes": list(names),
+            })
+    except Exception:
+        plan_stored = []
+    try:
+        consistency = compute_consistency(answers, outputs, ident_id, plan_stored)
+    except Exception:
+        consistency = {"auto": True, "version": 2, "score": None,
+                       "identifier_agent_id": ident_id,
+                       "answers": dict(answers) if isinstance(answers, dict) else {},
+                       "plan": plan_stored, "agents": {}}
+    try:
+        feedback = apply_auto_feedback({}, consistency)
+    except Exception:
+        feedback = {}
     try:
         prompt_price, completion_price = await get_model_pricing(payload.model)
     except Exception:
         prompt_price, completion_price = None, None
-    _fill_pricing(per_agent, prompt_price, completion_price)
+    # Price ONLY fresh (identifier + fresh planned); reused keep source numbers.
+    try:
+        _fill_pricing(per_agent, prompt_price, completion_price,
+                      skip_ids=set(valid_reuse.keys()))
+    except Exception:
+        pass
     totals = _totals_from_per_agent(per_agent, prompt_price, completion_price)
     wall_ms = (perf_counter() - wall_start) * 1000.0
-    usage = _build_usage(per_agent, payload.model, totals, wall_ms, {})
+    try:
+        for aid in valid_reuse:
+            d = per_agent.get(aid, {}).get("duration_ms")
+            if isinstance(d, (int, float)) and d > wall_ms:
+                wall_ms = float(d)
+    except Exception:
+        pass
+    usage = _build_usage(per_agent, payload.model, totals, wall_ms, reused_agents)
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     client_name = (payload.client or "").strip()
-    meeting_type = (payload.meeting_type or "").strip() or task_title
     meeting_title = (payload.meeting_title or "").strip() or task_title
+    # meeting_type already resolved above (payload or task_title).
     run = Run(input_type=resolved_type, input_data=resolved_data, model=payload.model,
               agent_ids=agent_ids, outputs=outputs)
     db.add(run)
@@ -2058,8 +2348,7 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
             if row is not None:
                 is_ident = is_identifier(row)
         if is_ident and isinstance(parsed, dict) and "_error" not in parsed:
-            cands = identifier_candidates_with_attributes(db, exclude_id=agent_id)
-            parsed = normalize_identifier_output(parsed, cands)
+            parsed = normalize_identifier_output(parsed)
     except Exception:
         pass
     outputs = log.outputs if isinstance(getattr(log, "outputs", None), dict) else {}
@@ -2138,29 +2427,52 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
             del fb[agent_name]
         except Exception:
             pass
-    # Recompute consistency + auto feedback when this is an auto log.
+    # Recompute consistency v2 + auto feedback when this is a v2 auto log.
+    # Old logs (no version) keep consistency as-is.
     try:
         cons_existing = getattr(log, "consistency", None)
     except Exception:
         cons_existing = None
     if isinstance(cons_existing, dict) and bool(cons_existing):
         try:
-            ident_out, all_outputs, agents_by_id, attrs_by_agent, _iid = _consistency_inputs_from_log(log)
-            # all_outputs already includes the fresh retry output via log.outputs.
-            new_cons = compute_consistency(ident_out, dict(log.outputs or {}), agents_by_id, attrs_by_agent)
-            # Preserve identifier id when recompute cannot find it.
-            try:
-                if not new_cons.get("identifier_agent_id"):
-                    old_iid = cons_existing.get("identifier_agent_id", "")
-                    if isinstance(old_iid, str) and old_iid:
-                        new_cons["identifier_agent_id"] = old_iid
-            except Exception:
-                pass
-            log.consistency = new_cons
-            flag_modified(log, "consistency")
-            fb = apply_auto_feedback(fb, new_cons)
+            is_auto = cons_existing.get("auto") is True
         except Exception:
-            pass
+            is_auto = False
+        if is_auto:
+            try:
+                ver = cons_existing.get("version")
+            except Exception:
+                ver = None
+            if ver == 2:
+                try:
+                    stored_answers = cons_existing.get("answers", {})
+                    stored_plan = cons_existing.get("plan", [])
+                    stored_iid = cons_existing.get("identifier_agent_id", "")
+                    if not isinstance(stored_answers, dict):
+                        stored_answers = {}
+                    if not isinstance(stored_plan, list):
+                        stored_plan = []
+                    if not isinstance(stored_iid, str):
+                        stored_iid = ""
+                    new_cons = compute_consistency(
+                        stored_answers, dict(log.outputs or {}),
+                        stored_iid, stored_plan)
+                    # Preserve identifier id when recompute cannot find it.
+                    try:
+                        if not new_cons.get("identifier_agent_id"):
+                            old_iid = cons_existing.get("identifier_agent_id", "")
+                            if isinstance(old_iid, str) and old_iid:
+                                new_cons["identifier_agent_id"] = old_iid
+                    except Exception:
+                        pass
+                    log.consistency = new_cons
+                    flag_modified(log, "consistency")
+                    fb = apply_auto_feedback(fb, new_cons)
+                except Exception:
+                    pass
+            else:
+                # Old shape without version: leave consistency as it is.
+                pass
     log.feedback = fb
     flag_modified(log, "feedback")
     # Mirror the fresh output onto the Run row.

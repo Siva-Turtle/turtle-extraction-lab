@@ -1,20 +1,16 @@
-"""Coverage: Agent Identifier meta-agent (kind == identifier).
-
-The router lists EVERY extraction agent followed by ALL its attributes,
-selects an agent when even ONE attribute is fillable, and reports the
-fillable attributes per agent via a strict `agent_selection` json_schema
-envelope (fillable_attributes first, then selected_agents).
-"""
+"""Coverage: Agent Identifier 11 yes/no questions + deterministic routing."""
 
 import app.modules.runs.router as runs_router
 from app.core.openrouter import build_chat_payload
 from app.db.models import Agent
 from app.modules.runs.router import (
+    IDENTIFIER_QUESTIONS,
+    IDENTIFIER_INSTRUCTION,
     IDENTIFIER_SCHEMA_NAME,
     _identifier_system_content,
     build_identifier_schema,
-    identifier_candidates_with_attributes,
     normalize_identifier_output,
+    plan_auto_agents,
 )
 
 
@@ -24,41 +20,43 @@ def _make_agent(client, name, **kw):
     return client.post("/api/v1/agents", json=body).json()
 
 
-def _make_attr(client, agent_id, name, description=""):
+def _make_attr(client, agent_id, name, description="", group=""):
     return client.post("/api/v1/attributes", json={
         "agent_ids": [agent_id], "name": name,
-        "description": description or name}).json()
+        "description": description or name, "group": group}).json()
+
+
+def test_identifier_questions_order_and_text():
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    assert keys == [
+        "has_assets", "has_accounts", "credit_cards", "employment_changed",
+        "alumni", "expenses", "goals", "income", "insurance",
+        "liabilities", "tax",
+    ]
+    by_key = {q["key"]: q["question"] for q in IDENTIFIER_QUESTIONS}
+    assert by_key["has_assets"] == (
+        "Did the Client mention about their assets? (Any mention of asset type like - "
+        "bonds, cash, commodity, ETFs, mutual funds, crypto, debt instruments, deposits, "
+        "equity, personal debt that they have given to someone, real estate or property, "
+        "REITS, unlisted stocks or any other asset type)")
+    assert by_key["credit_cards"] == (
+        "Did the Client mention that they have or don't have credit card(s)?")
+    assert by_key["tax"] == (
+        'Did the Client mention anything related to "Advance Tax, Rental TDS, '
+        'tax filing in India, tax filing outside India, GST services, W8 BEN"')
 
 
 def test_identifier_schema_shape():
     schema = build_identifier_schema()
     assert schema["type"] == "object"
-    assert schema["required"] == ["fillable_attributes", "selected_agents"]
+    expected_keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    assert list(schema["properties"].keys()) == expected_keys
+    assert schema["required"] == expected_keys
     assert schema["additionalProperties"] is False
-    # Property ORDER matters — fillable_attributes first.
-    assert list(schema["properties"].keys()) == [
-        "fillable_attributes", "selected_agents"]
-    fillable = schema["properties"]["fillable_attributes"]
-    assert fillable["type"] == "array"
-    assert fillable["description"] == (
-        "Each agent with at least one fillable attribute")
-    item = fillable["items"]
-    assert item["type"] == "object"
-    assert list(item["properties"].keys()) == ["agent", "attributes"]
-    assert item["required"] == ["agent", "attributes"]
-    assert item["additionalProperties"] is False
-    assert item["properties"]["agent"] == {
-        "type": "string", "description": "Agent name"}
-    assert item["properties"]["attributes"] == {
-        "type": "array", "items": {"type": "string"},
-        "description": "Fillable attribute names"}
-    assert schema["properties"]["selected_agents"] == {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": "Names of the extraction agents to run",
-    }
+    for q in IDENTIFIER_QUESTIONS:
+        prop = schema["properties"][q["key"]]
+        assert prop == {"type": "boolean", "description": q["question"]}
     assert "$ref" not in str(schema)
-    # Strict: no nullable/union fields anywhere in the envelope.
     assert "null" not in str(schema)
 
 
@@ -77,130 +75,57 @@ def test_envelope_builder_schema_name_branch():
     }
 
 
-def test_identifier_system_lists_full_attribute_lists(db):
+def test_identifier_system_content_code_owned():
     ident = Agent(name="agent_identifier", kind="identifier",
-                  system_instruction="")
-    db.add(ident)
-    db.commit()
-    system = _identifier_system_content(ident, [
-        ("basic_info", "Basic desc",
-         [("client_name", "Client name desc"), ("dob", "DOB desc")]),
-        ("tax_and_insurance", "Tax + cover",
-         [("w8_ben", "W8BEN desc")]),
-        ("empty_agent", "Empty",
-         []),
-    ])
-    assert "Candidate agents and their attributes:" in system
-    assert "## basic_info: Basic desc" in system
-    assert "- client_name: Client name desc" in system
-    assert "- dob: DOB desc" in system
-    assert "## tax_and_insurance: Tax + cover" in system
-    assert "- w8_ben: W8BEN desc" in system
-    assert "## empty_agent: Empty" in system
-    assert "- (no attributes defined)" in system
-    assert "Rules:" in system
-    assert "AT LEAST ONE" in system
-    assert '"fillable_attributes"' in system
-    assert '"selected_agents"' in system
-    assert '{"fillable_attributes": [], "selected_agents": []}' in system
-    # Extraction-only contract never rides the router prompt...
+                  system_instruction="DB IGNORED custom")
+    system = _identifier_system_content(ident)
+    # DB instruction ignored.
+    assert "DB IGNORED" not in system
+    assert "Turtle Finance" in system
+    assert "advisors" in system.lower() or "advisor" in system.lower()
+    assert "true or false" in system.lower()
+    assert "CLIENT" in system
+    assert "strictly" in system.lower()
+    # Numbered list Q1..Q11.
+    for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
+        assert f"Q{i} ({q['key']}): {q['question']}" in system
+    # No candidate roster.
+    assert "Candidate agents" not in system
     assert runs_router.RESULT_CONTRACT not in system
 
 
-def test_identifier_prompt_lists_every_attribute_of_every_candidate(
-        client, db):
-    kc = _make_agent(client, "kc_and_feedback",
-                     description="Karma feedback",
-                     kind="extraction")
-    _make_attr(client, kc["id"], "kc_taker_attitude", "Attitude desc")
-    _make_attr(client, kc["id"], "overall_sentiment", "Sentiment desc")
-    tax = _make_agent(client, "tax_and_insurance", description="Tax + cover")
-    _make_attr(client, tax["id"], "w8_ben", "W8BEN desc")
-    _make_attr(client, tax["id"], "advance_tax", "Advance tax desc")
-    ident = _make_agent(client, "agent_identifier",
-                        description="Router.",
-                        kind="identifier")["id"]
-    ident_row = db.query(Agent).filter(Agent.id == ident).first()
-    candidates = identifier_candidates_with_attributes(
-        db, exclude_id=ident_row.id)
-    by_name = {n: attrs for n, _, attrs in candidates}
-    assert set(by_name) == {"kc_and_feedback", "tax_and_insurance"}
-    assert [n for n, _, _ in candidates] == [
-        "kc_and_feedback", "tax_and_insurance"]  # ordered by name
-    assert set(a for a, _ in by_name["kc_and_feedback"]) == {
-        "kc_taker_attitude", "overall_sentiment"}
-    assert set(a for a, _ in by_name["tax_and_insurance"]) == {
-        "w8_ben", "advance_tax"}
-    from app.modules.runs.router import _identifier_candidates, _attrs_for_agent
-    for cand in _identifier_candidates(db, exclude_id=ident_row.id):
-        expected = [(a.name, a.description or "")
-                    for a in _attrs_for_agent(db, cand.id)]
-        assert (cand.name, cand.description or "", expected) in candidates
-    system = _identifier_system_content(ident_row, candidates)
-    for name, _, attrs in candidates:
-        assert f"## {name}" in system
-        for attr_name, attr_desc in attrs:
-            assert f"- {attr_name}: {attr_desc}" in system
-
-
 def test_identifier_preview_branch(client):
-    kc = _make_agent(client, "kc_and_feedback",
-                     description="Karma feedback",
+    kc = _make_agent(client, "kc_and_feedback", description="Karma feedback",
                      kind="extraction")
-    _make_attr(client, kc["id"], "kc_taker_attitude", "Attitude desc")
-    _make_attr(client, kc["id"], "overall_sentiment", "Sentiment desc")
-    tax = _make_agent(client, "tax_and_insurance", description="Tax + cover")
-    _make_attr(client, tax["id"], "w8_ben", "W8BEN desc")
-    _make_attr(client, tax["id"], "advance_tax", "Advance tax desc")
-    ident = _make_agent(client, "agent_identifier",
-                        description="Router.",
+    _make_attr(client, kc["id"], "kc_attr", group="Karma Conversation")
+    ident = _make_agent(client, "agent_identifier", description="Router.",
                         kind="identifier")["id"]
 
     body = client.get(f"/api/v1/agents/{ident}/prompt-preview").json()
-    assert body["attributes"] == []  # no attribute lists on the router
+    assert body["attributes"] == []
     assert body["response_format"] == {
         "type": "json_schema",
         "json_schema": {"name": "agent_selection", "strict": True,
                         "schema": build_identifier_schema()},
     }
-    assert "## kc_and_feedback: Karma feedback" in body["system"]
-    assert "- kc_taker_attitude: Attitude desc" in body["system"]
-    assert "- overall_sentiment: Sentiment desc" in body["system"]
-    assert "## tax_and_insurance: Tax + cover" in body["system"]
-    assert "- w8_ben: W8BEN desc" in body["system"]
-    assert "- advance_tax: Advance tax desc" in body["system"]
-    assert '"fillable_attributes"' in body["system"]
-    names = [c["name"] for c in body["candidates"]]
-    assert names == ["kc_and_feedback", "tax_and_insurance"]  # self excluded
-    for cand in body["candidates"]:
-        assert set(cand.keys()) == {"name", "description", "attributes"}
-        assert "example_attributes" not in cand
-        for attr in cand["attributes"]:
-            assert set(attr.keys()) == {"name", "description"}
-    kc_cand = next(c for c in body["candidates"]
-                   if c["name"] == "kc_and_feedback")
-    assert {a["name"] for a in kc_cand["attributes"]} == {
-        "kc_taker_attitude", "overall_sentiment"}
-    assert {a["name"]: a["description"] for a in kc_cand["attributes"]} == {
-        "kc_taker_attitude": "Attitude desc",
-        "overall_sentiment": "Sentiment desc"}
+    assert "Turtle Finance" in body["system"]
+    assert "Q1 (has_assets)" in body["system"]
+    assert "Q11 (tax)" in body["system"]
+    assert body["candidates"] == []
+    assert len(body["questions"]) == 11
 
-    # Extraction agents keep the meeting_extraction envelope.
     plain = client.get(f"/api/v1/agents/{kc['id']}/prompt-preview").json()
     assert plain["response_format"]["json_schema"]["name"] == "meeting_extraction"
-    assert "selected_agents" not in plain["system"]
 
 
-def test_identifier_run_path_uses_selection_envelope(client, monkeypatch):
+def test_identifier_run_path_uses_boolean_envelope(client, monkeypatch):
     seen = {}
 
     async def _capture(payload):
         seen.setdefault("calls", []).append(payload)
-        return ({"fillable_attributes": [
-            {"agent": "kc_and_feedback",
-             "attributes": ["overall_sentiment"]}],
-            "selected_agents": ["kc_and_feedback"]},
-            {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6})
+        out = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+        out["has_assets"] = True
+        return (out, {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6})
 
     async def _fake_pricing(model):
         return (None, None)
@@ -216,155 +141,207 @@ def test_identifier_run_path_uses_selection_envelope(client, monkeypatch):
     body = client.post("/api/v1/runs", json={
         "input_type": "transcription", "input_data": "advisor was great",
         "agent_ids": [ident], "model": "m"}).json()
-    assert body["outputs"][ident] == {
-        "fillable_attributes": [
-            {"agent": "kc_and_feedback",
-             "attributes": ["overall_sentiment"]}],
-        "selected_agents": ["kc_and_feedback"]}
+    assert body["outputs"][ident]["has_assets"] is True
+    assert body["outputs"][ident]["tax"] is False
     assert len(seen["calls"]) == 1
     call = seen["calls"][0]
-    # Same transcript user message as extraction runs — verbatim, no wrapping.
     assert call["messages"][1] == {"role": "user", "content": "advisor was great"}
     assert call["response_format"]["json_schema"]["name"] == "agent_selection"
-    assert "## kc_and_feedback: Karma feedback" in call["messages"][0]["content"]
-    assert "- overall_sentiment" in call["messages"][0]["content"]
-    assert runs_router.RESULT_CONTRACT not in call["messages"][0]["content"]
-    # Stored request + denormalized snapshot carry kind/description.
-    assert body["requests"][ident] == call
+    assert "Q1 (has_assets)" in call["messages"][0]["content"]
+    assert "Turtle Finance" in call["messages"][0]["content"]
     snap = client.get("/api/v1/logs").json()[0]["agent_snapshot"][ident]
     assert snap["kind"] == "identifier"
-    assert snap["description"] == "Router."
     assert snap["attributes"] == []
 
 
-def test_identifier_run_path_normalises_output(client, monkeypatch):
-    """Model returns unknown agent/attr: run stores the normalised object."""
-    async def _capture(payload):
-        return ({"fillable_attributes": [
-            {"agent": "kc_and_feedback",
-             "attributes": ["overall_sentiment", "nope_unknown"]},
-            {"agent": "ghost_agent", "attributes": ["overall_sentiment"]}],
-            "selected_agents": ["kc_and_feedback", "ghost_agent"]},
-            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
-
-    async def _fake_pricing(model):
-        return (None, None)
-
-    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
-    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
-
-    kc = _make_agent(client, "kc_and_feedback", description="Karma feedback")
-    _make_attr(client, kc["id"], "overall_sentiment")
-    ident = _make_agent(client, "agent_identifier", description="Router.",
-                        kind="identifier")["id"]
-    body = client.post("/api/v1/runs", json={
-        "input_type": "transcription", "input_data": "hello",
-        "agent_ids": [ident], "model": "m"}).json()
-    assert body["outputs"][ident] == {
-        "fillable_attributes": [
-            {"agent": "kc_and_feedback",
-             "attributes": ["overall_sentiment"]}],
-        "selected_agents": ["kc_and_feedback"]}
-
-
-def test_identifier_run_path_empty_list(client, monkeypatch):
-    async def _capture(payload):
-        return ({"fillable_attributes": [], "selected_agents": []},
-                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-
-    async def _fake_pricing(model):
-        return (None, None)
-
-    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
-    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
-
-    ident = _make_agent(client, "agent_identifier", kind="identifier")["id"]
-    body = client.post("/api/v1/runs", json={
-        "input_type": "transcription", "input_data": "hello",
-        "agent_ids": [ident], "model": "m"}).json()
-    assert body["outputs"][ident] == {
-        "fillable_attributes": [], "selected_agents": []}
-
-
-def test_normalize_drops_invalid_agent():
-    candidates = [("a", "A desc", [("x", "X"), ("y", "Y")])]
-    parsed = {"fillable_attributes": [{"agent": "b", "attributes": ["x"]}],
-              "selected_agents": ["b"]}
-    assert normalize_identifier_output(parsed, candidates) == {
-        "fillable_attributes": [], "selected_agents": []}
-
-
-def test_normalize_drops_unknown_attr_dedupes_keeps_order():
-    candidates = [("a", "A desc", [("x", "X"), ("y", "Y")])]
-    parsed = {"fillable_attributes": [
-        {"agent": "a",
-         "attributes": ["y", "unknown", "x", "x", "y", 123]}],
-        "selected_agents": []}
-    assert normalize_identifier_output(parsed, candidates) == {
-        "fillable_attributes": [{"agent": "a", "attributes": ["y", "x"]}],
-        "selected_agents": ["a"]}
-
-
-def test_normalize_selected_agents_unioned():
-    candidates = [("a", "A", [("x", "X")]), ("b", "B", [("y", "Y")])]
-    parsed = {"fillable_attributes": [{"agent": "b", "attributes": ["y"]}],
-              "selected_agents": ["a", "ghost", "a"]}
-    assert normalize_identifier_output(parsed, candidates) == {
-        "fillable_attributes": [{"agent": "b", "attributes": ["y"]}],
-        "selected_agents": ["a", "b"]}
-    # Reverse: fillable-only agent joins the model's selection.
-    parsed2 = {"fillable_attributes": [{"agent": "a", "attributes": ["x"]}],
-               "selected_agents": ["b"]}
-    assert normalize_identifier_output(parsed2, candidates) == {
-        "fillable_attributes": [{"agent": "a", "attributes": ["x"]}],
-        "selected_agents": ["b", "a"]}
+def test_normalize_boolean_answers():
+    parsed = {"has_assets": True, "insurance": "TrUe", "tax": "FALSE",
+              "income": 1, "goals": "yes"}
+    out = normalize_identifier_output(parsed)
+    assert out["has_assets"] is True
+    assert out["insurance"] is True
+    assert out["tax"] is False
+    assert out["income"] is False
+    assert out["goals"] is False
+    # Missing keys become False.
+    assert out["liabilities"] is False
+    assert set(out.keys()) == {q["key"] for q in IDENTIFIER_QUESTIONS}
 
 
 def test_normalize_non_dict_untouched():
     for bad in (["x"], "str", None, 42):
-        assert normalize_identifier_output(bad, []) is bad
+        assert normalize_identifier_output(bad) is bad
     err = {"_error": "boom"}
-    assert normalize_identifier_output(err, []) == {"_error": "boom"}
+    assert normalize_identifier_output(err) == {"_error": "boom"}
+    # Old two-arg call still works (second arg ignored).
+    assert normalize_identifier_output({"has_assets": True}, [])["has_assets"] is True
 
 
-def test_identifier_candidates_exclude_identifier_kind(client, db):
-    _make_agent(client, "plain_one", description="P1")
-    _make_agent(client, "agent_identifier", kind="identifier")
-    rows = identifier_candidates_with_attributes(db)
-    assert [n for n, _, _ in rows] == ["plain_one"]
-    assert rows[0][2] == []  # no attributes linked yet
+# --- plan_auto_agents unit tests (fake Agent/Attribute objects) ---
+
+class _FakeAgent:
+    def __init__(self, name, aid=None, kind="extraction", is_enabled=True):
+        self.name = name
+        self.id = aid or f"id-{name}"
+        self.kind = kind
+        self.is_enabled = is_enabled
 
 
-def test_identifier_selection_feedback_saved_to_log(client, monkeypatch):
-    async def _capture(payload):
-        return ({"fillable_attributes": [
-            {"agent": "kc_and_feedback",
-             "attributes": ["overall_sentiment"]}],
-            "selected_agents": ["kc_and_feedback"]},
-            {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+class _FakeAttr:
+    def __init__(self, aid, group=""):
+        self.id = aid
+        self.group_name = group
 
-    async def _fake_pricing(model):
-        return (None, None)
 
-    monkeypatch.setattr(runs_router, "complete_json_payload", _capture)
-    monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
+def _plan_setup(extra_attrs=None, disabled=None):
+    names = ["behavioral", "query", "kc_and_feedback", "basic_info",
+             "asset", "account", "expense", "goal", "income",
+             "liability", "tax_and_insurance"]
+    by_name = {}
+    attrs_by_name = {}
+    for n in names:
+        is_en = False if disabled == n else True
+        by_name[n] = _FakeAgent(n, is_enabled=is_en)
+        attrs_by_name[n] = [_FakeAttr(f"{n}-a1"), _FakeAttr(f"{n}-a2")]
+    # kc_and_feedback groups.
+    attrs_by_name["kc_and_feedback"] = [
+        _FakeAttr("kc-karma", "Karma Conversation"),
+        _FakeAttr("kc-feedback", "Feedback"),
+        _FakeAttr("kc-sent", "Sentiment"),
+    ]
+    # basic_info groups.
+    attrs_by_name["basic_info"] = [
+        _FakeAttr("bi-bank", "Banking"),
+        _FakeAttr("bi-emp", "Employment"),
+        _FakeAttr("bi-alu", "Education / Alumni"),
+        _FakeAttr("bi-other", "Other"),
+    ]
+    # tax_and_insurance groups.
+    attrs_by_name["tax_and_insurance"] = [
+        _FakeAttr("ti-ins", "Insurance"),
+        _FakeAttr("ti-tax", "Tax"),
+        _FakeAttr("ti-comp", "Tax / Compliance"),
+        _FakeAttr("ti-other", "Other"),
+    ]
+    if extra_attrs:
+        for k, v in extra_attrs.items():
+            attrs_by_name[k] = v
+    return by_name, attrs_by_name
 
-    ident = _make_agent(client, "agent_identifier", description="Router.",
-                        kind="identifier")
-    body = client.post("/api/v1/runs", json={
-        "input_type": "transcription", "input_data": "hello",
-        "agent_ids": [ident["id"]], "model": "m"}).json()
-    rid = body["id"]
 
-    fb = client.post(f"/api/v1/runs/{rid}/feedback", json={
-        "agent_name": ident["name"], "attribute_name": "selected_agents",
-        "rating": "up", "remarks": "good routing"}).json()
-    assert fb == {"ok": True}
-    logs = client.get("/api/v1/logs").json()
-    assert logs[0]["feedback"] == {
-        ident["name"]: {"selected_agents": {"rating": "up", "remarks": "good routing"}}}
-    got = client.get(f"/api/v1/runs/{rid}/feedback").json()
-    assert len(got) == 1
-    assert (got[0]["agent_name"], got[0]["attribute_name"],
-            got[0]["rating"], got[0]["remarks"]) == (
-        ident["name"], "selected_agents", "up", "good routing")
+def _false_answers():
+    return {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+
+
+def _plan_names(plan):
+    return [e["agent"].name for e in plan]
+
+
+def test_plan_all_false_only_always():
+    by_name, attrs_by = _plan_setup()
+    plan = plan_auto_agents(_false_answers(), "Some Review", by_name, attrs_by)
+    assert _plan_names(plan) == ["behavioral", "query", "kc_and_feedback"]
+    # kc without Karma group.
+    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
+    assert kc["reasons"] == ["always"]
+    assert kc["scored"] is False
+    assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+    for e in plan:
+        assert e["scored"] is False
+
+
+def test_plan_kc_meeting_full():
+    by_name, attrs_by = _plan_setup()
+    plan = plan_auto_agents(_false_answers(), "Karma Conversation with Client",
+                            by_name, attrs_by)
+    assert _plan_names(plan) == ["behavioral", "query", "kc_and_feedback", "basic_info"]
+    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
+    assert kc["attribute_ids"] is None
+    assert kc["reasons"] == ["always", "meeting:karma_conversation"]
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] is None
+    assert bi["reasons"] == ["meeting:karma_conversation"]
+    assert bi["scored"] is False
+
+
+def test_plan_kickoff_meeting():
+    by_name, attrs_by = _plan_setup()
+    for mt in ["Kick-off Call", "kickoff meeting", "Kick Off session"]:
+        plan = plan_auto_agents(_false_answers(), mt, by_name, attrs_by)
+        assert "basic_info" in _plan_names(plan)
+        bi = next(e for e in plan if e["agent"].name == "basic_info")
+        assert bi["attribute_ids"] is None
+        assert bi["reasons"] == ["meeting:kick_off"]
+        kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
+        assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+
+
+def test_plan_employment_only_subset():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["employment_changed"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-emp"]
+    assert bi["reasons"] == ["employment_changed"]
+    assert bi["scored"] is True
+    kc = next(e for e in plan if e["agent"].name == "kc_and_feedback")
+    assert set(kc["attribute_ids"]) == {"kc-feedback", "kc-sent"}
+
+
+def test_plan_credit_cards_only():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["credit_cards"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-bank"]
+    assert bi["reasons"] == ["credit_cards"]
+
+
+def test_plan_insurance_only_tax_only_both():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["insurance"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    ti = next(e for e in plan if e["agent"].name == "tax_and_insurance")
+    assert ti["attribute_ids"] == ["ti-ins"]
+    assert ti["reasons"] == ["insurance"]
+
+    ans2 = _false_answers()
+    ans2["tax"] = True
+    plan2 = plan_auto_agents(ans2, "Other", by_name, attrs_by)
+    ti2 = next(e for e in plan2 if e["agent"].name == "tax_and_insurance")
+    assert set(ti2["attribute_ids"]) == {"ti-tax", "ti-comp"}
+    assert ti2["reasons"] == ["tax"]
+
+    ans3 = _false_answers()
+    ans3["insurance"] = True
+    ans3["tax"] = True
+    plan3 = plan_auto_agents(ans3, "Other", by_name, attrs_by)
+    ti3 = next(e for e in plan3 if e["agent"].name == "tax_and_insurance")
+    assert ti3["attribute_ids"] is None
+    assert ti3["reasons"] == ["insurance", "tax"]
+
+
+def test_plan_disabled_agent_skipped():
+    by_name, attrs_by = _plan_setup(disabled="behavioral")
+    plan = plan_auto_agents(_false_answers(), "Other", by_name, attrs_by)
+    assert "behavioral" not in _plan_names(plan)
+    assert "query" in _plan_names(plan)
+
+    by_name2, attrs_by2 = _plan_setup(disabled="asset")
+    ans = _false_answers()
+    ans["has_assets"] = True
+    plan2 = plan_auto_agents(ans, "Other", by_name2, attrs_by2)
+    assert "asset" not in _plan_names(plan2)
+
+
+def test_plan_group_matching_case_insensitive_strip():
+    by_name, attrs_by = _plan_setup()
+    attrs_by["basic_info"] = [_FakeAttr("x1", "  BANKING  ")]
+    ans = _false_answers()
+    ans["credit_cards"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["x1"]

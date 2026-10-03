@@ -396,6 +396,7 @@ type CheckExistingAutoSlot = {
   model?: unknown;
   reasoning_effort?: unknown;
   log?: unknown;
+  agents?: unknown;
 };
 
 /** Total cost USD from an auto-run log (`usage.total_cost_usd` or equivalent). */
@@ -544,6 +545,12 @@ export default function TestLab() {
     basePayload: Record<string, unknown>;
     reuseLogs: Record<string, string>;
     logs: Record<string, LogRow>;
+  } | null>(null);
+  const [pendingAutoAgents, setPendingAutoAgents] = React.useState<{
+    slots: ModelSlot[];
+    basePayload: Record<string, unknown>;
+    reuse: Record<string, Record<string, string>>;
+    details: Record<string, ExistingAgent[]>;
   } | null>(null);
 
   const multi = useMultiRun();
@@ -711,6 +718,9 @@ export default function TestLab() {
             const validKeys = new Set(currentSlots.map((s) => `${s.model}|${s.effort}`));
             const logs: Record<string, LogRow> = {};
             const reuseLogs: Record<string, string> = {};
+            const reuse: Record<string, Record<string, string>> = {};
+            const details: Record<string, ExistingAgent[]> = {};
+            let anyReusableAgents = false;
             for (const entry of slotEntries) {
               if (!entry || typeof entry.model !== "string") continue;
               const effort =
@@ -718,19 +728,57 @@ export default function TestLab() {
               const k = `${entry.model}|${effort}`;
               // Only keep entries for currently requested slots.
               if (!validKeys.has(k)) continue;
-              if (k in logs) continue;
-              const log = entry.log;
-              if (!log || typeof log !== "object" || Array.isArray(log)) continue;
-              const id = (log as Record<string, unknown>).id;
-              if (typeof id !== "string" || id === "") continue;
-              logs[k] = log as LogRow;
-              reuseLogs[k] = id;
+              if (!(k in logs)) {
+                const log = entry.log;
+                if (log && typeof log === "object" && !Array.isArray(log)) {
+                  const id = (log as Record<string, unknown>).id;
+                  if (typeof id === "string" && id !== "") {
+                    logs[k] = log as LogRow;
+                    reuseLogs[k] = id;
+                  }
+                }
+              }
+              // Always-run agents for this slot (same shape as check-existing).
+              const rawAgents = Array.isArray(entry.agents) ? entry.agents : [];
+              const clean: ExistingAgent[] = [];
+              for (const raw of rawAgents as CheckExistingAgent[]) {
+                if (!raw || typeof raw.agent_id !== "string" || typeof raw.log_id !== "string") {
+                  continue;
+                }
+                if (raw.log_id === "") continue;
+                clean.push({
+                  agent_id: raw.agent_id,
+                  agent_name:
+                    typeof raw.agent_name === "string" && raw.agent_name.trim() !== ""
+                      ? raw.agent_name
+                      : raw.agent_id,
+                  log_id: raw.log_id,
+                  created_at: typeof raw.created_at === "string" ? raw.created_at : "",
+                  cost_usd: typeof raw.cost_usd === "number" ? raw.cost_usd : null,
+                });
+              }
+              details[k] = clean;
+              if (clean.length > 0) {
+                anyReusableAgents = true;
+                const map: Record<string, string> = {};
+                for (const c of clean) map[c.agent_id] = c.log_id;
+                reuse[k] = map;
+              }
             }
-            if (Object.keys(logs).length === 0) {
-              multi.start(currentSlots, basePayload, { auto: true });
+            if (Object.keys(logs).length > 0) {
+              setPendingAutoRun({ slots: currentSlots, basePayload, reuseLogs, logs });
               return;
             }
-            setPendingAutoRun({ slots: currentSlots, basePayload, reuseLogs, logs });
+            // Whole auto run does not exist, but some always-run agents do.
+            for (const s of currentSlots) {
+              const k = `${s.model}|${s.effort}`;
+              if (!(k in details)) details[k] = [];
+            }
+            if (anyReusableAgents) {
+              setPendingAutoAgents({ slots: currentSlots, basePayload, reuse, details });
+              return;
+            }
+            multi.start(currentSlots, basePayload, { auto: true });
           },
           () => {
             // Any error (including 404 on old backends): run as today.
@@ -1255,6 +1303,96 @@ export default function TestLab() {
                 }}
               >
                 Show last output
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pendingAutoAgents && (
+        <Modal title="Output already exists" onClose={() => setPendingAutoAgents(null)}>
+          <div className="grid gap-3">
+            <ul className="grid gap-2">
+              {pendingAutoAgents.slots.map((s) => {
+                const k = `${s.model}|${s.effort}`;
+                const reusable = pendingAutoAgents.details[k] ?? [];
+                if (reusable.length === 0) {
+                  return (
+                    <li
+                      key={k}
+                      className="grid gap-1 rounded-xl border border-dashed border-[#e5e7eb] px-3 py-2 dark:border-white/10"
+                    >
+                      <span
+                        className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                        title={s.model}
+                      >
+                        {modelLabel(s.model, s.effort)}
+                      </span>
+                      <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
+                    </li>
+                  );
+                }
+                return (
+                  <li
+                    key={k}
+                    className="grid gap-1.5 rounded-xl border border-[#e5e7eb] bg-[#f1f2f3]/60 px-3 py-2 dark:border-white/10 dark:bg-white/5"
+                  >
+                    <span
+                      className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                      title={s.model}
+                    >
+                      {modelLabel(s.model, s.effort)}
+                    </span>
+                    <span className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]">
+                      These agents were already extracted for {modelLabel(s.model, s.effort)}
+                    </span>
+                    <ul className="grid gap-1">
+                      {reusable.map((r) => (
+                        <li
+                          key={r.agent_id}
+                          className="flex items-baseline justify-between gap-3 font-sans text-xs"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-[#1d1d1d] dark:text-[#F0EFEC]">
+                            {r.agent_name}
+                          </span>
+                          <span
+                            className="shrink-0 text-[#4a5058] dark:text-[#C3C2B7]"
+                            title={r.created_at || undefined}
+                          >
+                            {r.created_at ? fmtRelative(r.created_at) : "previous run"}
+                            {" · "}
+                            {fmtCostBoth(r.cost_usd)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={() => setPendingAutoAgents(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const p = pendingAutoAgents;
+                  setPendingAutoAgents(null);
+                  multi.start(p.slots, p.basePayload, { auto: true });
+                }}
+              >
+                Regenerate
+              </Button>
+              <Button
+                autoFocus
+                onClick={() => {
+                  const p = pendingAutoAgents;
+                  setPendingAutoAgents(null);
+                  multi.start(p.slots, p.basePayload, { auto: true, reuse: p.reuse });
+                }}
+              >
+                Reuse
               </Button>
             </div>
           </div>

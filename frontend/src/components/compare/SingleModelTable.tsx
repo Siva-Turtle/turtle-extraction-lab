@@ -3,7 +3,13 @@ import { Pencil } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
-import { fillableAttributesOf, formatValue, selectedAgentsOf } from "../../lib/format";
+import {
+  IDENTIFIER_QUESTION_KEYS,
+  fillableAttributesOf,
+  formatValue,
+  identifierAnswersOf,
+  selectedAgentsOf,
+} from "../../lib/format";
 import type { LogRow } from "../../lib/logTypes";
 import { cn } from "../../lib/cn";
 import { Badge } from "../ui/Badge";
@@ -40,13 +46,24 @@ function agentReuse(log: LogRow, agentId: string): { createdAt: string | null } 
   }
 }
 
-/** Agent card title with a Reused badge when this agent was reused. */
+/** Agent card title with Reused + __agent__ auto badges. */
 function AgentTitle({ log, agentId, name }: { log: LogRow; agentId: string; name: string }) {
   const reused = agentReuse(log, agentId);
+  const autoCell = savedFeedback(log, name, "__agent__");
+  const showAuto = autoCell !== null && autoCell.rating !== "";
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <CardTitle className="min-w-0">{name}</CardTitle>
       {reused && <ReusedBadge fromCreatedAt={reused.createdAt} />}
+      {showAuto && (
+        <span
+          title={autoCell.remarks || undefined}
+          className="inline-flex items-center gap-1 rounded-full border border-[#e5e7eb] px-1.5 py-0.5 font-sans text-[10px] font-bold text-[#4a5058] dark:border-white/10 dark:text-[#C3C2B7]"
+        >
+          <span aria-hidden="true">{autoCell.rating === "up" ? "👍" : "👎"}</span>
+          Auto
+        </span>
+      )}
     </div>
   );
 }
@@ -97,7 +114,7 @@ function AutoTag(): React.JSX.Element {
   );
 }
 
-/** Consistency line for one agent card ("Consistency X% · missed: … · unexpected: …"). */
+/** Consistency line: v2 (status + reasons) or old (missed/unexpected). */
 function ConsistencyLine({
   log,
   agentId,
@@ -107,10 +124,38 @@ function ConsistencyLine({
 }): React.JSX.Element | null {
   const entry = log.consistency?.agents?.[agentId];
   if (!entry) return null;
-  const pct = Math.round(entry.score * 100);
+  const isV2 = (log.consistency as { version?: unknown } | null | undefined)?.version === 2;
+  if (isV2) {
+    const status = typeof entry.status === "string" ? entry.status : "";
+    const reasons = Array.isArray(entry.reasons) ? entry.reasons : [];
+    const label =
+      status === "hit"
+        ? "hit"
+        : status === "miss"
+          ? "miss"
+          : status === "error"
+            ? "error"
+            : status === "not_scored"
+              ? (reasons.includes("always") ? "always" : "not scored")
+              : status || "—";
+    const parts: string[] = [label];
+    if (reasons.length > 0) parts.push(reasons.join(", "));
+    if (typeof entry.score === "number" && Number.isFinite(entry.score)) {
+      parts.push(`${Math.round(entry.score * 100)}%`);
+    }
+    return (
+      <p
+        className="mt-1.5 font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+        title="Auto routing: identifier answers vs what the agent extracted"
+      >
+        {parts.join(" · ")}
+      </p>
+    );
+  }
+  const score = typeof entry.score === "number" ? Math.round(entry.score * 100) : null;
   const missed = (entry.missed ?? []).filter((s) => s.trim() !== "");
   const unexpected = (entry.unexpected ?? []).filter((s) => s.trim() !== "");
-  const parts: string[] = [`Consistency ${pct}%`];
+  const parts: string[] = [score === null ? "Consistency —" : `Consistency ${score}%`];
   if (missed.length > 0) parts.push(`missed: ${missed.join(", ")}`);
   if (unexpected.length > 0) parts.push(`unexpected: ${unexpected.join(", ")}`);
   return (
@@ -463,6 +508,27 @@ export function SingleModelTable({
                 )}
               </div>
               <IdentifierFeedback log={log} agentName={agentName} saved={saved} />
+            </div>
+          );
+        }
+        const answers = identifierAnswersOf(out);
+        if (answers !== null) {
+          return (
+            <div key={agentId} className="min-w-0 max-w-full rounded-2xl border border-[#e5e7eb] p-4 dark:border-white/10">
+              <AgentTitle log={log} agentId={agentId} name={agentName} />
+              <div className="mt-2 grid gap-1.5">
+                {IDENTIFIER_QUESTION_KEYS.map((k) => {
+                  const yes = answers[k] === true;
+                  return (
+                    <div key={k} className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]" title={k}>
+                        {k}
+                      </span>
+                      <Badge tone={yes ? "success" : "neutral"}>{yes ? "Yes" : "No"}</Badge>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         }

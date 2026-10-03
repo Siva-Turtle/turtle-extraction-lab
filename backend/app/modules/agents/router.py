@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.modules.agents.schemas import AgentCreate, AgentOut, AgentUpdate
 from app.modules.runs.router import (
     EXTRACTION_KIND,
+    IDENTIFIER_QUESTIONS,
     IDENTIFIER_SCHEMA_NAME,
     _agent_system_content,
     _attrs_for_agent,
@@ -15,7 +16,6 @@ from app.modules.runs.router import (
     _snapshot_props,
     build_extraction_schema,
     build_identifier_schema,
-    identifier_candidates_with_attributes,
     is_identifier,
 )
 
@@ -96,10 +96,9 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(404, "agent not found")
     if is_identifier(row):
-        # Router preview: full attribute roster per candidate (same builders
-        # the run path uses) + strict agent_selection envelope.
-        candidates = identifier_candidates_with_attributes(db, exclude_id=row.id)
-        system = _identifier_system_content(row, candidates)
+        # Router preview: code-owned 11-question prompt (DB instruction
+        # ignored) + strict boolean envelope. No candidate roster.
+        system = _identifier_system_content(row)
         schema = build_identifier_schema()
         response_format = {
             "type": "json_schema",
@@ -111,10 +110,9 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
             "user_template": USER_TEMPLATE,
             "response_format": response_format,
             "attributes": [],
-            "candidates": [{"name": n, "description": d,
-                            "attributes": [{"name": an, "description": ad}
-                                           for an, ad in attrs]}
-                           for n, d, attrs in candidates],
+            "candidates": [],
+            "questions": [{"key": q["key"], "question": q["question"]}
+                          for q in IDENTIFIER_QUESTIONS],
         }
     attrs = _attrs_for_agent(db, agent_id)
     system = _agent_system_content(row, attrs)
