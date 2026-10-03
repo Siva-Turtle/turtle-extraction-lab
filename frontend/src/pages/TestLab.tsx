@@ -8,7 +8,7 @@ import type { ModelInfo } from "../lib/api";
 import { fmtCostBoth, fmtRelative, modelLabel, serverDetail } from "../lib/format";
 import { unionAgentsFromLogs } from "../lib/compareData";
 import { estimateRunCost } from "../lib/estimate";
-import type { ColumnStatus, CompareAgent, CompareColumn, ModelSlot } from "../lib/logTypes";
+import type { ColumnStatus, CompareAgent, CompareColumn, LogRow, ModelSlot } from "../lib/logTypes";
 import { cn } from "../lib/cn";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -392,6 +392,25 @@ type CheckExistingSlot = {
   agents?: unknown;
 };
 
+type CheckExistingAutoSlot = {
+  model?: unknown;
+  reasoning_effort?: unknown;
+  log?: unknown;
+};
+
+/** Total cost USD from an auto-run log (`usage.total_cost_usd` or equivalent). */
+function autoCostUsd(log: LogRow): number | null {
+  const usage = log.usage as unknown as
+    | { total_cost_usd?: unknown; cost_usd?: unknown; total_cost?: unknown; cost?: unknown }
+    | undefined;
+  if (!usage || typeof usage !== "object") return null;
+  const candidates = [usage.total_cost_usd, usage.cost_usd, usage.total_cost, usage.cost];
+  for (const c of candidates) {
+    if (typeof c === "number" && Number.isFinite(c)) return c;
+  }
+  return null;
+}
+
 function StatusBadge({ status }: { status: ColumnStatus }): React.JSX.Element {
   if (status === "done") return <Badge tone="success">done</Badge>;
   if (status === "partial") return <Badge tone="warning">partial</Badge>;
@@ -519,6 +538,12 @@ export default function TestLab() {
     reuse: Record<string, Record<string, string>>;
     details: Record<string, ExistingAgent[]>;
     selectedIds: string[];
+  } | null>(null);
+  const [pendingAutoRun, setPendingAutoRun] = React.useState<{
+    slots: ModelSlot[];
+    basePayload: Record<string, unknown>;
+    reuseLogs: Record<string, string>;
+    logs: Record<string, LogRow>;
   } | null>(null);
 
   const multi = useMultiRun();
@@ -665,7 +690,54 @@ export default function TestLab() {
     const currentSlots = [...slots];
     const currentSelected = [...selected];
     if (autoSelect) {
-      multi.start(currentSlots, basePayload, { auto: true });
+      setChecking(true);
+      api
+        .post("/runs/check-existing-auto", {
+          ...basePayload,
+          models: currentSlots.map((s) => ({ model: s.model, reasoning_effort: s.effort })),
+        })
+        .then(
+          (res) => {
+            setChecking(false);
+            const data = res.data as { slots?: unknown };
+            const slotEntries = Array.isArray(data?.slots)
+              ? (data.slots as CheckExistingAutoSlot[])
+              : null;
+            // Unknown shape: run fresh with no popup.
+            if (!slotEntries) {
+              multi.start(currentSlots, basePayload, { auto: true });
+              return;
+            }
+            const validKeys = new Set(currentSlots.map((s) => `${s.model}|${s.effort}`));
+            const logs: Record<string, LogRow> = {};
+            const reuseLogs: Record<string, string> = {};
+            for (const entry of slotEntries) {
+              if (!entry || typeof entry.model !== "string") continue;
+              const effort =
+                typeof entry.reasoning_effort === "string" ? entry.reasoning_effort : "";
+              const k = `${entry.model}|${effort}`;
+              // Only keep entries for currently requested slots.
+              if (!validKeys.has(k)) continue;
+              if (k in logs) continue;
+              const log = entry.log;
+              if (!log || typeof log !== "object" || Array.isArray(log)) continue;
+              const id = (log as Record<string, unknown>).id;
+              if (typeof id !== "string" || id === "") continue;
+              logs[k] = log as LogRow;
+              reuseLogs[k] = id;
+            }
+            if (Object.keys(logs).length === 0) {
+              multi.start(currentSlots, basePayload, { auto: true });
+              return;
+            }
+            setPendingAutoRun({ slots: currentSlots, basePayload, reuseLogs, logs });
+          },
+          () => {
+            // Any error (including 404 on old backends): run as today.
+            setChecking(false);
+            multi.start(currentSlots, basePayload, { auto: true });
+          },
+        );
       return;
     }
     setChecking(true);
@@ -1103,6 +1175,86 @@ export default function TestLab() {
                 }}
               >
                 Reuse existing, run the rest
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pendingAutoRun && (
+        <Modal title="Auto run already exists" onClose={() => setPendingAutoRun(null)}>
+          <div className="grid gap-3">
+            <p className="font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]">
+              These models were already auto-run on this input with the same identifier prompt.
+            </p>
+            <ul className="grid gap-2">
+              {pendingAutoRun.slots.map((s) => {
+                const k = `${s.model}|${s.effort}`;
+                const log = pendingAutoRun.logs[k];
+                if (!log) {
+                  return (
+                    <li
+                      key={k}
+                      className="grid gap-1 rounded-xl border border-dashed border-[#e5e7eb] px-3 py-2 dark:border-white/10"
+                    >
+                      <span
+                        className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                        title={s.model}
+                      >
+                        {modelLabel(s.model, s.effort)}
+                      </span>
+                      <span className="font-sans text-xs text-[#8a8f98]">will run fresh</span>
+                    </li>
+                  );
+                }
+                const cost = autoCostUsd(log);
+                const createdAt =
+                  typeof log.created_at === "string" ? log.created_at : "";
+                return (
+                  <li
+                    key={k}
+                    className="grid gap-1 rounded-xl border border-[#e5e7eb] bg-[#f1f2f3]/60 px-3 py-2 dark:border-white/10 dark:bg-white/5"
+                  >
+                    <span
+                      className="min-w-0 truncate font-mono text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                      title={s.model}
+                    >
+                      {modelLabel(s.model, s.effort)}
+                    </span>
+                    <span
+                      className="font-sans text-xs text-[#4a5058] dark:text-[#C3C2B7]"
+                      title={createdAt || undefined}
+                    >
+                      {createdAt ? fmtRelative(createdAt) : "previous run"}
+                      {cost !== null ? ` · ${fmtCostBoth(cost)}` : ""}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={() => setPendingAutoRun(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const p = pendingAutoRun;
+                  setPendingAutoRun(null);
+                  multi.start(p.slots, p.basePayload, { auto: true });
+                }}
+              >
+                Regenerate
+              </Button>
+              <Button
+                autoFocus
+                onClick={() => {
+                  const p = pendingAutoRun;
+                  setPendingAutoRun(null);
+                  multi.start(p.slots, p.basePayload, { auto: true, reuseLogs: p.reuseLogs });
+                }}
+              >
+                Show last output
               </Button>
             </div>
           </div>

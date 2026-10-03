@@ -47,7 +47,9 @@ function stripAgentIds(payload: Record<string, unknown>): Record<string, unknown
  * `run_group_id`, all at once. Columns stay in picker order and fill in as
  * each call settles. Pass `{ reuse }` for per-agent reuse (non-auto only);
  * pass `{ auto: true }` to post `/runs/auto` per slot (payload minus
- * agent_ids). Single-model runs use the same path.
+ * agent_ids). Pass `{ auto: true, reuseLogs }` (slotKey -> log_id) to POST
+ * `/runs/reuse` for those columns instead of `/runs/auto`; `retry()` always
+ * re-posts `/runs/auto` (fresh). Single-model runs use the same path.
  */
 export function useMultiRun(): {
   groupId: string;
@@ -57,7 +59,11 @@ export function useMultiRun(): {
   start: (
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { reuse?: Record<string, Record<string, string>>; auto?: boolean },
+    opts?: {
+      reuse?: Record<string, Record<string, string>>;
+      auto?: boolean;
+      reuseLogs?: Record<string, string>;
+    },
   ) => void;
   retry: (key: string) => void;
   retryAgent: (colKey: string, agentId: string) => void;
@@ -102,12 +108,25 @@ export function useMultiRun(): {
   function start(
     slots: ModelSlot[],
     basePayload: Record<string, unknown>,
-    opts?: { reuse?: Record<string, Record<string, string>>; auto?: boolean },
+    opts?: {
+      reuse?: Record<string, Record<string, string>>;
+      auto?: boolean;
+      reuseLogs?: Record<string, string>;
+    },
   ) {
     const gid = crypto.randomUUID().replaceAll("-", "");
     const now = Date.now();
     const auto = opts?.auto === true;
     const reuse = auto ? {} : (opts?.reuse ?? {});
+    // SlotKey -> log_id, only honoured when auto is true. Cleaned defensively.
+    const reuseLogs: Record<string, string> = {};
+    if (auto && opts?.reuseLogs && typeof opts.reuseLogs === "object") {
+      for (const [k, v] of Object.entries(opts.reuseLogs)) {
+        if (typeof k === "string" && typeof v === "string" && v !== "") {
+          reuseLogs[k] = v;
+        }
+      }
+    }
     // Every column POSTs /runs with `reuse` for that slot ({} = fresh).
     const reuseForColumn: Record<string, Record<string, string>> = {};
     const cols: CompareColumn[] = slots.map((s) => {
@@ -142,6 +161,13 @@ export function useMultiRun(): {
       return;
     }
     const jobs = cols.map((col) => {
+      const reuseLogId = auto ? reuseLogs[col.key] : undefined;
+      if (reuseLogId) {
+        return api.post("/runs/reuse", { log_id: reuseLogId, run_group_id: gid }).then(
+          (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
+          (e: unknown) => applyHttpError(col.key, e),
+        );
+      }
       const body = auto
         ? {
             ...stripAgentIds(basePayload),
