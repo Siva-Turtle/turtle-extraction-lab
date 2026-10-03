@@ -541,7 +541,6 @@ export default function TestLab() {
   const [selected, setSelected] = React.useState<string[]>([]);
   const [clientId, setClientId] = React.useState("");
   const [selectedMeetingTypes, setSelectedMeetingTypes] = React.useState<string[]>([]);
-  const [meetingDate, setMeetingDate] = React.useState("");
   const [meetingId, setMeetingId] = React.useState("");
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
@@ -620,11 +619,10 @@ export default function TestLab() {
   const meetingsQuery = useQuery({
     // The type filter is applied client-side on the derived type (the
     // backend only exact-matches full titles) — never sent as `title`.
-    queryKey: ["meetings", clientId, meetingDate],
+    queryKey: ["meetings", clientId],
     queryFn: async () => {
       const params: Record<string, string> = {};
       if (clientId) params.client_id = clientId;
-      if (meetingDate) params.date = meetingDate;
       return (await api.get("/meetings", { params })).data as { meetings: MeetingSummary[] };
     },
     staleTime: 30 * 1000,
@@ -667,12 +665,6 @@ export default function TestLab() {
 
   function handleTypeChange(v: string[]) {
     setSelectedMeetingTypes(v);
-    setMeetingId("");
-    setPreviewOpen(false);
-  }
-
-  function handleDateChange(v: string) {
-    setMeetingDate(v);
     setMeetingId("");
     setPreviewOpen(false);
   }
@@ -936,7 +928,6 @@ export default function TestLab() {
   });
 
   const clientDisabled = clientsQuery.isLoading || clientsDetail !== null;
-  const dateDisabled = false;
   const meetingDisabled = meetingsQuery.isLoading || meetingsDetail !== null;
 
   const compareAgents = React.useMemo(
@@ -990,27 +981,16 @@ export default function TestLab() {
     <div className="grid gap-4">
       <Card>
         <div className="grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div>
-              <span className={fieldLabel}>Input type</span>
-              <input
-                value="transcription"
-                disabled
-                aria-label="Input type (locked to transcription)"
-                className={cn(fieldInput, "h-11 opacity-70")}
-              />
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <KeyStatusBadge />
             </div>
-            <div className="sm:col-span-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <KeyStatusBadge />
-              </div>
-              <ModelSlotsPicker
-                slots={slots}
-                onChange={setSlots}
-                models={modelsMeta?.models ?? []}
-                estimates={estimates}
-              />
-            </div>
+            <ModelSlotsPicker
+              slots={slots}
+              onChange={setSlots}
+              models={modelsMeta?.models ?? []}
+              estimates={estimates}
+            />
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
@@ -1050,12 +1030,10 @@ export default function TestLab() {
             </div>
             <div className="flex items-end">
               <input
-                type="date"
-                value={meetingDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                disabled={dateDisabled}
-                aria-label="Meeting start date"
-                className={cn(fieldInput, "h-11 disabled:cursor-not-allowed disabled:opacity-50")}
+                value="transcription"
+                disabled
+                aria-label="Input type (locked to transcription)"
+                className={cn(fieldInput, "h-11 opacity-70")}
               />
             </div>
           </div>

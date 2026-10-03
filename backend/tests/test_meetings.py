@@ -132,8 +132,11 @@ def test_clients_503_when_no_mongo(client, monkeypatch):
     _empty_settings(monkeypatch)
     resp = client.get("/api/v1/meetings/clients")
     assert resp.status_code == 503
-    assert "MONGODB_URI" in resp.json()["detail"]
-    assert "backend/.env" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "MONGODB_URI" in detail
+    assert "backend/.env" in detail
+    assert "(then restart the backend)" in detail
+    assert "could not connect" not in detail
 
 
 def test_titles_503_when_no_mongo(client, monkeypatch):
@@ -155,6 +158,59 @@ def test_transcript_503_when_no_mongo(client, monkeypatch):
     resp = client.get("/api/v1/meetings/abc123/transcript")
     assert resp.status_code == 503
     assert "MONGODB_URI" in resp.json()["detail"]
+
+
+def test_clients_503_connect_error_hides_uri(client, monkeypatch):
+    monkeypatch.setattr(settings, "mongodb_uri", "mongodb://fake-user:fake-pass@fake-host:27017/db")
+
+    def _boom(uri):
+        raise ConnectionError("boom")
+
+    monkeypatch.setattr(meetings_router, "_mongo_client", _boom)
+    meetings_router.clear_cache()
+    resp = client.get("/api/v1/meetings/clients")
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail == "MongoDB unavailable: could not connect (ConnectionError)"
+    assert "MONGODB_URI" not in detail
+    assert "mongodb://" not in detail.lower()
+    assert "fake-host" not in detail
+    assert "fake-user" not in detail
+    assert "fake-pass" not in detail
+
+
+def test_meetings_503_query_error_hides_uri(client, monkeypatch):
+    monkeypatch.setattr(settings, "mongodb_uri", "mongodb://fake-user:fake-pass@fake-host:27017/db")
+
+    class BoomCollection:
+        def find(self, *args, **kwargs):
+            raise TimeoutError("timed out")
+
+        def find_one(self, *args, **kwargs):
+            raise TimeoutError("timed out")
+
+    class BoomDB:
+        def __getitem__(self, name):
+            return BoomCollection()
+
+    class BoomClient:
+        def __getitem__(self, name):
+            assert name == "turtle-finance-db"
+            return BoomDB()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(meetings_router, "_mongo_client", lambda uri: BoomClient())
+    meetings_router.clear_cache()
+    resp = client.get("/api/v1/meetings", params={"client_id": "C001"})
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail == "MongoDB unavailable: could not connect (TimeoutError)"
+    assert "mongodb://" not in detail.lower()
+    assert "fake-host" not in detail
+    assert "fake-user" not in detail
+    assert "fake-pass" not in detail
 
 
 def test_titles_for_client_matches_both_id_forms(client, monkeypatch):

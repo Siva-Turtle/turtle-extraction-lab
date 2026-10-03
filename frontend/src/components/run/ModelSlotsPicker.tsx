@@ -8,7 +8,7 @@ import { effortOptionsFor } from "../../lib/models";
 import { useIsNarrow } from "../../lib/useIsNarrow";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
-import { ModelCombobox, loadFavouriteModels } from "../ui/Combobox";
+import { ModelCombobox } from "../ui/Combobox";
 
 const PRESETS_KEY = "lab:model-presets";
 
@@ -59,8 +59,15 @@ function savePresets(presets: Preset[]) {
 const endpointsCache = new Map<string, ModelEndpoint[]>();
 const endpointsFailed = new Set<string>();
 
-function endpointLabel(e: ModelEndpoint): string {
-  return e.quantization ? `${e.name} (${e.quantization})` : e.name;
+export function endpointLabel(e: ModelEndpoint): string {
+  const base = e.name;
+  const slug = (e.slug ?? "").trim();
+  const slash = slug.indexOf("/");
+  const variant = slash >= 0 ? slug.slice(slash + 1).trim() : "";
+  const labelBase = variant ? `${base} · ${variant}` : base;
+  const q = (e.quantization ?? "").trim();
+  if (q === "" || q.toLowerCase() === "unknown") return labelBase;
+  return `${labelBase} (${q})`;
 }
 
 function fmtPer1M(pricePerToken: number | null | undefined): string {
@@ -104,7 +111,7 @@ function priceForSlot(
 /**
  * Multi-model slot picker: selected slots as a table
  * (`# | Model | Effort | Provider | Price in/out per 1M | actions`),
- * plus an add-model combobox, a favourites row, and localStorage presets.
+ * plus an add-model combobox and localStorage presets.
  */
 export function ModelSlotsPicker({
   slots,
@@ -125,7 +132,6 @@ export function ModelSlotsPicker({
   const meta = React.useMemo(() => ({ live: true, models }), [models]);
   const [presets, setPresets] = React.useState<Preset[]>(loadPresets);
   const [presetsOpen, setPresetsOpen] = React.useState(false);
-  const [favTick, setFavTick] = React.useState(0);
   const narrow = useIsNarrow();
   const [endpointsByModel, setEndpointsByModel] = React.useState<Record<string, ModelEndpoint[]>>(
     () => {
@@ -139,14 +145,6 @@ export function ModelSlotsPicker({
   );
   const [loadingModels, setLoadingModels] = React.useState<Record<string, boolean>>({});
   const inFlightRef = React.useRef<Set<string>>(new Set());
-
-  // Favourites are starred inside the combobox dropdown (which owns its own
-  // state), so refresh the row when the window regains focus.
-  React.useEffect(() => {
-    const refresh = () => setFavTick((t) => t + 1);
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, []);
 
   // Lazily fetch provider endpoints per model when a row is added.
   React.useEffect(() => {
@@ -213,7 +211,7 @@ export function ModelSlotsPicker({
                     : null,
               });
             }
-            clean.sort((a, b) => a.name.localeCompare(b.name));
+            clean.sort((a, b) => endpointLabel(a).localeCompare(endpointLabel(b)));
             endpointsCache.set(m, clean);
             setEndpointsByModel((prev) => ({ ...prev, [m]: clean }));
           },
@@ -232,13 +230,6 @@ export function ModelSlotsPicker({
         });
     }
   }, [slots]);
-
-  const favourites = React.useMemo((): string[] => {
-    void favTick;
-    return loadFavouriteModels().filter(
-      (f) => !slots.some((s) => s.model === f && s.effort === "" && (s.provider ?? "") === ""),
-    );
-  }, [favTick, slots]);
 
   const full = slots.length >= max;
 
@@ -348,10 +339,16 @@ export function ModelSlotsPicker({
                 const endpoints = endpointsByModel[s.model] ?? endpointsCache.get(s.model) ?? [];
                 // Defensive: de-duplicate by slug (first wins) so the
                 // select never shows a duplicate option / duplicate key.
+                // Distinct endpoints can still share a display label, so
+                // drop label duplicates too (first wins).
                 const seenProviderSlugs = new Set<string>();
+                const seenProviderLabels = new Set<string>();
                 const providerOptions = endpoints.filter((e) => {
                   if (seenProviderSlugs.has(e.slug)) return false;
                   seenProviderSlugs.add(e.slug);
+                  const label = endpointLabel(e);
+                  if (seenProviderLabels.has(label)) return false;
+                  seenProviderLabels.add(label);
                   return true;
                 });
                 const loading = loadingModels[s.model] === true;
@@ -457,24 +454,6 @@ export function ModelSlotsPicker({
       <div title={full ? `Max ${max} models` : undefined}>
         <ModelCombobox mode="add" onChange={addModel} disabled={full} />
       </div>
-      {favourites.length > 0 && !full && (
-        <div className="flex flex-wrap items-center gap-1.5" aria-label="Favourite models">
-          <span className="font-heading text-[11px] font-bold uppercase tracking-wide text-[#8a8f98]">
-            Favourites
-          </span>
-          {favourites.map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => addModel(f)}
-              title={f}
-              className="max-w-48 truncate rounded-full border border-[#e5e7eb] bg-[#f1f2f3] px-2.5 py-1 font-mono text-[11px] text-[#4a5058] hover:border-[#1d1d1d] hover:text-[#1d1d1d] dark:border-white/10 dark:bg-white/10 dark:text-[#C3C2B7] dark:hover:border-white/40 dark:hover:text-[#F0EFEC]"
-            >
-              {shortModel(f)}
-            </button>
-          ))}
-        </div>
-      )}
       <div>
         <Button variant="secondary" size="sm" onClick={() => setPresetsOpen((o) => !o)} aria-expanded={presetsOpen}>
           Presets

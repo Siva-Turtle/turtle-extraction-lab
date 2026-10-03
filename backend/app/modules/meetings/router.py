@@ -67,17 +67,24 @@ def _cache_set(key: str, value: Any) -> None:
     _CACHE[key] = (time.time() + CACHE_TTL_SECONDS, value)
 
 
-def _mongo_503() -> HTTPException:
+def _mongo_missing() -> HTTPException:
     return HTTPException(
         status_code=503,
-        detail="MongoDB unavailable: set MONGODB_URI in backend/.env",
+        detail="MongoDB unavailable: set MONGODB_URI in backend/.env (then restart the backend)",
+    )
+
+
+def _mongo_connect(exc: BaseException) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=f"MongoDB unavailable: could not connect ({type(exc).__name__})",
     )
 
 
 def _require_mongo_uri() -> str:
     uri = (settings.mongodb_uri or "").strip()
     if not uri:
-        raise _mongo_503()
+        raise _mongo_missing()
     return uri
 
 
@@ -91,14 +98,14 @@ def _fetch_mongo_docs() -> list[dict]:
     uri = _require_mongo_uri()
     try:
         client = _mongo_client(uri)
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     try:
         coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
         # Read-only: find only.
         return list(coll.find({}, {"clientId": 1, "fullName": 1, "email": 1}))
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     finally:
         try:
             client.close()
@@ -110,8 +117,8 @@ def _fetch_mongo_client_doc(client_id: str) -> dict | None:
     uri = _require_mongo_uri()
     try:
         client = _mongo_client(uri)
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     try:
         coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
         doc = coll.find_one({"clientId": client_id}, {"clientId": 1, "fullName": 1, "email": 1})
@@ -131,12 +138,12 @@ def _fetch_mongo_client_doc(client_id: str) -> dict | None:
         except Exception:
             try:
                 return coll.find_one({"_id": client_id}, {"clientId": 1, "fullName": 1, "email": 1})
-            except Exception:
-                raise _mongo_503()
+            except Exception as exc:
+                raise _mongo_connect(exc)
     except HTTPException:
         raise
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     finally:
         try:
             client.close()
@@ -149,8 +156,8 @@ def _find_tasks(filt: dict, proj: dict | None = None) -> list[dict]:
     uri = _require_mongo_uri()
     try:
         client = _mongo_client(uri)
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     try:
         coll = client[MONGO_DB][MONGO_TASKS_COLLECTION]
         # Read-only: find only.
@@ -158,8 +165,8 @@ def _find_tasks(filt: dict, proj: dict | None = None) -> list[dict]:
         return [d for d in docs if isinstance(d, dict)]
     except HTTPException:
         raise
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     finally:
         try:
             client.close()
@@ -171,8 +178,8 @@ def _fetch_task_by_id(meeting_id: str) -> dict | None:
     uri = _require_mongo_uri()
     try:
         client = _mongo_client(uri)
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     try:
         coll = client[MONGO_DB][MONGO_TASKS_COLLECTION]
         key: Any = meeting_id
@@ -198,8 +205,8 @@ def _fetch_task_by_id(meeting_id: str) -> dict | None:
         return None
     except HTTPException:
         raise
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     finally:
         try:
             client.close()
@@ -217,8 +224,8 @@ def _fetch_client_doc_by_ref(ref: Any) -> dict | None:
     uri = _require_mongo_uri()
     try:
         client = _mongo_client(uri)
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     try:
         coll = client[MONGO_DB][MONGO_CLIENTS_COLLECTION]
         candidates: list = []
@@ -248,8 +255,8 @@ def _fetch_client_doc_by_ref(ref: Any) -> dict | None:
         return None
     except HTTPException:
         raise
-    except Exception:
-        raise _mongo_503()
+    except Exception as exc:
+        raise _mongo_connect(exc)
     finally:
         try:
             client.close()
