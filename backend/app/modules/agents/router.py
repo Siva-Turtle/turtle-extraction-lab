@@ -15,7 +15,7 @@ from app.modules.runs.router import (
     _snapshot_props,
     build_extraction_schema,
     build_identifier_schema,
-    identifier_candidates_with_examples,
+    identifier_candidates_with_attributes,
     is_identifier,
 )
 
@@ -96,9 +96,9 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(404, "agent not found")
     if is_identifier(row):
-        # Router preview: candidate roster, NOT attribute lists; strict
-        # agent_selection envelope (same builders the run path uses).
-        candidates = identifier_candidates_with_examples(db, exclude_id=row.id)
+        # Router preview: full attribute roster per candidate (same builders
+        # the run path uses) + strict agent_selection envelope.
+        candidates = identifier_candidates_with_attributes(db, exclude_id=row.id)
         system = _identifier_system_content(row, candidates)
         schema = build_identifier_schema()
         response_format = {
@@ -111,8 +111,10 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
             "user_template": USER_TEMPLATE,
             "response_format": response_format,
             "attributes": [],
-            "candidates": [{"name": n, "description": d, "example_attributes": e}
-                           for n, d, e in candidates],
+            "candidates": [{"name": n, "description": d,
+                            "attributes": [{"name": an, "description": ad}
+                                           for an, ad in attrs]}
+                           for n, d, attrs in candidates],
         }
     attrs = _attrs_for_agent(db, agent_id)
     system = _agent_system_content(row, attrs)

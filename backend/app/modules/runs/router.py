@@ -46,10 +46,9 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 # --- Agent Identifier meta-agent (kind == "identifier") -------------------
-# The identifier skips irrelevant agents to save tokens: it reads the same
-# transcript user message plus a candidate list (name + description per
-# extraction agent, WITHOUT attribute lists, plus a few uncommon example
-# attributes to disambiguate) and returns the subset of agent names to run.
+# The identifier lists EVERY extraction agent followed by ALL its
+# attributes, then reports which attributes are fillable. An agent is
+# selected when at least one of its attributes can be extracted.
 # Its prompt is built at prompt/preview/run time, never stored per-run
 # except inside the denormalized log snapshots/requests.
 
@@ -58,19 +57,11 @@ EXTRACTION_KIND = "extraction"
 IDENTIFIER_SCHEMA_NAME = "agent_selection"
 
 IDENTIFIER_INSTRUCTION = (
-    "You are an agent router. Read the input transcript and decide which "
-    "candidate extraction agents are relevant to it. Select an agent only "
-    "when the transcript clearly contains data in its coverage area. When "
-    "in doubt, include the agent — extraction agents omit missing "
-    "attributes themselves. Return strictly the selection object."
+    "You are an agent router. Read the input and, for every candidate agent, "
+    "check each of its attributes against the input. Select an agent when "
+    "even one of its attributes can be extracted. Return strictly the "
+    "selection object."
 )
-
-# Curated uncommon example attributes per agent for disambiguation.
-# Fallback (agents not listed here): first 3 attribute names, sorted.
-IDENTIFIER_EXAMPLE_ATTRS: dict[str, list[str]] = {
-    "kc_and_feedback": ["kc_taker_attitude", "kc_taker_readiness", "kc_taker_knowledge"],
-    "tax_and_insurance": ["w8_ben"],
-}
 
 
 def is_identifier(agent: Agent) -> bool:
@@ -79,17 +70,38 @@ def is_identifier(agent: Agent) -> bool:
 
 
 def build_identifier_schema() -> dict:
-    """Strict structured-output schema for the identifier: a list of names."""
+    """Strict structured-output schema for the identifier.
+
+    Property ORDER matters — fillable_attributes first, then
+    selected_agents. No nullable/union fields.
+    """
     return {
         "type": "object",
         "properties": {
+            "fillable_attributes": {
+                "type": "array",
+                "description": "Each agent with at least one fillable attribute",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "agent": {"type": "string", "description": "Agent name"},
+                        "attributes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Fillable attribute names",
+                        },
+                    },
+                    "required": ["agent", "attributes"],
+                    "additionalProperties": False,
+                },
+            },
             "selected_agents": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Names of the extraction agents to run on this input",
+                "description": "Names of the extraction agents to run",
             },
         },
-        "required": ["selected_agents"],
+        "required": ["fillable_attributes", "selected_agents"],
         "additionalProperties": False,
     }
 
@@ -103,53 +115,152 @@ def _identifier_candidates(db: Session, exclude_id: str = "") -> list[Agent]:
     return rows
 
 
-def _identifier_example_names(agent_name: str, attr_names: list[str]) -> list[str]:
-    """Curated uncommon examples when known (and present), else sorted[:3]."""
-    curated = [n for n in IDENTIFIER_EXAMPLE_ATTRS.get(agent_name, []) if n in attr_names]
-    if curated:
-        return curated[:3]
-    return sorted(attr_names)[:3]
-
-
 def _identifier_system_content(
-    agent: Agent, candidates: list[tuple[str, str, list[str]]]
+    agent: Agent, candidates: list[tuple[str, str, list[tuple[str, str]]]]
 ) -> str:
-    """System prompt for the identifier: base instruction + candidate roster.
+    """System prompt for the identifier: base instruction + full attribute roster.
 
-    ``candidates`` is [(name, description, example_attr_names)] — attribute
-    LISTS are deliberately never included, only a few example names.
+    ``candidates`` is [(name, description, [(attr_name, attr_description)])]
+    in the same order ``_attrs_for_agent`` returns. Deterministic and
+    byte-stable for the same DB state. Uses attribute NAMES, not serials.
     """
     base = agent.system_instruction or IDENTIFIER_INSTRUCTION
     if candidates:
-        lines: list[str] = []
-        for name, desc, examples in candidates:
-            line = f"- {name}"
+        blocks: list[str] = []
+        for name, desc, attrs in candidates:
+            header = f"## {name}"
             if (desc or "").strip():
-                line += f": {desc.strip()}"
-            if examples:
-                line += f" (e.g. {', '.join(examples)})"
-            lines.append(line)
-        roster = "\n".join(lines)
+                header += f": {desc.strip()}"
+            if attrs:
+                attr_lines = []
+                for attr_name, attr_desc in attrs:
+                    if (attr_desc or "").strip():
+                        attr_lines.append(f"- {attr_name}: {attr_desc.strip()}")
+                    else:
+                        attr_lines.append(f"- {attr_name}")
+            else:
+                attr_lines = ["- (no attributes defined)"]
+            blocks.append("\n".join([header] + attr_lines))
+        roster = "\n\n".join(blocks)
     else:
         roster = "- (no candidate agents defined)"
     return (
-        f"{base}\n\nCandidate agents (return a subset of these names):\n{roster}\n\n"
-        'Return a JSON object with "selected_agents": the list of agent names '
-        "to run. Include only agents whose data appears in the input. "
-        'If none apply, return {"selected_agents": []}.'
+        f"{base}\n\nCandidate agents and their attributes:\n\n{roster}\n\n"
+        "Rules:\n"
+        "- Go through every agent and every attribute. An attribute is fillable when "
+        "the input contains information that answers it (explicitly or clearly implied).\n"
+        "- Select an agent if AT LEAST ONE of its attributes is fillable. Even a single "
+        "fillable attribute is enough.\n"
+        '- In "fillable_attributes", list each selected agent with the exact attribute '
+        "names (copy them verbatim from the list above) that can be filled.\n"
+        '- "selected_agents" must be exactly the agent names that appear in '
+        '"fillable_attributes".\n'
+        '- If nothing applies, return {"fillable_attributes": [], "selected_agents": []}.'
     )
 
 
-def identifier_candidates_with_examples(
+def identifier_candidates_with_attributes(
     db: Session, exclude_id: str = "",
-) -> list[tuple[str, str, list[str]]]:
-    """Candidate (name, description, example-attrs) rows for prompt building."""
-    out: list[tuple[str, str, list[str]]] = []
+) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """Candidate (name, description, [(attr_name, attr_desc)]) rows for prompt building."""
+    out: list[tuple[str, str, list[tuple[str, str]]]] = []
     for cand in _identifier_candidates(db, exclude_id):
-        names = [a.name for a in _attrs_for_agent(db, cand.id)]
-        out.append((cand.name, cand.description or "",
-                    _identifier_example_names(cand.name, names)))
+        attrs = [(a.name, a.description or "") for a in _attrs_for_agent(db, cand.id)]
+        out.append((cand.name, cand.description or "", attrs))
     return out
+
+
+def _candidate_attr_names(attrs) -> list[str]:
+    """Real attribute names from a candidate's attr list.
+
+    Accepts the new [(name, description)] shape, plain [name] lists, or
+    [{"name": ...}] dicts (defensive — keeps the normaliser pure).
+    """
+    names: list[str] = []
+    for a in attrs or []:
+        if isinstance(a, (list, tuple)) and a:
+            names.append(str(a[0]))
+        elif isinstance(a, dict):
+            n = a.get("name", "")
+            if isinstance(n, str) and n:
+                names.append(n)
+        elif isinstance(a, str):
+            names.append(a)
+    return names
+
+
+def normalize_identifier_output(parsed, candidates) -> object:
+    """Normalise the identifier's parsed output against the candidate roster.
+
+    - Drop fillable entries whose agent is not a candidate name or whose
+      attributes list is empty after filtering to that agent's real
+      attribute names (keep order, dedupe).
+    - selected_agents = de-duplicated union of the model's selected_agents
+      (only valid candidate names) and agents with non-empty fillable
+      entries, preserving first-seen order.
+    - Non-dict inputs (and {"_error": ...} payloads) are returned untouched.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    if "_error" in parsed:
+        return parsed
+    valid: dict[str, set[str]] = {}
+    candidate_names: set[str] = set()
+    for cand in candidates or []:
+        try:
+            cname, _cdesc, cattrs = cand
+        except Exception:
+            continue
+        candidate_names.add(cname)
+        valid[cname] = set(_candidate_attr_names(cattrs))
+    raw_fillable = parsed.get("fillable_attributes", [])
+    if not isinstance(raw_fillable, list):
+        raw_fillable = []
+    fillable: list[dict] = []
+    for entry in raw_fillable:
+        if not isinstance(entry, dict):
+            continue
+        agent_name = entry.get("agent")
+        attr_list = entry.get("attributes")
+        if not isinstance(agent_name, str) or agent_name not in candidate_names:
+            continue
+        if not isinstance(attr_list, list):
+            continue
+        allowed = valid.get(agent_name, set())
+        seen: set[str] = set()
+        kept: list[str] = []
+        for attr_name in attr_list:
+            if not isinstance(attr_name, str):
+                continue
+            if attr_name not in allowed:
+                continue
+            if attr_name in seen:
+                continue
+            seen.add(attr_name)
+            kept.append(attr_name)
+        if not kept:
+            continue
+        fillable.append({"agent": agent_name, "attributes": kept})
+    raw_selected = parsed.get("selected_agents", [])
+    if not isinstance(raw_selected, list):
+        raw_selected = []
+    selected: list[str] = []
+    seen_sel: set[str] = set()
+    for name in raw_selected:
+        if not isinstance(name, str):
+            continue
+        if name not in candidate_names:
+            continue
+        if name in seen_sel:
+            continue
+        seen_sel.add(name)
+        selected.append(name)
+    for entry in fillable:
+        agent_name = entry["agent"]
+        if agent_name not in seen_sel:
+            seen_sel.add(agent_name)
+            selected.append(agent_name)
+    return {"fillable_attributes": fillable, "selected_agents": selected}
 
 
 def _attr_line(a: Attribute) -> str:
@@ -458,9 +569,9 @@ def _build_agent_requests(
         }
         user_content = input_data
         if is_identifier(agent):
-            # Router path: candidate roster (name + description + examples),
-            # NO attribute lists; strict agent_selection envelope.
-            candidates = identifier_candidates_with_examples(db, exclude_id=agent.id)
+            # Router path: full attribute list per candidate; strict
+            # agent_selection envelope with fillable_attributes + selected_agents.
+            candidates = identifier_candidates_with_attributes(db, exclude_id=agent.id)
             system_content = _identifier_system_content(agent, candidates)
             schema: dict | None = build_identifier_schema()
             payload_body = build_chat_payload(
@@ -595,8 +706,16 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     total_in = 0
     total_out = 0
     total_in_reasoning = 0
+    agents_by_id = {a.id: a for a in agents}
     for (aid, parsed, prompt_tokens, completion_tokens,
          total_tokens, reasoning_tokens, duration_ms, model) in results:
+        agent_row = agents_by_id.get(aid)
+        if agent_row is not None and is_identifier(agent_row):
+            try:
+                cands = identifier_candidates_with_attributes(db, exclude_id=aid)
+                parsed = normalize_identifier_output(parsed, cands)
+            except Exception:
+                pass
         outputs[aid] = parsed
         total_in += prompt_tokens
         total_out += completion_tokens
