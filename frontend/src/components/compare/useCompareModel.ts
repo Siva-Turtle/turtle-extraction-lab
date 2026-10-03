@@ -317,11 +317,42 @@ export function useCompareModel(
   const handleCellRate = React.useCallback(
     (row: CompareRow, colKey: string, next: "up" | "down" | null): void => {
       const rating: "up" | "down" | "" = next ?? "";
-      // Link identical is always ON.
-      const keys = [colKey, ...linkedTargets(rows, row, colKey)];
+      // Thumbs need the saved log; ignore streaming provisional columns.
+      const clickedCol = columns.find((c) => c.key === colKey);
+      if (!clickedCol || (clickedCol.status !== "done" && clickedCol.status !== "partial")) {
+        return;
+      }
+      // Clearing only clears the clicked cell, never linked cells.
+      if (rating === "") {
+        void rateWithUndo(row, [colKey], rating);
+        return;
+      }
+      // Link identical is always ON, but linked targets get the rating ONLY
+      // when they have no manual rating yet: null/"" counts as unmarked and
+      // an auto-set rating (isAuto) may be overwritten. A manual up/down is
+      // never changed by rating another model's cell. The clicked cell
+      // always gets the new rating.
+      const keys = [colKey];
+      for (const k of linkedTargets(rows, row, colKey)) {
+        if (k === colKey) continue;
+        const targetCol = columns.find((c) => c.key === k);
+        if (!targetCol || (targetCol.status !== "done" && targetCol.status !== "partial")) {
+          continue;
+        }
+        const cur = effectiveRating(row, k);
+        if (cur === null) {
+          keys.push(k);
+          continue;
+        }
+        try {
+          if (isAutoFeedback(row, k)) keys.push(k);
+        } catch {
+          // treat as marked on lookup failure
+        }
+      }
       void rateWithUndo(row, keys, rating);
     },
-    [rateWithUndo, rows],
+    [columns, effectiveRating, isAutoFeedback, rateWithUndo, rows],
   );
 
   const saveRemarksFor = React.useCallback(

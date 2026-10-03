@@ -15,6 +15,47 @@ type RetryAgentResponse = {
   log: LogRow;
 };
 
+type StreamStart = {
+  type: "start";
+  run_id: string;
+  log_id?: string;
+  model: string;
+  agents: { agent_id: string; agent_name: string }[];
+};
+
+type StreamAgent = {
+  type: "agent";
+  agent_id: string;
+  agent_name: string;
+  output: unknown;
+  usage: Record<string, unknown>;
+  status: "done" | "error";
+  error?: string;
+  reused?: boolean;
+};
+
+type StreamIdentifier = {
+  type: "identifier";
+  agent_id: string;
+  agent_name: string;
+  output: unknown;
+  usage: Record<string, unknown>;
+  answers?: Record<string, boolean>;
+  plan?: unknown[];
+  status: "done" | "error";
+  error?: string;
+};
+
+type StreamDone = {
+  type: "done";
+  log: LogRow;
+  id?: string;
+  log_id?: string;
+  run_group_id?: string;
+};
+
+type StreamError = { type: "error"; detail: string };
+
 /** done when no agent failed, partial when some did, error when all did. */
 function statusOf(log: LogRow): CompareColumn["status"] {
   const outputs = (log.outputs ?? {}) as Record<string, unknown>;
@@ -42,6 +83,180 @@ function stripAgentIds(payload: Record<string, unknown>): Record<string, unknown
   return rest;
 }
 
+function apiBase(): string {
+  try {
+    const b = (api.defaults as { baseURL?: string }).baseURL;
+    if (typeof b === "string" && b !== "") return b;
+  } catch {
+    // fall through
+  }
+  return "/api/v1";
+}
+
+function sumUsage(perAgent: Record<string, Record<string, unknown>>): Record<string, unknown> {
+  let prompt = 0;
+  let completion = 0;
+  let reasoning = 0;
+  for (const v of Object.values(perAgent)) {
+    try {
+      prompt += Number((v as Record<string, unknown>).prompt_tokens ?? 0) || 0;
+      completion += Number((v as Record<string, unknown>).completion_tokens ?? 0) || 0;
+      reasoning += Number((v as Record<string, unknown>).reasoning_tokens ?? 0) || 0;
+    } catch {
+      // ignore malformed entries
+    }
+  }
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    reasoning_tokens: reasoning,
+    cost_usd: null,
+    input_cost_usd: null,
+    output_cost_usd: null,
+    duration_ms: 0,
+    model: "",
+    per_agent: perAgent,
+    reused_agents: {},
+  };
+}
+
+function provisionalLog(
+  col: CompareColumn,
+  runId: string,
+  logId: string,
+  model: string,
+  agents: { agent_id: string; agent_name: string }[],
+  outputs: Record<string, unknown>,
+  perAgent: Record<string, Record<string, unknown>>,
+  extra?: { consistency?: unknown },
+): LogRow {
+  const snap: Record<string, { name: string }> = {};
+  for (const a of agents) {
+    snap[a.agent_id] = { name: a.agent_name };
+  }
+  const usage = sumUsage(perAgent) as LogRow["usage"];
+  if (usage && typeof usage === "object") {
+    (usage as Record<string, unknown>).model = model;
+  }
+  return {
+    id: logId || `provisional-${col.key}`,
+    run_id: runId || `provisional-${col.key}`,
+    input_type: "",
+    input_data: "",
+    model,
+    agent_snapshot: snap,
+    attribute_snapshot: {},
+    outputs: { ...outputs },
+    requests: {},
+    feedback: {},
+    consistency: (extra?.consistency as LogRow["consistency"]) ?? null,
+    usage,
+    filters: {},
+    client: "",
+    meeting_type: "",
+    meeting_title: "",
+    reasoning_effort: col.effort ?? "",
+    provider: col.provider ?? "",
+    created_at: new Date().toISOString(),
+    run_group_id: "",
+  } as LogRow;
+}
+
+async function postStream(
+  path: string,
+  body: Record<string, unknown>,
+  onEvent: (ev: StreamStart | StreamAgent | StreamIdentifier | StreamDone | StreamError) => void,
+): Promise<void> {
+  const url = `${apiBase()}${path}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  try {
+    const common = (api.defaults as { headers?: { common?: Record<string, string> } }).headers
+      ?.common;
+    if (common) {
+      for (const [k, v] of Object.entries(common)) {
+        if (typeof v === "string" && k.toLowerCase() !== "content-type") headers[k] = v;
+      }
+    }
+  } catch {
+    // ignore header merge failures
+  }
+  let resp: Response;
+  try {
+    resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch (e: unknown) {
+    throw new Error(serverDetail(e));
+  }
+  if (!resp.ok || !resp.body) {
+    let detail = `Request failed (${resp.status})`;
+    try {
+      const text = await resp.text();
+      if (text) {
+        try {
+          const parsed = JSON.parse(text) as { detail?: unknown };
+          if (typeof parsed?.detail === "string" && parsed.detail !== "") detail = parsed.detail;
+          else detail = text.slice(0, 500);
+        } catch {
+          detail = text.slice(0, 500);
+        }
+      }
+    } catch {
+      // keep default
+    }
+    throw new Error(detail);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let sawEvent = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buf += decoder.decode(value, { stream: !done });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      const t = line.trim();
+      if (t === "") continue;
+      let ev: StreamStart | StreamAgent | StreamIdentifier | StreamDone | StreamError;
+      try {
+        ev = JSON.parse(t) as
+          | StreamStart
+          | StreamAgent
+          | StreamIdentifier
+          | StreamDone
+          | StreamError;
+      } catch {
+        continue;
+      }
+      sawEvent = true;
+      if (ev && typeof ev === "object" && (ev as { type?: string }).type === "error") {
+        throw new Error((ev as StreamError).detail || "Run failed");
+      }
+      onEvent(ev);
+    }
+    if (done) break;
+  }
+  const tail = buf.trim();
+  if (tail !== "") {
+    try {
+      const ev = JSON.parse(tail) as
+        | StreamStart
+        | StreamAgent
+        | StreamIdentifier
+        | StreamDone
+        | StreamError;
+      sawEvent = true;
+      if ((ev as { type?: string }).type === "error") {
+        throw new Error((ev as StreamError).detail || "Run failed");
+      }
+      onEvent(ev);
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message !== "") throw e;
+    }
+  }
+  if (!sawEvent) throw new Error("Empty streaming response");
+}
+
 /**
  * Fire one `POST /runs` (or `/runs/auto`) per model slot sharing a
  * `run_group_id`, all at once. Columns stay in picker order and fill in as
@@ -51,6 +266,12 @@ function stripAgentIds(payload: Record<string, unknown>): Record<string, unknown
  * slot). Pass `{ auto: true, reuseLogs }` (slotKey -> log_id) to POST
  * `/runs/reuse` for those columns instead of `/runs/auto`; `retry()` always
  * re-posts `/runs/auto` (fresh). Single-model runs use the same path.
+ *
+ * Streaming: every `/runs` and `/runs/auto` call sends `stream: true` and
+ * renders each agent as its NDJSON event arrives (provisional log with
+ * summed usage); the final `done` log replaces it. Thumbs stay disabled
+ * until the final log arrives (column status running). `/runs/reuse` and
+ * per-agent retry stay non-streaming.
  */
 export function useMultiRun(): {
   groupId: string;
@@ -104,6 +325,118 @@ export function useMultiRun(): {
     );
     invalidate();
     return "error" as const;
+  }
+
+  function applyProvisional(
+    key: string,
+    log: LogRow,
+  ) {
+    setColumns((prev) =>
+      prev.map((c) => (c.key === key ? { ...c, status: "running" as const, log } : c)),
+    );
+  }
+
+  function runStreamColumn(
+    col: CompareColumn,
+    path: "/runs" | "/runs/auto",
+    body: Record<string, unknown>,
+  ): Promise<CompareColumn["status"]> {
+    const withStream = { ...body, stream: true };
+    let startAgents: { agent_id: string; agent_name: string }[] = [];
+    let runId = "";
+    let logId = "";
+    let model = col.model;
+    const outputs: Record<string, unknown> = {};
+    const perAgent: Record<string, Record<string, unknown>> = {};
+    let consistency: unknown = null;
+    let sawAny = false;
+    const pushProvisional = () => {
+      if (!sawAny) return;
+      const log = provisionalLog(col, runId, logId, model, startAgents, outputs, perAgent, {
+        consistency,
+      });
+      applyProvisional(col.key, log);
+    };
+    return postStream(
+      path,
+      withStream,
+      (ev) => {
+        if (!ev || typeof ev !== "object") return;
+        const t = (ev as { type?: string }).type;
+        if (t === "start") {
+          const s = ev as StreamStart;
+          sawAny = true;
+          runId = typeof s.run_id === "string" ? s.run_id : runId;
+          logId = typeof s.log_id === "string" && s.log_id !== "" ? s.log_id : logId;
+          if (typeof s.model === "string" && s.model !== "") model = s.model;
+          if (Array.isArray(s.agents)) startAgents = s.agents;
+          pushProvisional();
+        } else if (t === "identifier") {
+          const idEv = ev as StreamIdentifier;
+          sawAny = true;
+          if (idEv.answers || idEv.plan) {
+            consistency = {
+              auto: true,
+              version: 2,
+              answers: idEv.answers ?? {},
+              plan: idEv.plan ?? [],
+              agents: {},
+            };
+          }
+          if (typeof idEv.agent_id === "string" && idEv.agent_id !== "") {
+            outputs[idEv.agent_id] = idEv.output;
+            perAgent[idEv.agent_id] = (idEv.usage ?? {}) as Record<string, unknown>;
+          }
+          pushProvisional();
+        } else if (t === "agent") {
+          const a = ev as StreamAgent;
+          sawAny = true;
+          if (typeof a.agent_id === "string" && a.agent_id !== "") {
+            outputs[a.agent_id] = a.output;
+            perAgent[a.agent_id] = (a.usage ?? {}) as Record<string, unknown>;
+            if (!startAgents.some((s) => s.agent_id === a.agent_id)) {
+              startAgents = [
+                ...startAgents,
+                { agent_id: a.agent_id, agent_name: a.agent_name || a.agent_id },
+              ];
+            }
+          }
+          pushProvisional();
+        } else if (t === "done") {
+          const d = ev as StreamDone;
+          sawAny = true;
+          if (d.log) applySuccess(col.key, d.log);
+          else applyHttpError(col.key, new Error("No log in response"));
+        }
+      },
+    ).then(
+      () => {
+        // postStream resolves after the last event; done already applied.
+        // If no done arrived (should not happen), surface an error only when
+        // nothing was ever shown.
+        let st: CompareColumn["status"] = "done";
+        setColumns((prev) => {
+          const found = prev.find((c) => c.key === col.key);
+          if (found) st = found.status;
+          return prev;
+        });
+        return st;
+      },
+      (e: unknown) => {
+        if (!sawAny) return applyHttpError(col.key, e);
+        // Streaming failed mid-run after showing partial agents: mark the
+        // column failed but keep the provisional log so completed agents
+        // stay visible.
+        const msg = e instanceof Error ? e.message : serverDetail(e);
+        setColumns((prev) =>
+          prev.map((c) =>
+            c.key === col.key ? { ...c, status: "error" as const, error: msg } : c,
+          ),
+        );
+        invalidate();
+        return "error" as const;
+      },
+    );
   }
 
   function start(
@@ -187,10 +520,7 @@ export function useMultiRun(): {
             run_group_id: gid,
             reuse: reuseForColumn[col.key] ?? {},
           };
-      return api.post(auto ? "/runs/auto" : "/runs", body).then(
-        (res) => applySuccess(col.key, (res.data as RunResponse).log ?? null),
-        (e: unknown) => applyHttpError(col.key, e),
-      );
+      return runStreamColumn(col, auto ? "/runs/auto" : "/runs", body);
     });
     void Promise.all(jobs).then((statuses) => {
       const ok = statuses.filter((s) => s === "done" || s === "partial").length;
@@ -227,12 +557,7 @@ export function useMultiRun(): {
           run_group_id: gid,
           reuse: reuseRef.current[key] ?? {},
         };
-    api
-      .post(auto ? "/runs/auto" : "/runs", body)
-      .then(
-        (res) => applySuccess(key, (res.data as RunResponse).log ?? null),
-        (e: unknown) => applyHttpError(key, e),
-      );
+    void runStreamColumn(target, auto ? "/runs/auto" : "/runs", body);
   }
 
   function retryAgent(colKey: string, agentId: string) {

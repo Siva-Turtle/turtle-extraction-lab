@@ -194,6 +194,9 @@ export function ComparisonMatrix({
     const col = columns.find((c) => c.key === colKey);
     const cell = row.cells[colKey];
     if (!col?.log || !col.log.run_id) return false;
+    // Thumbs stay disabled until the final log arrives (streaming
+    // provisional logs are status running).
+    if (col.status !== "done" && col.status !== "partial") return false;
     if (
       !cell ||
       cell.canon === PENDING_CANON ||
@@ -486,9 +489,12 @@ export function ComparisonMatrix({
                               onKeyDown: (e: React.KeyboardEvent) =>
                                 onCellKeyDown(e, { row, colKey: col.key, merged: false, key: ck }),
                             };
-                            // Running / queued (no log yet): skeleton shimmer.
-                            if (!col.log || col.status === "running" || col.status === "queued") {
-                              if (col.status === "error" && !col.log) {
+                            // No log yet (queued/running/error without log): skeleton or error.
+                            // Streaming provisional logs (running WITH a log) fall through
+                            // so completed agents render immediately and pending cells
+                            // show a muted "running…" placeholder below.
+                            if (!col.log) {
+                              if (col.status === "error") {
                                 return (
                                   <td
                                     key={col.key}
@@ -600,6 +606,25 @@ export function ComparisonMatrix({
                               );
                             }
                             if (!cell || cell.canon === PENDING_CANON) {
+                              // Streaming provisional: muted "running…" (agent list
+                              // comes from the start event's snapshot); otherwise
+                              // the old skeleton shimmer.
+                              if (col.status === "running" || col.status === "queued") {
+                                return (
+                                  <td
+                                    key={col.key}
+                                    {...focusProps}
+                                    className={cn(
+                                      "break-words p-3 align-top [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-brand",
+                                      focused && "outline outline-2 outline-[#0d5c4a] outline-offset-[-2px]",
+                                    )}
+                                  >
+                                    <p className="font-sans text-xs italic text-[#8a8f98]">
+                                      running…
+                                    </p>
+                                  </td>
+                                );
+                              }
                               return (
                                 <td
                                   key={col.key}
@@ -664,7 +689,10 @@ export function ComparisonMatrix({
                                   rating={rating}
                                   auto={isAutoFeedback(row, col.key)}
                                   onRate={(n) => handleCellRate(row, col.key, n)}
-                                  editable={editable}
+                                  editable={
+                                    editable &&
+                                    (col.status === "done" || col.status === "partial")
+                                  }
                                   hasRemarks={hasRemarks(row, col.key)}
                                   notAccepted={notAccepted}
                                   notFound={notFound}

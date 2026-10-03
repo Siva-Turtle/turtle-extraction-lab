@@ -254,26 +254,27 @@ export function AttributeCompareDrawer({
                     💬 {remarks}
                   </span>
                 )}
-                {editable && (
-                  <>
-                    <ThumbButtons
-                      value={rating}
-                      onChange={(n) => model.handleCellRate(row, col.key, n)}
-                      size="sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setRemarksFor((cur) => (cur === col.key ? null : col.key))}
-                      disabled={!canRemark}
-                      title={canRemark ? "Edit remarks" : "Rate first"}
-                      aria-label={`Remarks for ${modelLabel(col.model, col.effort)} / ${row.attr}`}
-                      aria-pressed={remarksFor === col.key}
-                      className="flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] text-xs text-[#4a5058] transition-colors hover:border-[#1d1d1d] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-[#C3C2B7]"
-                    >
-                      💬
-                    </button>
-                  </>
-                )}
+                {editable &&
+                  (col.status === "done" || col.status === "partial") && (
+                    <>
+                      <ThumbButtons
+                        value={rating}
+                        onChange={(n) => model.handleCellRate(row, col.key, n)}
+                        size="sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setRemarksFor((cur) => (cur === col.key ? null : col.key))}
+                        disabled={!canRemark}
+                        title={canRemark ? "Edit remarks" : "Rate first"}
+                        aria-label={`Remarks for ${modelLabel(col.model, col.effort)} / ${row.attr}`}
+                        aria-pressed={remarksFor === col.key}
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] text-xs text-[#4a5058] transition-colors hover:border-[#1d1d1d] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:text-[#C3C2B7]"
+                      >
+                        💬
+                      </button>
+                    </>
+                  )}
                 {remarksFor === col.key && (
                   <RemarksPopover
                     value={remarks}

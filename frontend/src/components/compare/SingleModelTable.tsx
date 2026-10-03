@@ -242,10 +242,12 @@ function IdentifierFeedback({
   log,
   agentName,
   saved,
+  disabled,
 }: {
   log: LogRow;
   agentName: string;
   saved: { rating: string; remarks: string; auto?: boolean } | null;
+  disabled?: boolean;
 }) {
   const qc = useQueryClient();
   const [rating, setRating] = React.useState<"up" | "down" | null>(
@@ -276,12 +278,14 @@ function IdentifierFeedback({
   });
 
   function handleThumb(next: "up" | "down" | null) {
+    if (disabled) return;
     if (next === null) return;
     setRating(next);
     save.mutate({ rating: next, remarks: remarksText });
   }
 
   function handleRemarksSave() {
+    if (disabled) return;
     if (!rating) {
       toast.error("Pick 👍 or 👎 first");
       return;
@@ -291,7 +295,7 @@ function IdentifierFeedback({
 
   return (
     <div className="mt-2 flex max-w-full flex-wrap items-center gap-2">
-      <ThumbButtons value={rating} onChange={handleThumb} />
+      <ThumbButtons value={rating} onChange={handleThumb} disabled={disabled} />
       {saved?.auto === true && <AutoTag />}
       <span
         className={cn(
@@ -342,6 +346,7 @@ function AttrRow({
   r,
   saved,
   sn,
+  disabled,
 }: {
   log: LogRow;
   agentName: string;
@@ -349,6 +354,7 @@ function AttrRow({
   r: PrettyAttr;
   saved: { rating: string; remarks: string; auto?: boolean } | null;
   sn: number;
+  disabled?: boolean;
 }) {
   const qc = useQueryClient();
   const [rating, setRating] = React.useState<"up" | "down" | null>(
@@ -379,12 +385,14 @@ function AttrRow({
   });
 
   function handleThumb(next: "up" | "down" | null) {
+    if (disabled) return;
     if (next === null) return;
     setRating(next);
     save.mutate({ rating: next, remarks: remarksText });
   }
 
   function handleRemarksSave() {
+    if (disabled) return;
     if (!rating) {
       toast.error("Pick 👍 or 👎 first");
       return;
@@ -412,7 +420,7 @@ function AttrRow({
         </td>
         <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
           <div className="flex flex-wrap items-center gap-1.5">
-            <ThumbButtons value={rating} onChange={handleThumb} />
+            <ThumbButtons value={rating} onChange={handleThumb} disabled={disabled} />
             {saved?.auto === true && <AutoTag />}
           </div>
         </td>
@@ -493,7 +501,7 @@ function AttrRow({
       </td>
       <td className="break-words px-3 py-2 [overflow-wrap:anywhere]">
         <div className="flex flex-wrap items-center gap-1.5">
-          <ThumbButtons value={rating} onChange={handleThumb} />
+          <ThumbButtons value={rating} onChange={handleThumb} disabled={disabled} />
           {saved?.auto === true && <AutoTag />}
         </div>
       </td>
@@ -550,18 +558,23 @@ function AttrRow({
  * markup and classes unchanged). One column => this table. Supports per-agent
  * retry (`onRetryAgent`) with `runningAgents` (`Record<`${colKey}|${agentId}`, true>`
  * or `Record<agentId, true>`; `colKey` scopes the lookup when provided) and
- * shows consistency + Auto tags for auto-select runs.
+ * shows consistency + Auto tags for auto-select runs. Streaming provisional
+ * logs (snapshot lists agents missing from outputs) render those agents as
+ * muted "running…" cards; thumbs stay disabled via `disabled` until the
+ * final log arrives.
  */
 export function SingleModelTable({
   log,
   onRetryAgent,
   runningAgents,
   colKey,
+  disabled,
 }: {
   log: LogRow;
   onRetryAgent?: (agentId: string) => void;
   runningAgents?: Record<string, boolean>;
   colKey?: string;
+  disabled?: boolean;
 }): React.JSX.Element {
   const reused = isReused(log);
   const reusedWhen = reused ? reusedFromLabel(log) : null;
@@ -646,7 +659,12 @@ export function SingleModelTable({
                   </div>
                 )}
               </div>
-              <IdentifierFeedback log={log} agentName={agentName} saved={saved} />
+              <IdentifierFeedback
+                log={log}
+                agentName={agentName}
+                saved={saved}
+                disabled={disabled}
+              />
             </div>
           );
         }
@@ -713,6 +731,7 @@ export function SingleModelTable({
                         r={r}
                         saved={savedFeedback(log, agentName, attr)}
                         sn={idx + 1}
+                        disabled={disabled}
                       />
                     ))}
                   </tbody>
@@ -722,6 +741,36 @@ export function SingleModelTable({
           </div>
         );
       })}
+      {(() => {
+        // Streaming provisional: agents in the snapshot with no output yet
+        // are still running — muted placeholder (agent list from start).
+        try {
+          const outs = (log.outputs ?? {}) as Record<string, unknown>;
+          const snap = (log.agent_snapshot ?? {}) as Record<string, { name?: unknown }>;
+          const pending = Object.keys(snap).filter((id) => !(id in outs));
+          if (pending.length === 0) return null;
+          return pending.map((agentId) => {
+            const raw = snap[agentId];
+            const name =
+              raw && typeof raw.name === "string" && raw.name.trim() !== ""
+                ? raw.name
+                : agentId;
+            return (
+              <div
+                key={`pending-${agentId}`}
+                className="min-w-0 max-w-full rounded-2xl border border-dashed border-[#e5e7eb] p-4 dark:border-white/10"
+              >
+                <p className="font-heading text-xs font-bold text-[#4a5058] dark:text-[#C3C2B7]">
+                  {name}
+                </p>
+                <p className="mt-1 font-sans text-xs italic text-[#8a8f98]">running…</p>
+              </div>
+            );
+          });
+        } catch {
+          return null;
+        }
+      })()}
     </div>
   );
 }

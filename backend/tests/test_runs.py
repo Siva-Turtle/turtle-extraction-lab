@@ -225,9 +225,10 @@ def test_build_extraction_schema_user_example():
 def test_result_contract_text():
     assert runs_router.RESULT_CONTRACT == (
         'Return a JSON object keyed by attribute name. Each value is an object with "value" '
-        '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), '
+        '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|normalized|inferred|calculated|not_found), '
         '"evidence" (exact quote from the input). If an attribute is not found in the input, '
-        'omit it from the response — never return null. '
+        'still return it with confidence_type "not_found", confidence 0, an empty evidence string '
+        'and the emptiest value the schema allows (null when nullable, [] for lists, false for booleans). '
         'quoted = value stated word-for-word (evidence is the exact quote); '
         'inferred = value concluded from the input but not stated verbatim '
         '(evidence is the supporting passage); normalized = value standardized from a stated form '
@@ -238,11 +239,21 @@ def test_result_contract_text():
         '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
         '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
         '| `not_found` | No sufficient evidence exists |\n'
-        '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |'
+        '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |\n\n'
+        'How to score confidence: confidence is your probability (0.0 to 1.0) that the extracted value is correct. '
+        'It is NOT a flag for whether the value was stated verbatim. An inferred value with good supporting evidence must still get a high confidence. '
+        'Use these ranges:\n'
+        '- quoted: 0.90 to 1.00\n'
+        '- normalized: 0.85 to 0.98\n'
+        '- calculated: 0.70 to 0.95 (lower when the calculation needs assumptions)\n'
+        '- inferred: 0.50 to 0.90 - several clear supporting statements 0.80 to 0.90; one clear statement 0.65 to 0.80; a weak or indirect hint 0.50 to 0.65\n'
+        '- not_found: always exactly 0\n'
+        'Never return confidence 0 for a value you extracted with evidence, and never return a confidence above 0 for not_found. '
+        'For list attributes, score each item on its own using the same ranges.'
     )
     assert "…" not in runs_router.RESULT_CONTRACT
-    assert "(quoted|inferred|normalized)" in runs_router.RESULT_CONTRACT
-    for term in ("quoted", "inferred", "normalized"):
+    assert "(quoted|normalized|inferred|calculated|not_found)" in runs_router.RESULT_CONTRACT
+    for term in ("quoted", "inferred", "normalized", "calculated", "not_found"):
         assert term in runs_router.RESULT_CONTRACT
     assert "quoted = value stated word-for-word" in runs_router.RESULT_CONTRACT
     assert "inferred = value concluded from the input" in runs_router.RESULT_CONTRACT
@@ -257,6 +268,16 @@ def test_result_contract_text():
         "| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |",
     ):
         assert row in runs_router.RESULT_CONTRACT
+
+
+def test_result_contract_confidence_guidance():
+    c = runs_router.RESULT_CONTRACT
+    assert "How to score confidence" in c
+    for term in ("quoted", "normalized", "calculated", "inferred", "not_found"):
+        assert term in c
+    assert "never return a confidence above 0 for not_found" in c.lower() or \
+        "never return a confidence above 0 for not_found" in c
+    assert "For list attributes, score each item on its own" in c
 
 
 def test_system_layout_user_is_verbatim_input(client, monkeypatch):

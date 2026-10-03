@@ -1,8 +1,11 @@
 import asyncio
 from time import perf_counter
 import copy
+import json
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, complete_json, complete_json_payload, get_model_pricing
@@ -19,9 +22,10 @@ router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
 RESULT_CONTRACT = (
     'Return a JSON object keyed by attribute name. Each value is an object with "value" '
-    '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|inferred|normalized), '
+    '(the extracted value), "confidence" (0-1), "confidence_type" (quoted|normalized|inferred|calculated|not_found), '
     '"evidence" (exact quote from the input). If an attribute is not found in the input, '
-    'omit it from the response — never return null. '
+    'still return it with confidence_type "not_found", confidence 0, an empty evidence string '
+    'and the emptiest value the schema allows (null when nullable, [] for lists, false for booleans). '
     'quoted = value stated word-for-word (evidence is the exact quote); '
     'inferred = value concluded from the input but not stated verbatim '
     '(evidence is the supporting passage); normalized = value standardized from a stated form '
@@ -32,7 +36,17 @@ RESULT_CONTRACT = (
     '| `normalized` | Value is explicitly stated but transformed into your canonical representation |\n'
     '| `inferred` | Value was not directly stated; model derived it from evidence |\n'
     '| `not_found` | No sufficient evidence exists |\n'
-    '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |'
+    '| `calculated` | Mentioned as pieces of info, but model performed calculations to arrive |\n\n'
+    'How to score confidence: confidence is your probability (0.0 to 1.0) that the extracted value is correct. '
+    'It is NOT a flag for whether the value was stated verbatim. An inferred value with good supporting evidence must still get a high confidence. '
+    'Use these ranges:\n'
+    '- quoted: 0.90 to 1.00\n'
+    '- normalized: 0.85 to 0.98\n'
+    '- calculated: 0.70 to 0.95 (lower when the calculation needs assumptions)\n'
+    '- inferred: 0.50 to 0.90 - several clear supporting statements 0.80 to 0.90; one clear statement 0.65 to 0.80; a weak or indirect hint 0.50 to 0.65\n'
+    '- not_found: always exactly 0\n'
+    'Never return confidence 0 for a value you extracted with evidence, and never return a confidence above 0 for not_found. '
+    'For list attributes, score each item on its own using the same ranges.'
 )
 
 
@@ -1248,26 +1262,577 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
 
     Returns (outputs, per_agent) with costs None; caller prices + totals.
     Identifier outputs are normalised to 11 yes/no answers.
+    Uses the shared as_completed generator so streaming and non-streaming
+    share the same run loop; final dict order follows ``agents`` order.
     """
-    async def _run_one(agent, payload_body):
-        parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(copy.deepcopy(payload_body))
-        return (agent.id, parsed, pt, ct, tt, rt, dur, served)
-
-    bodies = [(a, copy.deepcopy(requests[a.id])) for a in agents if a.id in (requests or {})]
-    results = await asyncio.gather(*[_run_one(a, b) for a, b in bodies])
     agents_by_id = {a.id: a for a in agents}
+    collected: dict = {}
+    async for res in _stream_fresh_results(agents, requests, model, agents_by_id):
+        collected[res["agent_id"]] = res
     outputs: dict = {}
     per_agent: dict = {}
-    for aid, parsed, pt, ct, tt, rt, dur, served in results:
-        agent_row = agents_by_id.get(aid)
-        if agent_row is not None and is_identifier(agent_row):
+    for a in agents:
+        res = collected.get(a.id)
+        if res is None:
+            continue
+        outputs[a.id] = res["output"]
+        per_agent[a.id] = res["per_entry"]
+    return outputs, per_agent
+
+
+def _resolve_valid_reuse(db: Session, agents: list[Agent], requests: dict,
+                          reuse_map, model: str, effort: str, provider: str) -> dict:
+    """Validate per-agent reuse entries like create_run (invalid ignored)."""
+    if not isinstance(reuse_map, dict):
+        reuse_map = {}
+    valid: dict[str, RunLog] = {}
+    for agent in agents:
+        try:
+            src_id = reuse_map.get(agent.id)
+        except Exception:
+            src_id = None
+        if not isinstance(src_id, str) or not src_id.strip():
+            continue
+        src_id = src_id.strip()
+        try:
+            source = db.query(RunLog).filter(RunLog.id == src_id).first()
+        except Exception:
+            source = None
+        if source is None:
+            continue
+        fresh_body = requests.get(agent.id)
+        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
+        if not _is_valid_reuse_source(
+            source, agent_id=agent.id, model=model,
+            reasoning_effort=effort, expected_messages=fresh_msgs,
+            provider=provider,
+        ):
+            continue
+        valid[agent.id] = source
+    return valid
+
+
+def _seed_reused_state(valid_reuse: dict) -> tuple[dict, dict, dict]:
+    """Seed (outputs, per_agent, reused_agents) from validated reuse sources.
+
+    Mutates ``valid_reuse`` in place on copy failure (drops that agent to
+    fresh), matching create_run's behaviour.
+    """
+    outputs: dict = {}
+    per_agent: dict = {}
+    reused_agents: dict = {}
+    for aid, source in list(valid_reuse.items()):
+        try:
+            src_outs = getattr(source, "outputs", None) or {}
+            if not isinstance(src_outs, dict) or aid not in src_outs:
+                raise KeyError(aid)
+            outputs[aid] = copy.deepcopy(src_outs.get(aid))
+            entry, rid, rat = _build_reused_per_agent(source, aid)
+            per_agent[aid] = entry
+            reused_agents[aid] = {"log_id": rid, "created_at": rat}
+        except Exception:
+            valid_reuse.pop(aid, None)
+            outputs.pop(aid, None)
+            per_agent.pop(aid, None)
+            reused_agents.pop(aid, None)
+            continue
+    return outputs, per_agent, reused_agents
+
+
+def _agent_event_for(agent_id: str, agent_name: str, output, per_entry: dict,
+                     reused: bool = False) -> dict:
+    """One NDJSON agent event, output exactly as in the final log."""
+    if isinstance(output, dict) and "_error" in output:
+        try:
+            err = str(output.get("_error", ""))
+        except Exception:
+            err = "agent failed"
+        ev: dict = {"type": "agent", "agent_id": agent_id, "agent_name": agent_name,
+                    "output": output, "usage": per_entry, "status": "error",
+                    "error": err}
+    else:
+        ev = {"type": "agent", "agent_id": agent_id, "agent_name": agent_name,
+              "output": output, "usage": per_entry, "status": "done"}
+    if reused:
+        ev["reused"] = True
+    return ev
+
+
+async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
+                                model: str, agents_by_id: dict | None = None):
+    """Shared run loop: run fresh agents concurrently, yield in completion order.
+
+    Each yield is {"agent_id", "agent_name", "output", "per_entry",
+    "status", "error", "reused": False}. Identifier outputs are normalised.
+    Both the non-streaming paths (via _execute_agents) and the streaming
+    NDJSON paths consume this generator so the two paths don't duplicate
+    the run logic.
+    """
+    by_id = agents_by_id or {a.id: a for a in fresh_agents}
+
+    async def _one(agent):
+        body = copy.deepcopy(requests.get(agent.id, {}))
+        parsed, pt, ct, tt, rt, dur, served = await _call_single_payload(body)
+        try:
+            row = by_id.get(agent.id)
+            if row is not None and is_identifier(row):
+                if isinstance(parsed, dict) and "_error" not in parsed:
+                    try:
+                        parsed = normalize_identifier_output(parsed)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        per_entry = _per_agent_entry(pt, ct, tt, rt, dur, model, served)
+        if isinstance(parsed, dict) and "_error" in parsed:
             try:
-                parsed = normalize_identifier_output(parsed)
+                err = str(parsed.get("_error", ""))
+            except Exception:
+                err = "agent failed"
+            return {"agent_id": agent.id,
+                    "agent_name": _agent_display_name(agent),
+                    "output": parsed, "per_entry": per_entry,
+                    "status": "error", "error": err, "reused": False}
+        return {"agent_id": agent.id,
+                "agent_name": _agent_display_name(agent),
+                "output": parsed, "per_entry": per_entry,
+                "status": "done", "error": None, "reused": False}
+
+    if not fresh_agents:
+        return
+        yield  # make this an async generator
+    tasks = [asyncio.create_task(_one(a)) for a in fresh_agents]
+    try:
+        for fut in asyncio.as_completed(tasks):
+            try:
+                res = await fut
+            except Exception as exc:
+                continue
+            yield res
+    finally:
+        for t in tasks:
+            try:
+                if not t.done():
+                    t.cancel()
             except Exception:
                 pass
-        outputs[aid] = parsed
-        per_agent[aid] = _per_agent_entry(pt, ct, tt, rt, dur, model, served)
-    return outputs, per_agent
+
+
+def _ndjson_line(obj: dict) -> bytes:
+    return (json.dumps(obj, default=str) + "\n").encode("utf-8")
+
+
+def _new_run_ids() -> tuple[str, str]:
+    try:
+        rid = uuid.uuid4().hex
+    except Exception:
+        import secrets
+        rid = secrets.token_hex(16)
+    try:
+        lid = uuid.uuid4().hex
+    except Exception:
+        import secrets as _s
+        lid = _s.token_hex(16)
+    return rid, lid
+
+
+async def _create_run_stream(db: Session, *, payload, agents, snapshots,
+                             requests, input_type, input_data, effort,
+                             task_title, filters, provider_requested,
+                             wall_start) -> StreamingResponse:
+    """Streaming NDJSON variant of POST /runs (stream=true).
+
+    Events: start -> agent* (completion order, reused first) -> done.
+    The log row is written exactly once at the end with the same contents
+    as the non-streaming path. Fatal errors after start become
+    {"type":"error","detail":...}; validation errors before start still
+    raise HTTPException via _plan_run (handled by the caller).
+    """
+    run_id, log_id = _new_run_ids()
+    model = payload.model
+    start_agents = [{"agent_id": a.id, "agent_name": _agent_display_name(a)}
+                    for a in agents]
+
+    async def _gen():
+        try:
+            reuse_map = getattr(payload, "reuse", None)
+            valid_reuse = _resolve_valid_reuse(
+                db, agents, requests, reuse_map, model, effort, provider_requested)
+            outputs, per_agent, reused_agents = _seed_reused_state(valid_reuse)
+            # start after plan + reuse known (agents list fixed)
+            yield _ndjson_line({"type": "start", "run_id": run_id,
+                                "log_id": log_id, "model": model,
+                                "agents": start_agents})
+            # Reused agents immediately (in agent order).
+            for a in agents:
+                if a.id not in valid_reuse:
+                    continue
+                try:
+                    out = outputs.get(a.id)
+                    entry = per_agent.get(a.id, {})
+                    yield _ndjson_line(_agent_event_for(
+                        a.id, _agent_display_name(a), out, entry, reused=True))
+                except Exception:
+                    continue
+            fresh_agents = [a for a in agents if a.id not in valid_reuse]
+            agents_by_id = {a.id: a for a in agents}
+            async for res in _stream_fresh_results(
+                    fresh_agents, requests, model, agents_by_id):
+                try:
+                    outputs[res["agent_id"]] = res["output"]
+                    per_agent[res["agent_id"]] = res["per_entry"]
+                    yield _ndjson_line(_agent_event_for(
+                        res["agent_id"], res["agent_name"],
+                        res["output"], res["per_entry"], reused=False))
+                except Exception:
+                    continue
+            # Reorder to agent order so the final log matches non-streaming.
+            try:
+                _oo: dict = {}
+                _pp: dict = {}
+                for _a in agents:
+                    if _a.id in outputs:
+                        _oo[_a.id] = outputs[_a.id]
+                    if _a.id in per_agent:
+                        _pp[_a.id] = per_agent[_a.id]
+                outputs = _oo
+                per_agent = _pp
+            except Exception:
+                pass
+            # --- Finalize exactly like the non-streaming path ----------------
+            if fresh_agents or not valid_reuse:
+                try:
+                    prompt_price, completion_price = await get_model_pricing(model)
+                except Exception:
+                    prompt_price, completion_price = None, None
+            else:
+                prompt_price, completion_price = None, None
+            reused_ids = set(valid_reuse.keys())
+            if prompt_price is not None and completion_price is not None:
+                for aid, entry in per_agent.items():
+                    if aid in reused_ids:
+                        continue
+                    try:
+                        cost = entry["prompt_tokens"] * prompt_price + entry["completion_tokens"] * completion_price
+                    except Exception:
+                        continue
+                    entry["cost_usd"] = round(cost, 6)
+            for aid, entry in per_agent.items():
+                if aid in reused_ids:
+                    continue
+                try:
+                    if prompt_price is None:
+                        entry["input_cost_usd"] = None
+                    else:
+                        entry["input_cost_usd"] = round(entry["prompt_tokens"] * prompt_price, 6)
+                    if completion_price is None:
+                        entry["output_cost_usd"] = None
+                    else:
+                        entry["output_cost_usd"] = round(entry["completion_tokens"] * completion_price, 6)
+                except Exception:
+                    pass
+            total_in = 0
+            total_out = 0
+            total_reason = 0
+            try:
+                for v in per_agent.values():
+                    if not isinstance(v, dict):
+                        continue
+                    total_in += int(v.get("prompt_tokens", 0) or 0)
+                    total_out += int(v.get("completion_tokens", 0) or 0)
+                    total_reason += int(v.get("reasoning_tokens", 0) or 0)
+            except Exception:
+                pass
+            if any(not isinstance(v.get("cost_usd"), (int, float)) for v in per_agent.values()):
+                total_cost = None
+            else:
+                try:
+                    total_cost = round(sum((v["cost_usd"] for v in per_agent.values()), 0.0), 6)
+                except Exception:
+                    total_cost = None
+            if any(not isinstance(v.get("input_cost_usd"), (int, float)) for v in per_agent.values()):
+                total_input_cost = None
+            else:
+                try:
+                    total_input_cost = round(sum((v["input_cost_usd"] for v in per_agent.values()), 0.0), 6)
+                except Exception:
+                    total_input_cost = None
+            if any(not isinstance(v.get("output_cost_usd"), (int, float)) for v in per_agent.values()):
+                total_output_cost = None
+            else:
+                try:
+                    total_output_cost = round(sum((v["output_cost_usd"] for v in per_agent.values()), 0.0), 6)
+                except Exception:
+                    total_output_cost = None
+            if not per_agent:
+                if prompt_price is None or completion_price is None:
+                    total_cost = None
+                    total_input_cost = None
+                    total_output_cost = None
+                else:
+                    total_cost = 0.0
+                    total_input_cost = 0.0
+                    total_output_cost = 0.0
+            wall_ms = (perf_counter() - wall_start) * 1000.0
+            usage_duration_ms = wall_ms
+            try:
+                for aid in valid_reuse:
+                    d = per_agent.get(aid, {}).get("duration_ms")
+                    if isinstance(d, (int, float)) and d > usage_duration_ms:
+                        usage_duration_ms = float(d)
+            except Exception:
+                pass
+            usage = {
+                "prompt_tokens": total_in,
+                "completion_tokens": total_out,
+                "total_tokens": total_in + total_out,
+                "reasoning_tokens": total_reason,
+                "cost_usd": total_cost,
+                "input_cost_usd": total_input_cost,
+                "output_cost_usd": total_output_cost,
+                "duration_ms": usage_duration_ms,
+                "model": model,
+                "provider_requested": provider_requested,
+                "per_agent": per_agent,
+                "reused_agents": reused_agents,
+            }
+            client = (getattr(payload, "client", "") or "").strip()
+            meeting_type = (getattr(payload, "meeting_type", "") or "").strip() or task_title
+            meeting_title = (getattr(payload, "meeting_title", "") or "").strip() or task_title
+            run = Run(id=run_id, input_type=input_type, input_data=input_data,
+                      model=model, agent_ids=getattr(payload, "agent_ids", []) or [],
+                      outputs=outputs)
+            db.add(run)
+            db.commit()
+            db.refresh(run)
+            log_reused_id = ""
+            log_reused_at = None
+            try:
+                if agents and len(valid_reuse) == len(agents) and agents:
+                    src_ids = set()
+                    for _aid, _src in valid_reuse.items():
+                        try:
+                            src_ids.add(_src.id)
+                        except Exception:
+                            pass
+                    if len(src_ids) == 1:
+                        only_src = next(iter(valid_reuse.values()))
+                        only_orig_id = getattr(only_src, "reused_from_log_id", None) or getattr(
+                            only_src, "id", "") or ""
+                        only_orig_at = getattr(only_src, "reused_from_created_at", None) or getattr(
+                            only_src, "created_at", None)
+                        log_reused_id = only_orig_id or ""
+                        log_reused_at = only_orig_at
+            except Exception:
+                log_reused_id = ""
+                log_reused_at = None
+            log = RunLog(id=log_id, run_id=run.id, input_type=run.input_type,
+                         input_data=run.input_data, model=run.model,
+                         agent_snapshot=snapshots, attribute_snapshot=snapshots,
+                         outputs=outputs, feedback={},
+                         usage=usage, filters=filters, requests=requests,
+                         client=client, meeting_type=meeting_type,
+                         meeting_title=meeting_title,
+                         reasoning_effort=effort, provider=provider_requested,
+                         run_group_id=getattr(payload, "run_group_id", "") or "",
+                         reused_from_log_id=log_reused_id or "",
+                         reused_from_created_at=log_reused_at, consistency={})
+            db.add(log)
+            db.commit()
+            db.refresh(log)
+            resp = {"id": run.id, "outputs": outputs, "usage": usage,
+                    "requests": requests, "log_id": log.id,
+                    "run_group_id": log.run_group_id or "", "log": _out(log)}
+            yield _ndjson_line({"type": "done", "log": resp["log"],
+                                "id": resp["id"], "log_id": resp["log_id"],
+                                "run_group_id": resp["run_group_id"]})
+        except HTTPException as exc:
+            try:
+                detail = str(exc.detail)
+            except Exception:
+                detail = "request failed"
+            yield _ndjson_line({"type": "error", "detail": detail})
+        except Exception as exc:
+            try:
+                detail = str(exc)
+            except Exception:
+                detail = "run failed"
+            yield _ndjson_line({"type": "error", "detail": detail})
+
+    return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
+
+async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
+                           resolved_type, resolved_data, effort, task_title,
+                           meeting_type, snapshots_ident, requests_ident,
+                           parsed_ident, per_ident, answers, planned,
+                           planned_agents, attr_subsets, snapshots_sel,
+                           requests_sel, snapshots, requests, valid_reuse,
+                           outputs, per_agent, reused_agents, plan_stored,
+                           provider_requested, filters, wall_start) -> StreamingResponse:
+    """Streaming NDJSON variant of POST /runs/auto (stream=true).
+
+    Events: start (after identifier+plan known) -> identifier ->
+    agent* (reused immediately, then fresh in completion order) -> done.
+    Log row written exactly once at the end, same contents as non-stream.
+    """
+    run_id, log_id = _new_run_ids()
+    model = payload.model
+    all_agents = [identifier] + planned_agents
+    start_agents = [{"agent_id": a.id, "agent_name": _agent_display_name(a)}
+                    for a in all_agents]
+    try:
+        answers_out = dict(answers) if isinstance(answers, dict) else {}
+    except Exception:
+        answers_out = {}
+    try:
+        plan_out = [dict(p) for p in (plan_stored or [])]
+    except Exception:
+        plan_out = []
+    ident_errored = not isinstance(parsed_ident, dict) or "_error" in parsed_ident
+    ident_status = "error" if ident_errored else "done"
+    try:
+        ident_err = str(parsed_ident.get("_error", "")) if ident_errored and isinstance(parsed_ident, dict) else None
+    except Exception:
+        ident_err = None
+
+    async def _gen():
+        try:
+            yield _ndjson_line({"type": "start", "run_id": run_id,
+                                "log_id": log_id, "model": model,
+                                "agents": start_agents})
+            ident_ev: dict = {"type": "identifier", "agent_id": ident_id,
+                              "agent_name": _agent_display_name(identifier),
+                              "output": parsed_ident, "usage": per_ident,
+                              "answers": answers_out, "plan": plan_out,
+                              "status": ident_status}
+            if ident_err:
+                ident_ev["error"] = ident_err
+            yield _ndjson_line(ident_ev)
+            # Identifier also gets a normal agent event so "one agent event
+            # per agent" holds literally (frontend merging is idempotent).
+            try:
+                yield _ndjson_line(_agent_event_for(
+                    ident_id, _agent_display_name(identifier),
+                    parsed_ident, per_ident, reused=False))
+            except Exception:
+                pass
+            # Reused planned agents immediately.
+            for a in planned_agents:
+                if a.id not in valid_reuse:
+                    continue
+                try:
+                    out = outputs.get(a.id)
+                    entry = per_agent.get(a.id, {})
+                    yield _ndjson_line(_agent_event_for(
+                        a.id, _agent_display_name(a), out, entry, reused=True))
+                except Exception:
+                    continue
+            fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
+            agents_by_id = {a.id: a for a in all_agents}
+            async for res in _stream_fresh_results(
+                    fresh_agents, requests, model, agents_by_id):
+                try:
+                    outputs[res["agent_id"]] = res["output"]
+                    per_agent[res["agent_id"]] = res["per_entry"]
+                    yield _ndjson_line(_agent_event_for(
+                        res["agent_id"], res["agent_name"],
+                        res["output"], res["per_entry"], reused=False))
+                except Exception:
+                    continue
+            # Reorder to identifier + planned order like non-streaming.
+            # Mutate in place (no rebinding) so the closure keeps working.
+            try:
+                _oo2: dict = {}
+                _pp2: dict = {}
+                if ident_id in outputs:
+                    _oo2[ident_id] = outputs[ident_id]
+                if ident_id in per_agent:
+                    _pp2[ident_id] = per_agent[ident_id]
+                for _a in planned_agents:
+                    if _a.id in outputs:
+                        _oo2[_a.id] = outputs[_a.id]
+                    if _a.id in per_agent:
+                        _pp2[_a.id] = per_agent[_a.id]
+                outputs.clear()
+                outputs.update(_oo2)
+                per_agent.clear()
+                per_agent.update(_pp2)
+            except Exception:
+                pass
+            # --- Finalize exactly like non-streaming auto --------------------
+            try:
+                consistency = compute_consistency(answers, outputs, ident_id, plan_stored)
+            except Exception:
+                consistency = {"auto": True, "version": 2, "score": None,
+                               "identifier_agent_id": ident_id,
+                               "answers": dict(answers) if isinstance(answers, dict) else {},
+                               "plan": plan_stored, "agents": {}}
+            try:
+                feedback = apply_auto_feedback({}, consistency)
+            except Exception:
+                feedback = {}
+            try:
+                prompt_price, completion_price = await get_model_pricing(model)
+            except Exception:
+                prompt_price, completion_price = None, None
+            try:
+                _fill_pricing(per_agent, prompt_price, completion_price,
+                              skip_ids=set(valid_reuse.keys()))
+            except Exception:
+                pass
+            totals = _totals_from_per_agent(per_agent, prompt_price, completion_price)
+            wall_ms = (perf_counter() - wall_start) * 1000.0
+            try:
+                for aid in valid_reuse:
+                    d = per_agent.get(aid, {}).get("duration_ms")
+                    if isinstance(d, (int, float)) and d > wall_ms:
+                        wall_ms = float(d)
+            except Exception:
+                pass
+            usage = _build_usage(per_agent, model, totals, wall_ms, reused_agents,
+                                 provider_requested=provider_requested)
+            client_name = (getattr(payload, "client", "") or "").strip()
+            meeting_title = (getattr(payload, "meeting_title", "") or "").strip() or task_title
+            agent_ids = [ident_id] + [a.id for a in planned_agents]
+            run = Run(id=run_id, input_type=resolved_type,
+                      input_data=resolved_data, model=model,
+                      agent_ids=agent_ids, outputs=outputs)
+            db.add(run)
+            db.commit()
+            db.refresh(run)
+            log = RunLog(id=log_id, run_id=run.id, input_type=run.input_type,
+                         input_data=run.input_data, model=run.model,
+                         agent_snapshot=snapshots, attribute_snapshot=snapshots,
+                         outputs=outputs, feedback=feedback,
+                         usage=usage, filters=filters, requests=requests,
+                         client=client_name, meeting_type=meeting_type,
+                         meeting_title=meeting_title,
+                         reasoning_effort=effort, provider=provider_requested,
+                         run_group_id=getattr(payload, "run_group_id", "") or "",
+                         reused_from_log_id="", reused_from_created_at=None,
+                         consistency=consistency)
+            db.add(log)
+            db.commit()
+            db.refresh(log)
+            resp_log = _out(log)
+            yield _ndjson_line({"type": "done", "log": resp_log,
+                                "id": run.id, "log_id": log.id,
+                                "run_group_id": log.run_group_id or ""})
+        except HTTPException as exc:
+            try:
+                detail = str(exc.detail)
+            except Exception:
+                detail = "request failed"
+            yield _ndjson_line({"type": "error", "detail": detail})
+        except Exception as exc:
+            try:
+                detail = str(exc)
+            except Exception:
+                detail = "run failed"
+            yield _ndjson_line({"type": "error", "detail": detail})
+
+    return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
 
 def _agents_by_name_for_planning(db: Session) -> tuple[dict, dict]:
@@ -1601,6 +2166,7 @@ def _find_existing_log(
 @router.post("")
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
+    _stream_flag = bool(getattr(payload, "stream", False))
     input_type, input_data, effort, task_title, agents, snapshots, requests = _plan_run(
         db, meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, agent_ids=payload.agent_ids,
@@ -1608,102 +2174,29 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         provider=provider_requested)
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     wall_start = perf_counter()
+    if _stream_flag:
+        return await _create_run_stream(
+            db, payload=payload, agents=agents, snapshots=snapshots,
+            requests=requests, input_type=input_type, input_data=input_data,
+            effort=effort, task_title=task_title, filters=filters,
+            provider_requested=provider_requested, wall_start=wall_start)
 
-    async def _run_one(agent, payload_body, model: str):
-        # No DB access in here — pure OpenRouter call + timing so concurrent
-        # tasks never share the request's DB session.
-        agent_start = perf_counter()
-        prompt_tokens = 0
-        completion_tokens = 0
-        total_tokens = 0
-        reasoning_tokens = 0
-        served_provider = ""
-        try:
-            parsed, usage = await complete_json_payload(payload_body)
-            try:
-                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-                total_tokens = int(usage.get("total_tokens", 0) or 0)
-                reasoning_tokens = int(usage.get("reasoning_tokens", 0) or 0)
-            except Exception:
-                prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = 0, 0, 0, 0
-            if prompt_tokens < 0:
-                prompt_tokens = 0
-            if completion_tokens < 0:
-                completion_tokens = 0
-            if total_tokens < 0:
-                total_tokens = 0
-            if reasoning_tokens < 0:
-                reasoning_tokens = 0
-            try:
-                served_provider = usage.get("provider", "") if isinstance(usage, dict) else ""
-            except Exception:
-                served_provider = ""
-            if not isinstance(served_provider, str):
-                served_provider = ""
-            duration_ms = (perf_counter() - agent_start) * 1000.0
-            return (agent.id, parsed, prompt_tokens, completion_tokens,
-                    total_tokens, reasoning_tokens, duration_ms, model, served_provider)
-        except Exception as exc:
-            duration_ms = (perf_counter() - agent_start) * 1000.0
-            return (agent.id, {"_error": str(exc)}, 0, 0, 0, 0,
-                    duration_ms, model, "")
-
-    # --- Per-agent reuse: validate each reuse entry server-side ---------------
-    # Same rule as matching (messages equal, output present without _error,
-    # same model+effort). Invalid entries are ignored silently (fresh run).
+    # --- Per-agent reuse (shared helper) + shared run loop -------------------
+    # Non-streaming and streaming share _resolve_valid_reuse,
+    # _seed_reused_state and _stream_fresh_results (as_completed) so the two
+    # paths don't duplicate the run logic. Final dicts keep the old order
+    # (reused seeded first, then fresh in agent order) for byte-identical
+    # responses when stream=false.
     reuse_map = getattr(payload, "reuse", None)
-    if not isinstance(reuse_map, dict):
-        reuse_map = {}
-    valid_reuse: dict[str, RunLog] = {}
-    for agent in agents:
-        try:
-            src_id = reuse_map.get(agent.id)
-        except Exception:
-            src_id = None
-        if not isinstance(src_id, str) or not src_id.strip():
-            continue
-        src_id = src_id.strip()
-        try:
-            source = db.query(RunLog).filter(RunLog.id == src_id).first()
-        except Exception:
-            source = None
-        if source is None:
-            continue
-        fresh_body = requests.get(agent.id)
-        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
-        if not _is_valid_reuse_source(
-            source, agent_id=agent.id, model=payload.model,
-            reasoning_effort=effort, expected_messages=fresh_msgs,
-            provider=provider_requested,
-        ):
-            continue
-        valid_reuse[agent.id] = source
-
-    outputs: dict = {}
-    per_agent: dict = {}
-    reused_agents: dict = {}
-    # Seed reused agents (no OpenRouter call; requests stay freshly built).
-    for aid, source in list(valid_reuse.items()):
-        try:
-            src_outs = getattr(source, "outputs", None) or {}
-            if not isinstance(src_outs, dict) or aid not in src_outs:
-                raise KeyError(aid)
-            outputs[aid] = copy.deepcopy(src_outs.get(aid))
-            entry, rid, rat = _build_reused_per_agent(source, aid)
-            per_agent[aid] = entry
-            reused_agents[aid] = {"log_id": rid, "created_at": rat}
-        except Exception:
-            # Treat as fresh on unexpected copy failure.
-            valid_reuse.pop(aid, None)
-            outputs.pop(aid, None)
-            per_agent.pop(aid, None)
-            reused_agents.pop(aid, None)
-            continue
-
+    valid_reuse = _resolve_valid_reuse(
+        db, agents, requests, reuse_map, payload.model, effort, provider_requested)
+    outputs, per_agent, reused_agents = _seed_reused_state(valid_reuse)
     fresh_agents = [a for a in agents if a.id not in valid_reuse]
-    fresh_bodies = [(a, copy.deepcopy(requests[a.id]), payload.model) for a in fresh_agents]
-    results = await asyncio.gather(*[_run_one(a, b, m) for a, b, m in fresh_bodies])
+    agents_by_id = {a.id: a for a in agents}
+    _collected: dict = {}
+    async for _res in _stream_fresh_results(
+            fresh_agents, requests, payload.model, agents_by_id):
+        _collected[_res["agent_id"]] = _res
     total_in = 0
     total_out = 0
     total_in_reasoning = 0
@@ -1716,31 +2209,19 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             total_in_reasoning += int(e.get("reasoning_tokens", 0) or 0)
         except Exception:
             pass
-    agents_by_id = {a.id: a for a in agents}
-    for (aid, parsed, prompt_tokens, completion_tokens,
-         total_tokens, reasoning_tokens, duration_ms, model, served) in results:
-        agent_row = agents_by_id.get(aid)
-        if agent_row is not None and is_identifier(agent_row):
-            try:
-                parsed = normalize_identifier_output(parsed)
-            except Exception:
-                pass
-        outputs[aid] = parsed
-        total_in += prompt_tokens
-        total_out += completion_tokens
-        total_in_reasoning += reasoning_tokens
-        per_agent[aid] = {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "cost_usd": None,
-            "input_cost_usd": None,
-            "output_cost_usd": None,
-            "duration_ms": duration_ms,
-            "model": model,
-            "provider": served if isinstance(served, str) else "",
-        }
+    for _ag in fresh_agents:
+        _res = _collected.get(_ag.id)
+        if _res is None:
+            continue
+        outputs[_ag.id] = _res["output"]
+        _pe = _res["per_entry"]
+        try:
+            total_in += int(_pe.get("prompt_tokens", 0) or 0)
+            total_out += int(_pe.get("completion_tokens", 0) or 0)
+            total_in_reasoning += int(_pe.get("reasoning_tokens", 0) or 0)
+        except Exception:
+            pass
+        per_agent[_ag.id] = _pe
     if fresh_agents or not valid_reuse:
         try:
             prompt_price, completion_price = await get_model_pricing(payload.model)
@@ -2283,9 +2764,10 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     One log per call (one model). Body is RunCreate minus agent_ids
     (those are ignored); ``reuse`` ({agent_id: source_log_id}) is honoured
     for any planned agent like create_run. Response shape identical to
-    POST /runs.
+    POST /runs. Opt-in streaming via ``stream: true`` returns NDJSON.
     """
     wall_start = perf_counter()
+    _auto_stream = bool(getattr(payload, "stream", False))
     provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
     resolved_type, resolved_data, effort, task_title = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
@@ -2347,63 +2829,8 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         attr_subsets=attr_subsets)
     snapshots = {**snapshots_ident, **snapshots_sel}
     requests = {**requests_ident, **requests_sel}
-    # Per-agent reuse exactly like create_run (invalid entries ignored).
-    reuse_map = getattr(payload, "reuse", None)
-    if not isinstance(reuse_map, dict):
-        reuse_map = {}
-    valid_reuse: dict[str, RunLog] = {}
-    for ag in planned_agents:
-        try:
-            src_id = reuse_map.get(ag.id)
-        except Exception:
-            src_id = None
-        if not isinstance(src_id, str) or not src_id.strip():
-            continue
-        src_id = src_id.strip()
-        try:
-            source = db.query(RunLog).filter(RunLog.id == src_id).first()
-        except Exception:
-            source = None
-        if source is None:
-            continue
-        fresh_body = requests.get(ag.id)
-        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
-        if not _is_valid_reuse_source(
-            source, agent_id=ag.id, model=payload.model,
-            reasoning_effort=effort, expected_messages=fresh_msgs,
-            provider=provider_requested,
-        ):
-            continue
-        valid_reuse[ag.id] = source
-    outputs: dict = {ident_id: parsed_ident}
-    per_agent: dict = {ident_id: per_ident}
-    reused_agents: dict = {}
-    for aid, source in list(valid_reuse.items()):
-        try:
-            src_outs = getattr(source, "outputs", None) or {}
-            if not isinstance(src_outs, dict) or aid not in src_outs:
-                raise KeyError(aid)
-            outputs[aid] = copy.deepcopy(src_outs.get(aid))
-            entry, rid, rat = _build_reused_per_agent(source, aid)
-            per_agent[aid] = entry
-            reused_agents[aid] = {"log_id": rid, "created_at": rat}
-        except Exception:
-            valid_reuse.pop(aid, None)
-            outputs.pop(aid, None)
-            per_agent.pop(aid, None)
-            reused_agents.pop(aid, None)
-            continue
-    fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
-    fresh_requests = {a.id: requests[a.id] for a in fresh_agents if a.id in requests}
-    if fresh_agents:
-        outputs_sel, per_agent_sel = await _execute_agents(db, fresh_agents, fresh_requests, payload.model)
-        for k, v in outputs_sel.items():
-            outputs[k] = v
-        for k, v in per_agent_sel.items():
-            per_agent[k] = v
-    agents = [identifier] + planned_agents
-    agent_ids = [ident_id] + [a.id for a in planned_agents]
     # Stored plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
+    # Computed before the run so streaming can send start + identifier early.
     plan_stored: list[dict] = []
     try:
         for entry in planned or []:
@@ -2424,6 +2851,46 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
             })
     except Exception:
         plan_stored = []
+    # Per-agent reuse via the shared helper (invalid entries ignored).
+    reuse_map = getattr(payload, "reuse", None)
+    valid_reuse = _resolve_valid_reuse(
+        db, planned_agents, requests, reuse_map, payload.model, effort,
+        provider_requested)
+    _reused_out, _reused_per, _reused_map = _seed_reused_state(valid_reuse)
+    outputs: dict = {ident_id: parsed_ident}
+    per_agent: dict = {ident_id: per_ident}
+    reused_agents: dict = {}
+    for _k, _v in _reused_out.items():
+        outputs[_k] = _v
+    for _k, _v in _reused_per.items():
+        per_agent[_k] = _v
+    for _k, _v in _reused_map.items():
+        reused_agents[_k] = _v
+    if _auto_stream:
+        return await _auto_run_stream(
+            db, payload=payload, identifier=identifier, ident_id=ident_id,
+            resolved_type=resolved_type, resolved_data=resolved_data,
+            effort=effort, task_title=task_title, meeting_type=meeting_type,
+            snapshots_ident=snapshots_ident, requests_ident=requests_ident,
+            parsed_ident=parsed_ident, per_ident=per_ident, answers=answers,
+            planned=planned, planned_agents=planned_agents,
+            attr_subsets=attr_subsets, snapshots_sel=snapshots_sel,
+            requests_sel=requests_sel, snapshots=snapshots, requests=requests,
+            valid_reuse=valid_reuse, outputs=outputs, per_agent=per_agent,
+            reused_agents=reused_agents, plan_stored=plan_stored,
+            provider_requested=provider_requested,
+            filters=payload.filters if isinstance(payload.filters, dict) else {},
+            wall_start=wall_start)
+    fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
+    fresh_requests = {a.id: requests[a.id] for a in fresh_agents if a.id in requests}
+    if fresh_agents:
+        outputs_sel, per_agent_sel = await _execute_agents(db, fresh_agents, fresh_requests, payload.model)
+        for k, v in outputs_sel.items():
+            outputs[k] = v
+        for k, v in per_agent_sel.items():
+            per_agent[k] = v
+    agents = [identifier] + planned_agents
+    agent_ids = [ident_id] + [a.id for a in planned_agents]
     try:
         consistency = compute_consistency(answers, outputs, ident_id, plan_stored)
     except Exception:

@@ -416,7 +416,36 @@ export function CompareCardList({
                             </li>
                           );
                         }
-                        if (!cell || cell.canon === PENDING_CANON || cell.canon === ERROR_CANON || cell.error) {
+                        if (!cell || cell.canon === PENDING_CANON) {
+                          // Streaming provisional: muted "running…" placeholder.
+                          if (col.status === "running" || col.status === "queued") {
+                            return (
+                              <li key={col.key} className="flex items-center gap-2">
+                                <span
+                                  title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                  className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                                >
+                                  {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
+                                </span>
+                                <span className="flex-1 font-sans text-[11px] italic text-[#8a8f98]">
+                                  running…
+                                </span>
+                              </li>
+                            );
+                          }
+                          return (
+                            <li key={col.key} className="flex items-center gap-2">
+                              <span
+                                title={`${col.model}${col.provider ? ` · ${col.provider}` : " · Auto"}`}
+                                className="w-20 shrink-0 truncate font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]"
+                              >
+                                {modelLabel(col.model, col.effort, col.provider ?? col.log?.provider ?? "")}
+                              </span>
+                              <span className="h-5 flex-1 animate-pulse rounded-lg bg-[#f1f2f3] dark:bg-white/10" aria-label="Loading…" />
+                            </li>
+                          );
+                        }
+                        if (cell.canon === ERROR_CANON || cell.error) {
                           const canRetryAgent = !!onRetryAgent && !!col.log;
                           return (
                             <li key={col.key} className="flex items-center gap-2">
@@ -511,11 +540,16 @@ export function CompareCardList({
                                 Auto
                               </span>
                             )}
-                            {editable && (
-                              <span className="flex shrink-0 items-center">
-                                <ThumbButtons value={rating} onChange={(n) => handleCellRate(row, col.key, n)} size="sm" />
-                              </span>
-                            )}
+                            {editable &&
+                              (col.status === "done" || col.status === "partial") && (
+                                <span className="flex shrink-0 items-center">
+                                  <ThumbButtons
+                                    value={rating}
+                                    onChange={(n) => handleCellRate(row, col.key, n)}
+                                    size="sm"
+                                  />
+                                </span>
+                              )}
                           </li>
                         );
                       })}

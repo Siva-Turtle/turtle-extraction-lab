@@ -440,8 +440,15 @@ function buildCompareAgents(
   selectedIds: string[],
   allAgents: { id: string; name: string; kind: string }[],
 ): CompareAgent[] {
+  // Include streaming provisional logs (running with a log) so completed
+  // agents render immediately; pending agents come from the start-event
+  // snapshot via union (attributes fill in from outputs as events arrive).
   const finishedLogs = columns
-    .filter((c) => c.log && (c.status === "done" || c.status === "partial"))
+    .filter(
+      (c) =>
+        c.log &&
+        (c.status === "done" || c.status === "partial" || c.status === "running"),
+    )
     .map((c) => c.log as NonNullable<CompareColumn["log"]>);
   if (finishedLogs.length > 0) {
     const out = unionAgentsFromLogs(finishedLogs);
@@ -528,6 +535,7 @@ function ColumnBlock({
             }
             runningAgents={agentRunning}
             colKey={column.key}
+            disabled={column.status === "running" || column.status === "queued"}
           />
         </div>
       )}

@@ -37,6 +37,9 @@ class RunCreate(BaseModel):
     # are NOT sent to the model; output + per-agent usage are copied.
     # Invalid entries are ignored silently (that agent runs normally).
     reuse: dict = Field(default_factory=dict)
+    # Opt-in streaming mode: when true, POST /runs and POST /runs/auto return
+    # application/x-ndjson with one JSON object per line (start/agent/done).
+    stream: bool = False
 
     @field_validator("reuse", mode="before")
     @classmethod

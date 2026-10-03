@@ -152,6 +152,26 @@ export function canonicalKey(value: unknown, confidenceType?: unknown): string {
   }
 }
 
+/** True when a column has a log worth comparing: done/partial, or a
+ * streaming provisional log (status running with a log). Queued/error
+ * without a log stay pending. Exported for streaming placeholders. */
+export function isLiveColumn(col: CompareColumn): boolean {
+  if (!col.log) return false;
+  return col.status === "done" || col.status === "partial" || col.status === "running";
+}
+
+/** True when the provisional/final snapshot lists this agent (streaming
+ * start event seeds the snapshot, so missing output means still running,
+ * not "not selected"). */
+function snapshotHasAgent(log: LogRow, agentId: string): boolean {
+  try {
+    const snap = (log.agent_snapshot ?? {}) as Record<string, unknown>;
+    return Object.prototype.hasOwnProperty.call(snap, agentId);
+  } catch {
+    return false;
+  }
+}
+
 /** Display name for an agent id within one log (mirrors SingleModelTable). */
 function columnAgentName(log: LogRow, agentId: string, fallback: string): string {
   try {
@@ -469,7 +489,7 @@ function identifierCandidates(agent: CompareAgent, columns: CompareColumn[]): st
   };
   for (const col of columns) {
     const log = col.log;
-    if (!log || (col.status !== "done" && col.status !== "partial")) continue;
+    if (!isLiveColumn(col) || !log) continue;
     const out = agentOutput(log, agent.id, agent.name);
     if (hasAgentError(out) !== null) continue;
     if (!out || typeof out !== "object" || Array.isArray(out)) continue;
@@ -513,7 +533,7 @@ function buildIdentifierQuestionRows(
     const cells: Record<string, CellState> = {};
     for (const col of columns) {
       const log = col.log;
-      if (!log || (col.status !== "done" && col.status !== "partial")) {
+      if (!log || !isLiveColumn(col)) {
         cells[col.key] = {
           value: undefined,
           canon: PENDING_CANON,
@@ -523,6 +543,16 @@ function buildIdentifierQuestionRows(
         continue;
       }
       if (!hasAgentOutput(log, agent.id, agent.name)) {
+        // Streaming provisional: expected but not yet returned => pending.
+        if (col.status === "running" && snapshotHasAgent(log, agent.id)) {
+          cells[col.key] = {
+            value: undefined,
+            canon: PENDING_CANON,
+            error: col.error,
+            feedback: null,
+          };
+          continue;
+        }
         cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
         continue;
       }
@@ -553,7 +583,7 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
   let anyNew = false;
   for (const col of columns) {
     const log = col.log;
-    if (!log || (col.status !== "done" && col.status !== "partial")) continue;
+    if (!log || !isLiveColumn(col)) continue;
     const out = agentOutput(log, agent.id, agent.name);
     if (hasAgentError(out) !== null) continue;
     if (selectedListOf(out) !== null) anyOld = true;
@@ -570,7 +600,7 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
     const selCells: Record<string, CellState> = {};
     for (const col of columns) {
       const log = col.log;
-      if (!log || (col.status !== "done" && col.status !== "partial")) {
+      if (!log || !isLiveColumn(col)) {
         selCells[col.key] = {
           value: undefined,
           canon: PENDING_CANON,
@@ -580,6 +610,15 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
         continue;
       }
       if (!hasAgentOutput(log, agent.id, agent.name)) {
+        if (col.status === "running" && snapshotHasAgent(log, agent.id)) {
+          selCells[col.key] = {
+            value: undefined,
+            canon: PENDING_CANON,
+            error: col.error,
+            feedback: null,
+          };
+          continue;
+        }
         selCells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
         continue;
       }
@@ -612,7 +651,7 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
       const cells: Record<string, CellState> = {};
       for (const col of columns) {
         const log = col.log;
-        if (!log || (col.status !== "done" && col.status !== "partial")) {
+        if (!log || !isLiveColumn(col)) {
           cells[col.key] = {
             value: undefined,
             canon: PENDING_CANON,
@@ -622,6 +661,15 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
           continue;
         }
         if (!hasAgentOutput(log, agent.id, agent.name)) {
+          if (col.status === "running" && snapshotHasAgent(log, agent.id)) {
+            cells[col.key] = {
+              value: undefined,
+              canon: PENDING_CANON,
+              error: col.error,
+              feedback: null,
+            };
+            continue;
+          }
           cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
           continue;
         }
@@ -654,8 +702,10 @@ function buildIdentifierRows(agent: CompareAgent, columns: CompareColumn[]): Com
 /**
  * One row per agent × attribute. Attribute order follows the agent snapshot,
  * then any extra output keys seen in the compared columns (first-seen order).
- * Only done/partial columns whose agent has no `_error` join the comparison;
- * the rest get pending/error cells and are excluded from `groups`.
+ * Done/partial columns plus streaming provisional logs (running with a log)
+ * join the comparison; the rest get pending/error cells and are excluded
+ * from `groups`. Missing output in a running provisional column means still
+ * running (pending) when the snapshot lists the agent, else not selected.
  * Identifier agents instead produce one row per candidate agent name plus a
  * `selected_agents` row (no raw `fillable_attributes` row).
  */
@@ -670,7 +720,7 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
     const seen = new Set(attrNames);
     const extras: string[] = [];
     for (const col of columns) {
-      if (!col.log || (col.status !== "done" && col.status !== "partial")) continue;
+      if (!col.log || !isLiveColumn(col)) continue;
       const out = agentOutput(col.log, agent.id, agent.name);
       if (!out || typeof out !== "object" || Array.isArray(out)) continue;
       if (hasAgentError(out) !== null) continue;
@@ -686,7 +736,7 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
       const cells: Record<string, CellState> = {};
       for (const col of columns) {
         const log = col.log;
-        if (!log || (col.status !== "done" && col.status !== "partial")) {
+        if (!log || !isLiveColumn(col)) {
           cells[col.key] = {
             value: undefined,
             canon: PENDING_CANON,
@@ -696,6 +746,15 @@ export function buildRows(agents: CompareAgent[], columns: CompareColumn[]): Com
           continue;
         }
         if (!hasAgentOutput(log, agent.id, agent.name)) {
+          if (col.status === "running" && snapshotHasAgent(log, agent.id)) {
+            cells[col.key] = {
+              value: undefined,
+              canon: PENDING_CANON,
+              error: col.error,
+              feedback: null,
+            };
+            continue;
+          }
           cells[col.key] = { value: undefined, canon: NOT_SELECTED_CANON, feedback: null };
           continue;
         }
