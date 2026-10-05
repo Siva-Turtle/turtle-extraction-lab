@@ -583,9 +583,16 @@ export default function Review(): React.JSX.Element {
                   <p className="truncate font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]" title={row.sample}>
                     {row.sample}
                   </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
+                  <p className="mt-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-[#8a8f98]">
                     {row.questionKey}
                   </p>
+                  {row.question !== "" ? (
+                    <p className="mt-0.5 break-words font-sans text-xs text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
+                      {row.question}
+                    </p>
+                  ) : (
+                    <Dash />
+                  )}
                 </div>
                 <span className="flex shrink-0 items-center gap-1.5">
                   <Badge tone={row.agree ? "success" : "warning"}>
@@ -676,13 +683,24 @@ export default function Review(): React.JSX.Element {
                   >
                     {row.sample}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#4a5058] dark:text-[#C3C2B7]">
-                    {row.questionKey}
-                    {!row.agree && (
-                      <span className="ml-1.5 inline-flex">
-                        <Badge tone="warning">split</Badge>
-                      </span>
-                    )}
+                  <td className="min-w-64 max-w-96 px-4 py-3">
+                    <div className="grid min-w-0 gap-1">
+                      <p className="font-mono text-[10px] font-bold uppercase tracking-wide text-[#8a8f98]">
+                        {row.questionKey}
+                        {!row.agree && (
+                          <span className="ml-1.5 inline-flex normal-case">
+                            <Badge tone="warning">split</Badge>
+                          </span>
+                        )}
+                      </p>
+                      {row.question !== "" ? (
+                        <p className="min-w-0 break-words font-sans text-xs text-[#4a5058] [overflow-wrap:anywhere] dark:text-[#C3C2B7]">
+                          {row.question}
+                        </p>
+                      ) : (
+                        <Dash />
+                      )}
+                    </div>
                   </td>
                   <td className="min-w-36 px-4 py-3">
                     <div className="flex items-start gap-1.5">

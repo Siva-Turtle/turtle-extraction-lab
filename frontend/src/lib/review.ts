@@ -30,6 +30,8 @@ export type ReviewRow = {
   groupId: string;
   sample: string;
   questionKey: string;
+  /** Exact question text sent to the model ("" when unresolvable). */
+  question: string;
   jev: ReviewSide;
   opus: ReviewSide;
   agree: boolean;
@@ -336,6 +338,67 @@ function sideOf(log: LogRow, key: string): ReviewSide {
 }
 
 /**
+ * Exact question text sent to the model, read from the log's own stored
+ * request (what the model actually saw). Decisions body
+ * (`requests[agentId].questions?.[qkey]?.instructions`) wins verbatim;
+ * else scans `requests[agentId].messages` system content for the line
+ * matching `^Q\d+ \(qkey\):` and returns the full line trimmed. ""
+ * when unresolvable. Never throws.
+ */
+export function questionText(log: LogRow | null, agentId: string, qkey: string): string {
+  try {
+    if (!log || typeof log !== "object") return "";
+    if (typeof agentId !== "string" || agentId === "") return "";
+    if (typeof qkey !== "string" || qkey === "") return "";
+    const reqs = (log.requests ?? {}) as Record<string, unknown>;
+    if (!reqs || typeof reqs !== "object" || Array.isArray(reqs)) return "";
+    const body = reqs[agentId];
+    if (!body || typeof body !== "object" || Array.isArray(body)) return "";
+    const rec = body as Record<string, unknown>;
+    try {
+      const qs = rec.questions;
+      if (qs && typeof qs === "object" && !Array.isArray(qs)) {
+        const entry = (qs as Record<string, unknown>)[qkey];
+        if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+          const instr = (entry as Record<string, unknown>).instructions;
+          if (typeof instr === "string" && instr !== "") return instr;
+        }
+      }
+    } catch {
+      // fall through to chat body
+    }
+    try {
+      const messages = rec.messages;
+      if (!Array.isArray(messages)) return "";
+      const escaped = qkey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`^Q\\d+ \\(${escaped}\\):`, "m");
+      for (const m of messages) {
+        if (!m || typeof m !== "object" || Array.isArray(m)) continue;
+        const msg = m as Record<string, unknown>;
+        if (msg.role !== "system") continue;
+        if (typeof msg.content !== "string" || msg.content === "") continue;
+        const lines = msg.content.split("\n");
+        for (const line of lines) {
+          try {
+            if (re.test(line)) {
+              const t = line.trim();
+              if (t !== "") return t;
+            }
+          } catch {
+            // ignore bad lines, keep scanning
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Group logs by run_group_id (or id) and keep the groups that pair one
  * `typesafe/jev-*` log with one `anthropic/*` log (latest of each by
  * created_at). Chunks come from the Jev (decisions) log's `state.chunks`,
@@ -418,11 +481,31 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
         try {
           const jev = sideOf(g.jev, key);
           const opus = sideOf(g.opus, key);
+          let question = "";
+          try {
+            const jevAgent = identifierAgentOf(g.jev);
+            const opusAgent = identifierAgentOf(g.opus);
+            question = questionText(
+              g.jev,
+              jevAgent ? jevAgent.id : "agent_identifier",
+              key,
+            );
+            if (question === "") {
+              question = questionText(
+                g.opus,
+                opusAgent ? opusAgent.id : "agent_identifier",
+                key,
+              );
+            }
+          } catch {
+            question = "";
+          }
           rows.push({
             key: `${g.id}|${key}`,
             groupId: g.id,
             sample,
             questionKey: key,
+            question,
             jev,
             opus,
             agree: jev.value === opus.value,
