@@ -467,7 +467,6 @@ export const BATCH_SEL_KEY = "review:batchSel";
 export type BatchSelection = {
   /** Selected batch id; null = All batches. */
   batchId: string | null;
-  selected: string[];
 };
 
 function storageGet(key: string): string | null {
@@ -579,22 +578,23 @@ export function batchDisplayName(
   }
 }
 
-/** Persisted batch + group selection; null when nothing stored yet. */
+/**
+ * Persisted batch selection; null when nothing stored yet. Tolerates the
+ * old `{ batchId, selected }` shape (extra fields ignored) and a bare
+ * JSON string batch id.
+ */
 export function loadBatchSel(): BatchSelection | null {
   try {
     const raw = storageGet(BATCH_SEL_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<BatchSelection> | null;
-    if (!parsed || typeof parsed !== "object") return null;
-    const batchId =
-      parsed.batchId === null || typeof parsed.batchId === "string"
-        ? parsed.batchId
-        : null;
-    const selected = Array.isArray(parsed.selected)
-      ? parsed.selected.filter((s): s is string => typeof s === "string")
-      : null;
-    if (selected === null) return null;
-    return { batchId, selected };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === "string") return { batchId: parsed };
+    if (parsed === null) return { batchId: null };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const rec = parsed as Record<string, unknown>;
+    if (rec.batchId === null || rec.batchId === undefined) return { batchId: null };
+    if (typeof rec.batchId === "string") return { batchId: rec.batchId };
+    return { batchId: null };
   } catch {
     return null;
   }
@@ -602,10 +602,7 @@ export function loadBatchSel(): BatchSelection | null {
 
 export function saveBatchSel(sel: BatchSelection): void {
   try {
-    storageSet(
-      BATCH_SEL_KEY,
-      JSON.stringify({ batchId: sel.batchId ?? null, selected: sel.selected ?? [] }),
-    );
+    storageSet(BATCH_SEL_KEY, JSON.stringify({ batchId: sel.batchId ?? null }));
   } catch {
     // ignore
   }

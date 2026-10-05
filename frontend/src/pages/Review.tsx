@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Pencil, Scale, Star } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
-import { fmt, fmtCostBoth, modelLabel, serverDetail } from "../lib/format";
+import { serverDetail } from "../lib/format";
 import { IDENTIFIER_QUESTION_KEYS } from "../lib/format";
 import type { LogRow } from "../lib/logTypes";
 import {
@@ -21,7 +21,7 @@ import {
   saveBatchSel,
   toggleStar,
 } from "../lib/review";
-import type { ReviewBatch, ReviewGroup, ReviewRow, ReviewSide } from "../lib/review";
+import type { ReviewBatch, ReviewRow, ReviewSide } from "../lib/review";
 import { useFeedback } from "../lib/useFeedback";
 import { useIsNarrow } from "../lib/useIsNarrow";
 import { cn } from "../lib/cn";
@@ -266,96 +266,11 @@ function FirefliesLink({ url }: { url: string }): React.JSX.Element | null {
   );
 }
 
-function GroupPicker({
-  groups,
-  selected,
-  onToggle,
-  onAll,
-  onNone,
-}: {
-  groups: ReviewGroup[];
-  selected: string[];
-  onToggle: (id: string) => void;
-  onAll: () => void;
-  onNone: () => void;
-}): React.JSX.Element {
-  const set = new Set(selected);
-  return (
-    <Card>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-heading text-sm font-bold text-[#1d1d1d] dark:text-[#F0EFEC]">
-          Pair groups ({selected.length}/{groups.length} selected)
-        </h2>
-        <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={onAll}>
-            All
-          </Button>
-          <Button variant="secondary" size="sm" onClick={onNone}>
-            None
-          </Button>
-        </div>
-      </div>
-      {groups.length === 0 ? (
-        <p className="mt-2 font-sans text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-          No Jev-vs-Opus pairs in the fetched logs — run a group with one{" "}
-          <span className="font-mono text-xs">typesafe/jev-*</span> and one{" "}
-          <span className="font-mono text-xs">anthropic/*</span> model first.
-        </p>
-      ) : (
-        <ul className="mt-3 grid gap-2">
-          {groups.map((g) => {
-            const checked = set.has(g.id);
-            return (
-              <li key={g.id}>
-                <label className="flex min-w-0 cursor-pointer items-start gap-2.5 rounded-xl border border-[#e5e7eb] p-2.5 hover:border-[#1d1d1d] dark:border-white/10">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(g.id)}
-                    aria-label={`Select ${g.title}`}
-                    className="mt-1 h-4 w-4 shrink-0 accent-[#0d5c4a]"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]" title={g.title}>
-                      {g.title}
-                    </span>
-                    <span className="mt-0.5 block font-sans text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                      {fmt(g.createdAt)}
-                    </span>
-                    <span className="mt-1 flex flex-wrap items-center gap-1">
-                      <Badge tone="neutral">
-                        <span className="max-w-40 truncate font-mono normal-case" title={g.jevModel}>
-                          {modelLabel(g.jevModel, "", "")}
-                        </span>
-                      </Badge>
-                      <Badge tone="neutral">
-                        <span className="max-w-40 truncate font-mono normal-case" title={g.opusModel}>
-                          {modelLabel(g.opusModel, "", "")}
-                        </span>
-                      </Badge>
-                      <span className="font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
-                        {fmtCostBoth(g.cost)}
-                      </span>
-                    </span>
-                  </span>
-                </label>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
 export default function Review(): React.JSX.Element {
   const narrow = useIsNarrow();
   const feedback = useFeedback();
   const [mode, setMode] = React.useState<Mode>("discrepancies");
   const [question, setQuestion] = React.useState("all");
-  const [selected, setSelected] = React.useState<string[] | null>(
-    () => loadBatchSel()?.selected ?? null,
-  );
   const [batchId, setBatchId] = React.useState<string | null>(
     () => loadBatchSel()?.batchId ?? null,
   );
@@ -400,13 +315,10 @@ export default function Review(): React.JSX.Element {
     if (!batches.some((b) => b.id === batchId)) setBatchId(null);
   }, [groups.length, batches, batchId]);
 
-  // Default = all pair groups from the fetched set.
-  const effectiveSelected = selected ?? groups.map((g) => g.id);
-
-  // Persist where Siva left off (selected batch + checkbox selection).
+  // Persist where Siva left off (selected batch id; All = null).
   React.useEffect(() => {
-    saveBatchSel({ batchId, selected: effectiveSelected });
-  }, [batchId, selected, groups]);
+    saveBatchSel({ batchId });
+  }, [batchId]);
 
   React.useEffect(() => {
     saveBatchNames(batchNames);
@@ -418,31 +330,13 @@ export default function Review(): React.JSX.Element {
     return found ? new Set(found.groupIds) : new Set<string>();
   }, [batches, batchId]);
 
-  // Group picker is restricted to the selected batch (checkbox behavior
-  // inside the batch stays the same).
-  const visibleGroups = React.useMemo(
+  // Batch chip selects ALL of that batch's groups; All = every group.
+  const selectedGroups = React.useMemo(
     () =>
       batchGroupIds === null
         ? groups
         : groups.filter((g) => batchGroupIds.has(g.id)),
     [groups, batchGroupIds],
-  );
-  const visibleIds = React.useMemo(
-    () => new Set(visibleGroups.map((g) => g.id)),
-    [visibleGroups],
-  );
-  const pickerSelected = React.useMemo(
-    () => effectiveSelected.filter((id) => visibleIds.has(id)),
-    [effectiveSelected, visibleIds],
-  );
-
-  const selectedSet = React.useMemo(() => new Set(effectiveSelected), [effectiveSelected]);
-  const selectedGroups = React.useMemo(
-    () =>
-      groups.filter(
-        (g) => selectedSet.has(g.id) && (batchGroupIds === null || batchGroupIds.has(g.id)),
-      ),
-    [groups, selectedSet, batchGroupIds],
   );
 
   const starredSet = React.useMemo(() => new Set(stars), [stars]);
@@ -468,13 +362,6 @@ export default function Review(): React.JSX.Element {
     return n;
   }, [rows, feedback]);
   const totalCells = rows.length * 2;
-
-  function toggleGroup(id: string): void {
-    const cur = new Set(effectiveSelected);
-    if (cur.has(id)) cur.delete(id);
-    else cur.add(id);
-    setSelected([...cur]);
-  }
 
   function toggleStarKey(key: string): void {
     const next = toggleStar(stars, key);
@@ -571,7 +458,7 @@ export default function Review(): React.JSX.Element {
                 <button
                   type="button"
                   aria-pressed={active}
-                  onClick={() => setBatchId(active ? null : b.id)}
+                  onClick={() => setBatchId(b.id)}
                   title={`${label} — ${b.groupIds.length} group${b.groupIds.length === 1 ? "" : "s"}${latest ? " (newest)" : ""}`}
                   className={cn(
                     "inline-flex items-center gap-1.5 rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
@@ -597,16 +484,6 @@ export default function Review(): React.JSX.Element {
           })}
         </div>
       </Card>
-
-      <GroupPicker
-        groups={visibleGroups}
-        selected={pickerSelected}
-        onToggle={toggleGroup}
-        onAll={() =>
-          setSelected([...new Set([...effectiveSelected, ...visibleGroups.map((g) => g.id)])])
-        }
-        onNone={() => setSelected(effectiveSelected.filter((id) => !visibleIds.has(id)))}
-      />
 
       <Card>
         <div className="flex flex-wrap items-center gap-2">
@@ -676,7 +553,7 @@ export default function Review(): React.JSX.Element {
       ) : selectedGroups.length === 0 ? (
         <Card>
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
-            Select at least one pair group above to review.
+            No Jev-vs-Opus pairs in this batch — pick another batch above.
           </p>
         </Card>
       ) : rows.length === 0 ? (
