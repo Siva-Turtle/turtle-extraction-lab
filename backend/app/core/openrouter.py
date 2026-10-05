@@ -149,6 +149,7 @@ def build_chat_payload(
     schema_name: str = "meeting_extraction",
     reasoning_effort: str | None = None,
     provider: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Build the EXACT JSON body POSTed to OpenRouter chat-completions.
 
@@ -163,7 +164,9 @@ def build_chat_payload(
     None/blank leaves the payload byte-identical (no ``reasoning`` key).
     When ``provider`` is a non-blank string, ``{"provider": {"order":
     [value], "allow_fallbacks": False}}`` is added; None/blank leaves the
-    payload byte-identical (no ``provider`` key).
+    payload byte-identical (no ``provider`` key). When ``max_tokens`` is
+    not None, ``{"max_tokens": max_tokens}`` is added; None leaves the
+    payload byte-identical (no ``max_tokens`` key).
 
     Anthropic union-limit fallback: when ``json_schema`` is given AND the
     model is ``anthropic/*`` AND ``count_union_params(json_schema)`` exceeds
@@ -215,6 +218,8 @@ def build_chat_payload(
     prov = provider.strip() if isinstance(provider, str) else ""
     if prov:
         payload["provider"] = {"order": [prov], "allow_fallbacks": False}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     return payload
 
 

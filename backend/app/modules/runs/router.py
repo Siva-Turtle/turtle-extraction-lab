@@ -1341,7 +1341,8 @@ def _build_agent_requests(
                     model=model, system=system_content,
                     user=format_chunks_numbered(shared_chunks),
                     json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
-                    reasoning_effort=effort, provider=prov)
+                    reasoning_effort=effort, provider=prov,
+                    max_tokens=2048)
         else:
             system_content = _agent_system_content(agent, attrs)
             schema = build_extraction_schema(attrs)

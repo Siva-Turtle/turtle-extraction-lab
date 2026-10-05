@@ -594,3 +594,43 @@ def test_decisions_identifier_request_chunks_state_and_sidecars(client, monkeypa
     assert log["evidence"][ident]["tax"] is None  # false -> None
     assert log["probabilities"][ident]["has_assets"] == 0.8
     assert log["probabilities"][ident]["tax"] == 0.2
+
+
+# --- chat max_tokens (identifier cap) ------------------------------------------
+
+
+def test_build_chat_payload_max_tokens_default_omitted():
+    p = build_chat_payload(model="m", system="s", user="u")
+    assert "max_tokens" not in p
+    assert set(p) == {"model", "messages", "response_format", "usage"}
+    # Explicit None stays byte-identical to today.
+    assert build_chat_payload(model="m", system="s", user="u", max_tokens=None) == p
+
+
+def test_build_chat_payload_max_tokens_set():
+    p = build_chat_payload(model="m", system="s", user="u", max_tokens=2048)
+    assert p["max_tokens"] == 2048
+    assert set(p) == {"model", "messages", "response_format", "usage", "max_tokens"}
+
+
+def test_identifier_chat_request_carries_max_tokens(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    async def _fake(payload):
+        return ({"ok": 1}, {"prompt_tokens": 1, "completion_tokens": 1,
+                             "total_tokens": 2})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_json_payload", _fake)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = client.post("/api/v1/agents", json={
+        "name": "agent_identifier", "kind": "identifier"}).json()["id"]
+    ext = client.post("/api/v1/agents", json={"name": "R"}).json()["id"]
+    client.post("/api/v1/attributes", json={"agent_ids": [ext], "name": "mood"})
+    body = client.post("/api/v1/runs", json={
+        "input_type": "mail", "input_data": "hello",
+        "agent_ids": [ident, ext], "model": "m"}).json()
+    assert body["requests"][ident]["max_tokens"] == 2048
+    assert "max_tokens" not in body["requests"][ext]
