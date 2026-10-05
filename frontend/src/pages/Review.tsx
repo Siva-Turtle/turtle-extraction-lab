@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Pencil, Scale, Star } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 import { fmt, fmtCostBoth, modelLabel, serverDetail } from "../lib/format";
 import { IDENTIFIER_QUESTION_KEYS } from "../lib/format";
@@ -10,14 +11,14 @@ import {
   buildRows,
   chunkText,
   clusterBatches,
+  fetchStars,
   isStarred,
   loadBatchNames,
   loadBatchSel,
-  loadStars,
   pairGroups,
+  persistStars,
   saveBatchNames,
   saveBatchSel,
-  saveStars,
   toggleStar,
 } from "../lib/review";
 import type { ReviewBatch, ReviewGroup, ReviewRow, ReviewSide } from "../lib/review";
@@ -361,8 +362,28 @@ export default function Review(): React.JSX.Element {
   const [batchNames, setBatchNames] = React.useState<Record<string, string>>(
     () => loadBatchNames(),
   );
-  const [stars, setStars] = React.useState<string[]>(() => loadStars());
+  const [stars, setStars] = React.useState<string[]>([]);
+  const [starsLoading, setStarsLoading] = React.useState(true);
   const [remarksFor, setRemarksFor] = React.useState<string | null>(null);
+
+  // Server-persisted stars: load once on mount. The rest of the UI stays
+  // usable while loading; failure toasts with a retry click.
+  const loadStarsFromServer = React.useCallback(async () => {
+    setStarsLoading(true);
+    try {
+      setStars(await fetchStars());
+    } catch {
+      toast.error("stars unavailable, retry", {
+        action: { label: "Retry", onClick: () => void loadStarsFromServer() },
+      });
+    } finally {
+      setStarsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadStarsFromServer();
+  }, [loadStarsFromServer]);
 
   const logsQuery = useQuery({
     queryKey: ["logs-all"],
@@ -390,10 +411,6 @@ export default function Review(): React.JSX.Element {
   React.useEffect(() => {
     saveBatchNames(batchNames);
   }, [batchNames]);
-
-  React.useEffect(() => {
-    saveStars(stars);
-  }, [stars]);
 
   const batchGroupIds = React.useMemo(() => {
     if (batchId === null) return null;
@@ -460,7 +477,13 @@ export default function Review(): React.JSX.Element {
   }
 
   function toggleStarKey(key: string): void {
-    setStars((cur) => toggleStar(cur, key));
+    const next = toggleStar(stars, key);
+    setStars(next);
+    void persistStars(next).catch(() => {
+      // Roll back just this toggle; other concurrent star changes survive.
+      setStars((cur) => toggleStar(cur, key));
+      toast.error("Could not save stars");
+    });
   }
 
   function renameBatch(batch: ReviewBatch): void {
@@ -513,7 +536,7 @@ export default function Review(): React.JSX.Element {
               title="Starred rows"
               className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 font-heading text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"
             >
-              ★ {stars.length}
+              {starsLoading ? "★ …" : `★ ${stars.length}`}
             </span>
           </span>
         }
@@ -624,7 +647,8 @@ export default function Review(): React.JSX.Element {
             />
           </div>
           <span className="font-heading text-xs font-bold text-[#4a5058] dark:text-[#C3C2B7]">
-            {rows.length} rows · rated {rated}/{totalCells} cells · ★ {stars.length}
+            {rows.length} rows · rated {rated}/{totalCells} cells ·{" "}
+            {starsLoading ? "★ …" : `★ ${stars.length}`}
           </span>
         </div>
       </Card>

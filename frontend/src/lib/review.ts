@@ -4,6 +4,7 @@
 // per identifier question key.
 
 import { IDENTIFIER_QUESTION_KEYS, identifierAnswersOf } from "./format";
+import { api } from "./api";
 import { groupKeyOf } from "./logGroups";
 import type { LogRow } from "./logTypes";
 
@@ -440,8 +441,11 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
 }
 
 // ---------------------------------------------------------------------------
-// Batches (auto-clustered eval runs) + row stars (browser-local bookmarks).
-// All browser persistence is frontend-local localStorage; never throws.
+// Batches (auto-clustered eval runs, browser-local) + row stars (server-
+// persisted via /api/v1/review/stars so they survive browser wipes and
+// machines). Batch names/selection stay in frontend-local localStorage;
+// stars never touch localStorage. Pure helpers below never throw (async
+// server calls throw on failure instead).
 // ---------------------------------------------------------------------------
 
 /** Gap that splits one batch from the next (3h). */
@@ -459,7 +463,6 @@ export type ReviewBatch = {
 
 export const BATCH_NAMES_KEY = "review:batchNames";
 export const BATCH_SEL_KEY = "review:batchSel";
-export const STARS_KEY = "review:stars";
 
 export type BatchSelection = {
   /** Selected batch id; null = All batches. */
@@ -608,28 +611,6 @@ export function saveBatchSel(sel: BatchSelection): void {
   }
 }
 
-/** Starred row keys (`${groupId}|${questionKey}`). Never throws. */
-export function loadStars(): string[] {
-  try {
-    const raw = storageGet(STARS_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((s): s is string => typeof s === "string");
-  } catch {
-    return [];
-  }
-}
-
-export function saveStars(stars: string[]): void {
-  try {
-    const clean = (stars ?? []).filter((s) => typeof s === "string");
-    storageSet(STARS_KEY, JSON.stringify(clean));
-  } catch {
-    // ignore
-  }
-}
-
 export function isStarred(stars: string[], key: string): boolean {
   try {
     return (stars ?? []).includes(key);
@@ -646,4 +627,25 @@ export function toggleStar(stars: string[], key: string): string[] {
   } catch {
     return stars ?? [];
   }
+}
+
+/** Starred row keys (`${groupId}|${questionKey}`), server-persisted. GET
+ * failure (or a malformed payload) throws for the caller to toast. */
+export async function fetchStars(): Promise<string[]> {
+  const res = await api.get("/review/stars");
+  const data: unknown = res.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("bad stars response");
+  }
+  const list = (data as { stars?: unknown }).stars;
+  if (!Array.isArray(list)) throw new Error("bad stars response");
+  return list.filter((s): s is string => typeof s === "string");
+}
+
+/** PUT the whole star array; failure throws for the caller to toast + roll
+ * back. Non-string entries are dropped client-side (the server also
+ * ignores, de-duplicates and sorts them). */
+export async function persistStars(stars: string[]): Promise<void> {
+  const clean = (stars ?? []).filter((s) => typeof s === "string");
+  await api.put("/review/stars", { stars: clean });
 }

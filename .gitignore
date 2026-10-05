@@ -7,3 +7,5 @@ dist/
 /logs/
 # db-init backup holds live secrets — never commit
 .env.bak
+# server-persisted review stars (user data) — never commit
+backend/data/
