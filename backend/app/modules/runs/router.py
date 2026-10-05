@@ -215,8 +215,8 @@ def build_identifier_decisions_questions(chunks=None) -> dict:
     Keyed by question key: ``{"type": "noul", "instructions": "Q{i} (key):
     question", "criteria": {"true": ..., "false": ...}}``. When ``chunks``
     (``[{"n": 1-based, "text": ...}]``) is given and non-empty, each base
-    key also gets a ``{key}__evidence`` score question whose criteria list
-    the chunk numbers (``"chunk 1"`` .. ``"chunk N"``). Pure function.
+    key also gets a ``{key}__evidence`` choice question whose criteria map
+    chunk numbers (``{"1": "chunk 1", ...}``). Pure function.
     """
     questions: dict = {}
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
@@ -234,13 +234,13 @@ def build_identifier_decisions_questions(chunks=None) -> dict:
     except Exception:
         n = 0
     if n > 0:
-        criteria = [f"chunk {i}" for i in range(1, n + 1)]
+        criteria = {str(i): f"chunk {i}" for i in range(1, n + 1)}
         for q in IDENTIFIER_QUESTIONS:
             key = q["key"]
             questions[f"{key}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {
-                "type": "score",
-                "instructions": f"Which transcript chunk (1..{n}) best supports a true answer to {key}?",
-                "criteria": list(criteria),
+                "type": "choice",
+                "instructions": f"Which transcript chunk (1..{n}) best supports a true answer to {key}? Reply with the chunk number.",
+                "criteria": dict(criteria),
             }
     return questions
 
@@ -263,11 +263,13 @@ def split_identifier_result(parsed, transport="chat", n_chunks=0) -> tuple:
 
     - decisions: ``parsed`` is the RAW answers dict. Bools come from
       ``decisions_answers_to_bools`` on the 11 base keys (``__evidence``
-      keys are ignored there). ``evidence[key]`` is
-      ``clamp(round(score), 0, N-1) + 1`` from ``{key}__evidence``
-      (``type == "score"`` with a numeric score) when the bool is True,
-      else None (missing/wrong-type -> None). ``probs[key]`` is the noul
-      float when ``type == "noul"`` and numeric, else None.
+      keys are ignored there). ``evidence[key]`` is ``int(choice)`` from
+      ``{key}__evidence`` (``type == "choice"`` with a string choice in
+      1..N) when the bool is True, else None (missing/wrong-type /
+      out-of-range -> None). The old ``score`` shape (numeric score,
+      ``clamp(round(score), 0, N-1) + 1``) is still accepted as a
+      fallback. ``probs[key]`` is the noul float when
+      ``type == "noul"`` and numeric, else None.
     - chat: ``parsed`` is ``{key: bool}`` (legacy) or
       ``{key: {"value": bool, "evidence": int|null}}``. Evidence ints are
       kept only when inside 1..N, else None. Probs are all None.
@@ -297,12 +299,29 @@ def split_identifier_result(parsed, transport="chat", n_chunks=0) -> tuple:
                 if b and n >= 1:
                     try:
                         a = parsed.get(f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}")
-                        if isinstance(a, dict) and a.get("type") == "score":
-                            s = a.get("score")
-                            if isinstance(s, (int, float)) and not isinstance(s, bool):
-                                idx = round(float(s))
-                                idx = max(0, min(idx, n - 1))
-                                ev = idx + 1
+                        if isinstance(a, dict):
+                            if a.get("type") == "choice":
+                                c = a.get("choice")
+                                if isinstance(c, str):
+                                    c = c.strip()
+                                if isinstance(c, bool):
+                                    pass
+                                elif isinstance(c, int):
+                                    if 1 <= c <= n:
+                                        ev = c
+                                elif isinstance(c, str) and c != "":
+                                    try:
+                                        iv = int(c)
+                                    except Exception:
+                                        iv = None
+                                    if iv is not None and 1 <= iv <= n:
+                                        ev = iv
+                            elif a.get("type") == "score":
+                                s = a.get("score")
+                                if isinstance(s, (int, float)) and not isinstance(s, bool):
+                                    idx = round(float(s))
+                                    idx = max(0, min(idx, n - 1))
+                                    ev = idx + 1
                     except Exception:
                         ev = None
                 evidence[k] = ev
@@ -1302,7 +1321,7 @@ def _build_agent_requests(
         if is_identifier(agent):
             if is_decision_model(model):
                 # Decisions-model path: noul questions over the SAME numbered
-                # chunks the chat path sees, plus one __evidence score
+                # chunks the chat path sees, plus one __evidence choice
                 # question per identifier question. Reasoning effort is never
                 # sent here (it stays in the log column only). The stored
                 # body carries a "transport" marker that is stripped before

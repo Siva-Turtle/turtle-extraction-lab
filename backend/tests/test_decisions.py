@@ -369,7 +369,7 @@ def test_request_match_key_decisions_equal_unequal():
     assert _request_match_key(stored) != _request_match_key(chat_a)
 
 
-# --- chunk evidence: __evidence score questions ---------------------------------
+# --- chunk evidence: __evidence choice questions ---------------------------------
 
 
 def _chunks(n):
@@ -383,10 +383,11 @@ def test_decisions_questions_with_chunks_add_evidence_scores():
     for k in keys:
         assert questions[k]["type"] == "noul"
         ev = questions[f"{k}__evidence"]
-        assert ev["type"] == "score"
+        assert ev["type"] == "choice"
         assert ev["instructions"] == (
-            f"Which transcript chunk (1..3) best supports a true answer to {k}?")
-        assert ev["criteria"] == ["chunk 1", "chunk 2", "chunk 3"]
+            f"Which transcript chunk (1..3) best supports a true answer to {k}?"
+            " Reply with the chunk number.")
+        assert ev["criteria"] == {"1": "chunk 1", "2": "chunk 2", "3": "chunk 3"}
 
 
 def test_decisions_questions_without_chunks_stays_eleven():
@@ -396,13 +397,14 @@ def test_decisions_questions_without_chunks_stays_eleven():
 
 
 def test_split_decisions_evidence_round_clamp_ignore_when_false():
+    # Old score shape stays accepted as a fallback (round/clamp).
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
     answers = {k: {"type": "noul", "noul": 0.9} for k in keys}
     answers[f"{keys[0]}__evidence"] = {"type": "score", "score": 0}  # -> chunk 1
     answers[f"{keys[1]}__evidence"] = {"type": "score", "score": 1.6}  # round 2 -> chunk 3
     answers[f"{keys[2]}__evidence"] = {"type": "score", "score": 99}  # clamp -> chunk 3
     answers[f"{keys[3]}__evidence"] = {"type": "score", "score": -4}  # clamp -> chunk 1
-    answers[f"{keys[4]}__evidence"] = {"type": "choice", "choice": "chunk 2"}  # wrong type
+    answers[f"{keys[4]}__evidence"] = {"type": "choice", "choice": "chunk 2"}  # non-numeric -> None
     answers[f"{keys[5]}__evidence"] = {"type": "score"}  # missing score
     # keys[6] has no __evidence entry at all.
     answers[keys[7]] = {"type": "noul", "noul": 0.1}  # False ...
@@ -433,6 +435,29 @@ def test_split_decisions_bool_score_never_numeric():
     answers[f"{keys[0]}__evidence"] = {"type": "score", "score": True}
     _, evidence, _ = split_identifier_result(answers, "decisions", 3)
     assert evidence[keys[0]] is None
+
+
+def test_split_decisions_evidence_choice_shape():
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    answers = {k: {"type": "noul", "noul": 0.9} for k in keys}
+    answers[f"{keys[0]}__evidence"] = {"type": "choice", "choice": "2"}  # valid
+    answers[f"{keys[1]}__evidence"] = {"type": "choice", "choice": "9"}  # out-of-range
+    answers[f"{keys[2]}__evidence"] = {"type": "choice", "choice": "0"}  # out-of-range
+    answers[f"{keys[3]}__evidence"] = {"type": "choice", "choice": "chunk 2"}  # non-numeric
+    answers[f"{keys[4]}__evidence"] = {"type": "choice"}  # missing choice
+    answers[f"{keys[5]}__evidence"] = {"type": "choice", "choice": True}  # bool never numeric
+    # keys[6] has no __evidence entry at all.
+    answers[keys[7]] = {"type": "noul", "noul": 0.1}  # False ...
+    answers[f"{keys[7]}__evidence"] = {"type": "choice", "choice": "2"}  # ... so ignored
+    bools, evidence, _ = split_identifier_result(answers, "decisions", 3)
+    assert evidence[keys[0]] == 2
+    assert evidence[keys[1]] is None
+    assert evidence[keys[2]] is None
+    assert evidence[keys[3]] is None
+    assert evidence[keys[4]] is None
+    assert evidence[keys[5]] is None
+    assert evidence[keys[6]] is None
+    assert bools[keys[7]] is False and evidence[keys[7]] is None
 
 
 def test_split_chat_value_evidence_objects_and_legacy():
@@ -535,7 +560,7 @@ def test_decisions_identifier_request_chunks_state_and_sidecars(client, monkeypa
         keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
         answers = {k: {"type": "noul", "noul": 0.8} for k in keys}
         answers["tax"] = {"type": "noul", "noul": 0.2}
-        answers["has_assets__evidence"] = {"type": "score", "score": 1}
+        answers["has_assets__evidence"] = {"type": "choice", "choice": "2"}
         return answers, {"prompt_tokens": 10, "completion_tokens": 5,
                          "total_tokens": 15, "reasoning_tokens": 0,
                          "provider": "pv", "cost": 0.001,
@@ -565,7 +590,7 @@ def test_decisions_identifier_request_chunks_state_and_sidecars(client, monkeypa
     out = body["outputs"][ident]
     assert out["has_assets"] is True and out["tax"] is False
     log = client.get("/api/v1/logs").json()[0]
-    assert log["evidence"][ident]["has_assets"] == 2  # score 1 -> clamp+1
+    assert log["evidence"][ident]["has_assets"] == 2  # choice "2" -> chunk 2
     assert log["evidence"][ident]["tax"] is None  # false -> None
     assert log["probabilities"][ident]["has_assets"] == 0.8
     assert log["probabilities"][ident]["tax"] == 0.2
