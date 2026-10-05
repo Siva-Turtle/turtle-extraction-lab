@@ -98,6 +98,14 @@ export type LogRow = {
   created_at: string;
   // Multi-model compare: the backend always ships a string ("" on old rows).
   run_group_id: string;
+  // Per-answer chunk evidence: {agentId: {questionKey: chunkNo|null}}.
+  // Denormalized identifier snapshot ({} on old rows / old backends).
+  evidence?: Record<string, Record<string, number | null>>;
+  // Per-answer noul probabilities: {agentId: {questionKey: float|null}}
+  // (Jev floats; Opus nulls; {} on old rows / old backends).
+  probabilities?: Record<string, Record<string, number | null>>;
+  // Denormalized Fireflies URL snapshot ("" on old rows).
+  fireflies_url?: string;
   // Reused output (POST /runs/reuse copies an old log into a new row in the
   // same group): "" = real model call. Optional for old rows / old backends.
   reused_from_log_id?: string;

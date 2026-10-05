@@ -3,20 +3,22 @@ import { Navigate, useLocation } from "react-router-dom";
 import Agents from "../pages/Agents";
 import Attributes from "../pages/Attributes";
 import Logs from "../pages/Logs";
+import Review from "../pages/Review";
 import TestLab from "../pages/TestLab";
 
-type ModuleId = "test" | "agents" | "attributes" | "logs";
+type ModuleId = "test" | "agents" | "attributes" | "logs" | "review";
 
 function moduleOf(pathname: string): ModuleId | null {
   if (pathname === "/agents") return "agents";
   if (pathname === "/attributes") return "attributes";
   if (pathname === "/logs") return "logs";
+  if (pathname === "/review") return "review";
   if (pathname === "/" || pathname === "/test") return "test";
   return null;
 }
 
 /**
- * Keep-alive wrapper for the four module pages: each visited page is
+ * Keep-alive wrapper for the five module pages: each visited page is
  * rendered exactly once and hidden (not unmounted) when inactive, so
  * module state (filters, form input, scroll) survives tab switches.
  *
@@ -27,7 +29,7 @@ export function ModulesView(): React.JSX.Element {
   const { pathname } = useLocation();
   const active = moduleOf(pathname);
 
-  // Lazy-mount: only the active page renders on first load (avoids 4x
+  // Lazy-mount: only the active page renders on first load (avoids 5x
   // queries); every visited page stays mounted afterwards.
   const [visited, setVisited] = React.useState<Set<ModuleId>>(
     () => new Set<ModuleId>([active ?? "test"]),
@@ -74,6 +76,11 @@ export function ModulesView(): React.JSX.Element {
       {visited.has("logs") && (
         <div className={active === "logs" ? "" : "hidden"}>
           <Logs />
+        </div>
+      )}
+      {visited.has("review") && (
+        <div className={active === "review" ? "" : "hidden"}>
+          <Review />
         </div>
       )}
     </div>

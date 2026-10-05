@@ -1,6 +1,6 @@
 import * as React from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Bot, ChevronLeft, ChevronRight, FlaskConical, Moon, ScrollText, Sun, Tags } from "lucide-react";
+import { Bot, ChevronLeft, ChevronRight, FlaskConical, Moon, Scale, ScrollText, Sun, Tags } from "lucide-react";
 import { cn } from "../lib/cn";
 import { api } from "../lib/api";
 import { useTheme } from "./ThemeProvider";
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: "/agents", label: "Agents", icon: <Bot className="h-5 w-5" aria-hidden="true" /> },
   { to: "/test", label: "Test Lab", icon: <FlaskConical className="h-5 w-5" aria-hidden="true" /> },
   { to: "/logs", label: "Logs", icon: <ScrollText className="h-5 w-5" aria-hidden="true" /> },
+  { to: "/review", label: "Review", icon: <Scale className="h-5 w-5" aria-hidden="true" /> },
 ];
 
 function Wordmark(): React.JSX.Element {
@@ -176,7 +177,7 @@ export function AppShell(): React.JSX.Element {
           aria-label="Mobile navigation"
           className="fixed inset-x-0 bottom-0 z-30 border-t border-[#e5e7eb] bg-white pb-[env(safe-area-inset-bottom)] md:hidden dark:border-white/10 dark:bg-[#1a1a1a]"
         >
-          <ul className="grid w-full grid-cols-4">
+          <ul className="grid w-full grid-cols-5">
             {NAV_ITEMS.map((t) => (
               <li key={t.to} className="min-w-0">
                 <NavLink
