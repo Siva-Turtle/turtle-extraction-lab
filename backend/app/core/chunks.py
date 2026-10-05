@@ -5,7 +5,10 @@ Both identifier transports — the chat path (Opus) and the decisions path
 chunk evidence is comparable across models.
 
 - ``split_paras``: split into speaker-turn paragraphs (a paragraph is never
-  split). A new paragraph starts at a Fireflies-style ``Name:`` turn line;
+  split). Turn-per-line transcripts — 2+ non-empty lines — give one
+  paragraph per non-empty line (each ``[mm:ss] Name: text`` turn stays
+  intact; a line is never split). The ``Name:``-turn merging only applies
+  to the single-line case (inline ``Name:`` markers without newlines);
   when no speaker pattern matches anywhere, fall back to blank-line splits.
 - ``chunk_transcript``: pack paras evenly into at most ``max_chunks`` chunks
   (``per_chunk = ceil(len(paras) / max_chunks)``). Deterministic.
@@ -34,16 +37,24 @@ _BLANK_LINE_RE = re.compile(r"\n\s*\n")
 def split_paras(text: str) -> list[str]:
     """Split transcript text into speaker-turn paragraphs.
 
-    Lines matching the ``Name:`` turn pattern start a new paragraph; every
-    other line (including blank lines) joins the current paragraph, so a
-    paragraph is never split. Leading/trailing whitespace is stripped and
-    empty paragraphs are dropped. When NO line matches the speaker pattern,
-    falls back to splitting on blank lines. Pure and deterministic.
+    Turn-per-line transcripts (2+ non-empty lines, e.g. timestamped
+    ``[mm:ss] Name: text`` turns with no blank lines) give one paragraph
+    per non-empty line — each line is stripped and returned as-is, never
+    split. The ``Name:``-turn merging only applies to the single-line case
+    (inline ``Name:`` markers without newlines, merged into paras as
+    before). Leading/trailing whitespace is stripped and empty paragraphs
+    are dropped. When NO line matches the speaker pattern, falls back to
+    splitting on blank lines. Pure and deterministic.
     """
     if not isinstance(text, str):
         return []
     if not text.strip():
         return []
+    stripped_lines = [line.strip() for line in text.split("\n")]
+    non_empty = [line for line in stripped_lines if line]
+    if len(non_empty) >= 2:
+        # Turn-per-line transcript: each non-empty line is one paragraph.
+        return non_empty
     lines = text.split("\n")
     paras: list[str] = []
     current: list[str] = []

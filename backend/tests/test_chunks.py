@@ -22,16 +22,19 @@ def test_split_paras_fixture_style_turns():
 
 
 def test_split_paras_never_splits_a_paragraph():
-    # Continuation lines (no "Name:" start) stay with the current turn,
-    # including blank lines inside a turn.
+    # Turn-per-line: every non-empty line is its own para (a line is never
+    # split). Adjusted for turn-per-line behaviour — continuation lines no
+    # longer merge into the previous turn.
     text = "Anita: first line\nstill Anita talking\n\nBob: reply\nmore from Bob"
     paras = split_paras(text)
-    assert paras == ["Anita: first line\nstill Anita talking", "Bob: reply\nmore from Bob"]
+    assert paras == ["Anita: first line", "still Anita talking", "Bob: reply", "more from Bob"]
 
 
 def test_split_paras_timestamp_lines_do_not_split():
+    # Turn-per-line: timestamp continuation lines are their own paras —
+    # adjusted for turn-per-line behaviour (previously merged).
     paras = split_paras("Anita: see you at\n10:30 tomorrow\nBob: ok")
-    assert paras == ["Anita: see you at\n10:30 tomorrow", "Bob: ok"]
+    assert paras == ["Anita: see you at", "10:30 tomorrow", "Bob: ok"]
 
 
 def test_split_paras_fallback_blank_lines():
@@ -100,3 +103,25 @@ def test_format_then_chunk_round_trip_markers():
     out = format_chunks_numbered(chunks)
     for i in range(1, len(chunks) + 1):
         assert f"[{i}]" in out
+
+
+def test_split_paras_timestamped_turn_per_line():
+    # Regression: live-shaped transcript — every line is one
+    # "[mm:ss] Name: text" turn with zero blank lines.
+    lines = [
+        f"[{i // 60:02d}:{i % 60:02d}] Advisor: hello line {i}"
+        if i % 2 == 0
+        else f"[{i // 60:02d}:{i % 60:02d}] Client: reply line {i}"
+        for i in range(120)
+    ]
+    text = "\n".join(lines)
+    paras = split_paras(text)
+    assert len(paras) == len(lines)
+    assert paras == [line.strip() for line in lines]
+    # Packing: capped at <= 50 chunks, all text preserved, 1-based numbering.
+    chunks = chunk_transcript(text)
+    assert len(chunks) <= 50
+    assert [c["n"] for c in chunks] == list(range(1, len(chunks) + 1))
+    for p in paras:
+        hits = sum(1 for c in chunks if p in c["text"])
+        assert hits == 1
