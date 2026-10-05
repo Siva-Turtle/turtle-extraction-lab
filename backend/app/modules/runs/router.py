@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.chunks import chunk_transcript, format_chunks_numbered
 from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, build_decisions_payload, complete_decisions_payload, complete_json, complete_json_payload, get_model_pricing, is_decision_model
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
@@ -122,18 +123,36 @@ def is_identifier(agent: Agent) -> bool:
 def build_identifier_schema() -> dict:
     """Strict structured-output schema for the identifier.
 
-    One boolean per question key in IDENTIFIER_QUESTIONS order, each with
-    the question text as description. All required, no additional props.
+    One {value, evidence} object per question key in IDENTIFIER_QUESTIONS
+    order, each with the question text as description. All required, no
+    additional props. ``evidence`` is the 1-based transcript chunk number
+    supporting a true answer (null when the answer is false).
     """
     props: dict = {}
     for q in IDENTIFIER_QUESTIONS:
-        props[q["key"]] = {"type": "boolean", "description": q["question"]}
+        props[q["key"]] = {
+            "type": "object",
+            "description": q["question"],
+            "properties": {
+                "value": {"type": "boolean"},
+                "evidence": {"type": ["integer", "null"]},
+            },
+            "required": ["value", "evidence"],
+            "additionalProperties": False,
+        }
     return {
         "type": "object",
         "properties": props,
         "required": [q["key"] for q in IDENTIFIER_QUESTIONS],
         "additionalProperties": False,
     }
+
+
+IDENTIFIER_EVIDENCE_INSTRUCTION = (
+    "For each question also give evidence: the 1-based number of the "
+    "transcript chunk that best supports a true answer (null when the answer "
+    "is false). Reply with ONLY the chunk number, never quoted text."
+)
 
 
 def _identifier_system_content(agent: Agent, _ignored=None) -> str:
@@ -146,7 +165,7 @@ def _identifier_system_content(agent: Agent, _ignored=None) -> str:
     lines: list[str] = []
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         lines.append(f"Q{i} ({q['key']}): {q['question']}")
-    return f"{IDENTIFIER_INSTRUCTION}\n\n" + "\n".join(lines)
+    return f"{IDENTIFIER_INSTRUCTION}\n\n" + "\n".join(lines) + "\n\n" + IDENTIFIER_EVIDENCE_INSTRUCTION
 
 
 def normalize_identifier_output(parsed, _candidates=None) -> object:
@@ -166,6 +185,12 @@ def normalize_identifier_output(parsed, _candidates=None) -> object:
     for q in IDENTIFIER_QUESTIONS:
         k = q["key"]
         v = parsed.get(k, False)
+        # Chat {value, evidence} object form: the bool lives in .value.
+        if isinstance(v, dict):
+            try:
+                v = v.get("value", False)
+            except Exception:
+                v = False
         if isinstance(v, bool):
             out[k] = v
         elif isinstance(v, str):
@@ -181,11 +206,17 @@ def normalize_identifier_output(parsed, _candidates=None) -> object:
     return out
 
 
-def build_identifier_decisions_questions() -> dict:
+IDENTIFIER_EVIDENCE_SUFFIX = "__evidence"
+
+
+def build_identifier_decisions_questions(chunks=None) -> dict:
     """One noul question per IDENTIFIER_QUESTIONS entry (decisions API).
 
     Keyed by question key: ``{"type": "noul", "instructions": "Q{i} (key):
-    question", "criteria": {"true": ..., "false": ...}}``. Pure function.
+    question", "criteria": {"true": ..., "false": ...}}``. When ``chunks``
+    (``[{"n": 1-based, "text": ...}]``) is given and non-empty, each base
+    key also gets a ``{key}__evidence`` score question whose criteria list
+    the chunk numbers (``"chunk 1"`` .. ``"chunk N"``). Pure function.
     """
     questions: dict = {}
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
@@ -198,7 +229,133 @@ def build_identifier_decisions_questions() -> dict:
                 "false": "Not mentioned for the client, or only someone else's situation.",
             },
         }
+    try:
+        n = len(list(chunks or []))
+    except Exception:
+        n = 0
+    if n > 0:
+        criteria = [f"chunk {i}" for i in range(1, n + 1)]
+        for q in IDENTIFIER_QUESTIONS:
+            key = q["key"]
+            questions[f"{key}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {
+                "type": "score",
+                "instructions": f"Which transcript chunk (1..{n}) best supports a true answer to {key}?",
+                "criteria": list(criteria),
+            }
     return questions
+
+
+def _coerce_n_chunks(n_chunks) -> int:
+    """Chunk count as a non-negative int (0 when unknown/unusable)."""
+    try:
+        if isinstance(n_chunks, bool):
+            return 0
+        if isinstance(n_chunks, (list, tuple)):
+            return max(0, len(n_chunks))
+        n = int(n_chunks)
+    except Exception:
+        return 0
+    return n if n > 0 else 0
+
+
+def split_identifier_result(parsed, transport="chat", n_chunks=0) -> tuple:
+    """Split a raw identifier answer into (bools, evidence, probs).
+
+    - decisions: ``parsed`` is the RAW answers dict. Bools come from
+      ``decisions_answers_to_bools`` on the 11 base keys (``__evidence``
+      keys are ignored there). ``evidence[key]`` is
+      ``clamp(round(score), 0, N-1) + 1`` from ``{key}__evidence``
+      (``type == "score"`` with a numeric score) when the bool is True,
+      else None (missing/wrong-type -> None). ``probs[key]`` is the noul
+      float when ``type == "noul"`` and numeric, else None.
+    - chat: ``parsed`` is ``{key: bool}`` (legacy) or
+      ``{key: {"value": bool, "evidence": int|null}}``. Evidence ints are
+      kept only when inside 1..N, else None. Probs are all None.
+    - Never raises; non-dict/``_error`` inputs pass through as
+      ``(parsed, {}, {})`` and unknown shapes degrade to False/None.
+    """
+    n = _coerce_n_chunks(n_chunks)
+    if not isinstance(parsed, dict):
+        return (parsed, {}, {})
+    if "_error" in parsed:
+        return (parsed, {}, {})
+    try:
+        if transport == "decisions":
+            bools = decisions_answers_to_bools(parsed)
+            if not isinstance(bools, dict) or "_error" in bools:
+                bools = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+            evidence: dict = {}
+            probs: dict = {}
+            for q in IDENTIFIER_QUESTIONS:
+                k = q["key"]
+                try:
+                    b = bools.get(k, False)
+                except Exception:
+                    b = False
+                b = b is True
+                ev = None
+                if b and n >= 1:
+                    try:
+                        a = parsed.get(f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}")
+                        if isinstance(a, dict) and a.get("type") == "score":
+                            s = a.get("score")
+                            if isinstance(s, (int, float)) and not isinstance(s, bool):
+                                idx = round(float(s))
+                                idx = max(0, min(idx, n - 1))
+                                ev = idx + 1
+                    except Exception:
+                        ev = None
+                evidence[k] = ev
+                p = None
+                try:
+                    a = parsed.get(k)
+                    if isinstance(a, dict) and a.get("type") == "noul":
+                        v = a.get("noul")
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            p = float(v)
+                except Exception:
+                    p = None
+                probs[k] = p
+            return (bools, evidence, probs)
+        bools = normalize_identifier_output(parsed)
+        if not isinstance(bools, dict) or "_error" in bools:
+            bools = {q["key"]: False for q in IDENTIFIER_QUESTIONS}
+        evidence = {}
+        for q in IDENTIFIER_QUESTIONS:
+            k = q["key"]
+            ev = None
+            try:
+                raw = parsed.get(k)
+                if isinstance(raw, dict):
+                    e = raw.get("evidence")
+                    if isinstance(e, int) and not isinstance(e, bool) and 1 <= e <= n:
+                        ev = e
+            except Exception:
+                ev = None
+            evidence[k] = ev
+        probs = {q["key"]: None for q in IDENTIFIER_QUESTIONS}
+        return (bools, evidence, probs)
+    except Exception:
+        return ({q["key"]: False for q in IDENTIFIER_QUESTIONS},
+                {q["key"]: None for q in IDENTIFIER_QUESTIONS},
+                {q["key"]: None for q in IDENTIFIER_QUESTIONS})
+
+
+def fireflies_url_from_task(task) -> str:
+    """Denormalized Fireflies URL from a Mongo task doc ("" when absent).
+
+    Only strings starting with http are kept; anything else (missing,
+    non-string, relative) becomes "".
+    """
+    try:
+        if not isinstance(task, dict):
+            return ""
+        url = task.get("transcriptUrl")
+        if isinstance(url, str) and url.strip().lower().startswith("http"):
+            return url.strip()
+    except Exception:
+        pass
+    return ""
 
 
 def decisions_answers_to_bools(answers) -> object:
@@ -1025,18 +1182,21 @@ def build_extraction_schema(attrs: list[Attribute]) -> dict | None:
 
 def _resolve_run_input(
     *, meeting_id: str, input_type: str, input_data: str, reasoning_effort: str,
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, str]:
     """Validate effort + resolve input exactly like create_run.
 
-    Returns (input_type, input_data, effort, task_title). Raises the same
-    HTTPException create_run would (422 for bad effort/blank input/bad
-    type, 404/503 from get_scrubbed_transcript). No OpenRouter, no writes.
+    Returns (input_type, input_data, effort, task_title, fireflies_url).
+    fireflies_url is the Mongo task's transcriptUrl ("" for non-meeting
+    runs or when absent). Raises the same HTTPException create_run would
+    (422 for bad effort/blank input/bad type, 404/503 from
+    get_scrubbed_transcript). No OpenRouter, no writes.
     """
     effort = (reasoning_effort or "").strip()
     if effort and effort not in REASONING_EFFORTS:
         raise HTTPException(422, "reasoning_effort must be max|xhigh|high|medium|low|minimal|none")
     mid = (meeting_id or "").strip()
     task_title = ""
+    fireflies_url = ""
     if mid:
         # meeting_id wins: server re-fetches the transcript and scrubs it —
         # client-sent input_data/input_type are ignored entirely.
@@ -1046,13 +1206,14 @@ def _resolve_run_input(
             task_title = str((_task.get("title") or "")).strip()
         except Exception:
             task_title = ""
+        fireflies_url = fireflies_url_from_task(_task)
     else:
         if not (input_data or "").strip():
             raise HTTPException(422, "input_data must be non-blank or provide meeting_id")
         if input_type not in ("transcription", "messages", "mail"):
             raise HTTPException(422, "input_type must be transcription|messages|mail")
         resolved_type, resolved_data = input_type, input_data
-    return resolved_type, resolved_data, effort, task_title
+    return resolved_type, resolved_data, effort, task_title, fireflies_url
 
 
 def _load_run_agents(db: Session, agent_ids: list[str]) -> list[Agent]:
@@ -1080,6 +1241,7 @@ def _build_agent_requests(
     model: str, reasoning_effort: str,
     attr_subsets: dict | None = None,
     provider: str = "",
+    chunks: list[dict] | None = None,
 ) -> tuple[dict, dict]:
     """Build (snapshots, requests) exactly like create_run's loop prelude.
 
@@ -1090,9 +1252,23 @@ def _build_agent_requests(
     When a subset is given, the snapshot, system prompt and schema include
     only those attributes (in DB order). Default None keeps create_run and
     every other caller byte-identical for extraction agents.
+
+    chunks: precomputed ``chunk_transcript(input_data)`` (chunked ONCE per
+    run by the caller and shared across agents/models). When None, chunked
+    here deterministically (same input -> identical bodies). The identifier
+    ONLY sees the numbered chunks — chat user content becomes
+    ``format_chunks_numbered(chunks)`` and decisions state becomes
+    ``{"chunks": [...]}`` — while extraction agents keep the raw input
+    byte-identical.
     """
     effort = (reasoning_effort or "").strip()
     prov = (provider or "").strip() if isinstance(provider, str) else ""
+    try:
+        shared_chunks = list(chunks) if chunks is not None else chunk_transcript(input_data)
+    except Exception:
+        shared_chunks = []
+    if not isinstance(shared_chunks, list):
+        shared_chunks = []
     snapshots: dict = {}
     requests: dict = {}
     for agent in agents:
@@ -1125,21 +1301,26 @@ def _build_agent_requests(
         transport = ""
         if is_identifier(agent):
             if is_decision_model(model):
-                # Decisions-model path: noul questions over the transcript.
-                # Reasoning effort is never sent here (it stays in the log
-                # column only). The stored body carries a "transport" marker
-                # that is stripped before POSTing.
+                # Decisions-model path: noul questions over the SAME numbered
+                # chunks the chat path sees, plus one __evidence score
+                # question per identifier question. Reasoning effort is never
+                # sent here (it stays in the log column only). The stored
+                # body carries a "transport" marker that is stripped before
+                # POSTing.
                 payload_body = build_decisions_payload(
-                    model=model, state={"transcript": input_data},
-                    questions=build_identifier_decisions_questions(),
+                    model=model, state={"chunks": [dict(c) for c in shared_chunks
+                                                  if isinstance(c, dict)]},
+                    questions=build_identifier_decisions_questions(shared_chunks),
                     provider=(prov if prov else None))
                 transport = "decisions"
             else:
-                # Router path: code-owned 11-question prompt; strict boolean envelope.
+                # Router path: code-owned 11-question prompt; strict
+                # {value, evidence} envelope over the numbered chunks.
                 system_content = _identifier_system_content(agent)
                 schema: dict | None = build_identifier_schema()
                 payload_body = build_chat_payload(
-                    model=model, system=system_content, user=user_content,
+                    model=model, system=system_content,
+                    user=format_chunks_numbered(shared_chunks),
                     json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
                     reasoning_effort=effort, provider=prov)
         else:
@@ -1163,16 +1344,25 @@ def _plan_run(
     """Resolve input + agents + per-agent request bodies without side effects.
 
     Returns (input_type, input_data, effort, task_title, agents,
-    snapshots, requests). Raises the same HTTPException create_run would.
+    snapshots, requests, chunks, fireflies_url). The transcript is chunked
+    ONCE here from the resolved (scrubbed) input and the same chunks are
+    shared across all agents/models in this run. Raises the same
+    HTTPException create_run would.
     """
-    resolved_type, resolved_data, effort, task_title = _resolve_run_input(
+    resolved_type, resolved_data, effort, task_title, fireflies_url = _resolve_run_input(
         meeting_id=meeting_id, input_type=input_type,
         input_data=input_data, reasoning_effort=reasoning_effort)
+    try:
+        chunks = chunk_transcript(resolved_data)
+    except Exception:
+        chunks = []
     agents = _load_run_agents(db, agent_ids)
     snapshots, requests = _build_agent_requests(
         db, agents=agents, input_data=resolved_data,
-        model=model, reasoning_effort=effort, provider=provider)
-    return resolved_type, resolved_data, effort, task_title, agents, snapshots, requests
+        model=model, reasoning_effort=effort, provider=provider,
+        chunks=chunks)
+    return (resolved_type, resolved_data, effort, task_title, agents,
+            snapshots, requests, chunks, fireflies_url)
 
 
 async def _call_single_payload(payload_body: dict):
@@ -1194,7 +1384,11 @@ async def _call_single_payload(payload_body: dict):
         try:
             clean_body = {k: v for k, v in payload_body.items() if k != "transport"}
             answers, usage = await complete_decisions_payload(clean_body)
-            parsed = decisions_answers_to_bools(answers)
+            # RAW answers dict: every identifier consumer
+            # (_stream_fresh_results._one, auto_run, retry_agent, create
+            # path) calls split_identifier_result then
+            # normalize_identifier_output(bools) itself.
+            parsed = answers if isinstance(answers, dict) else {}
             try:
                 prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
                 completion_tokens = int(usage.get("completion_tokens", 0) or 0)
@@ -1472,27 +1666,42 @@ def _build_usage(per_agent: dict, model: str, totals: dict, duration_ms: float,
     }
 
 
-async def _execute_agents(db: Session, agents: list[Agent], requests: dict, model: str):
+async def _execute_agents(db: Session, agents: list[Agent], requests: dict, model: str,
+                          n_chunks: int = 0):
     """Run per-agent payloads concurrently (shared machinery).
 
-    Returns (outputs, per_agent) with costs None; caller prices + totals.
-    Identifier outputs are normalised to 11 yes/no answers.
-    Uses the shared as_completed generator so streaming and non-streaming
-    share the same run loop; final dict order follows ``agents`` order.
+    Returns (outputs, per_agent, evidence, probs) with costs None; caller
+    prices + totals. Identifier outputs are normalised to 11 yes/no answers
+    via split_identifier_result + normalize_identifier_output; the
+    per-agent chunk-evidence / noul-probability sidecars land in
+    ``evidence``/``probs`` ({agent_id: {question_key: ...}}, identifier
+    agents with clean answers only). Uses the shared as_completed generator
+    so streaming and non-streaming share the same run loop; final dict
+    order follows ``agents`` order.
     """
     agents_by_id = {a.id: a for a in agents}
     collected: dict = {}
-    async for res in _stream_fresh_results(agents, requests, model, agents_by_id):
+    async for res in _stream_fresh_results(agents, requests, model, agents_by_id,
+                                           n_chunks=n_chunks):
         collected[res["agent_id"]] = res
     outputs: dict = {}
     per_agent: dict = {}
+    evidence: dict = {}
+    probs: dict = {}
     for a in agents:
         res = collected.get(a.id)
         if res is None:
             continue
         outputs[a.id] = res["output"]
         per_agent[a.id] = res["per_entry"]
-    return outputs, per_agent
+        try:
+            if isinstance(res.get("evidence"), dict):
+                evidence[a.id] = res["evidence"]
+            if isinstance(res.get("probs"), dict):
+                probs[a.id] = res["probs"]
+        except Exception:
+            pass
+    return outputs, per_agent, evidence, probs
 
 
 def _request_match_key(body):
@@ -1572,6 +1781,45 @@ def _seed_reused_state(valid_reuse: dict) -> tuple[dict, dict, dict]:
     return outputs, per_agent, reused_agents
 
 
+def _merge_sidecars(evidence_all: dict, probs_all: dict, agent_id: str,
+                    ev, pr) -> None:
+    """Merge one agent's chunk-evidence/probability sidecars (never raises).
+
+    Only dict sidecars are stored; other agents' keys are never touched.
+    """
+    try:
+        if isinstance(ev, dict):
+            evidence_all[agent_id] = ev
+        if isinstance(pr, dict):
+            probs_all[agent_id] = pr
+    except Exception:
+        pass
+
+
+def _copy_reuse_sidecars(valid_reuse: dict) -> tuple[dict, dict]:
+    """Copy identifier sidecars from per-agent reuse sources (never raises).
+
+    Returns (evidence, probs) seeded from each source log's own columns so
+    a reused identifier answer keeps the sidecars rendered from GET /logs.
+    """
+    evidence: dict = {}
+    probs: dict = {}
+    try:
+        for aid, source in (valid_reuse or {}).items():
+            try:
+                sev = getattr(source, "evidence", None) or {}
+                if isinstance(sev, dict) and isinstance(sev.get(aid), dict):
+                    evidence[aid] = copy.deepcopy(sev.get(aid))
+                spr = getattr(source, "probabilities", None) or {}
+                if isinstance(spr, dict) and isinstance(spr.get(aid), dict):
+                    probs[aid] = copy.deepcopy(spr.get(aid))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return evidence, probs
+
+
 def _agent_event_for(agent_id: str, agent_name: str, output, per_entry: dict,
                      reused: bool = False) -> dict:
     """One NDJSON agent event, output exactly as in the final log."""
@@ -1592,14 +1840,18 @@ def _agent_event_for(agent_id: str, agent_name: str, output, per_entry: dict,
 
 
 async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
-                                model: str, agents_by_id: dict | None = None):
+                                model: str, agents_by_id: dict | None = None,
+                                n_chunks: int = 0):
     """Shared run loop: run fresh agents concurrently, yield in completion order.
 
     Each yield is {"agent_id", "agent_name", "output", "per_entry",
-    "status", "error", "reused": False}. Identifier outputs are normalised.
-    Both the non-streaming paths (via _execute_agents) and the streaming
-    NDJSON paths consume this generator so the two paths don't duplicate
-    the run logic.
+    "status", "error", "reused": False, "evidence", "probs"}. Identifier
+    outputs are split (split_identifier_result) then normalised to 11
+    yes/no answers; the chunk-evidence / noul-probability sidecars ride
+    along as ``evidence``/``probs`` (dicts for clean identifier answers,
+    else None). Both the non-streaming paths (via _execute_agents) and the
+    streaming NDJSON paths consume this generator so the two paths don't
+    duplicate the run logic.
     """
     by_id = agents_by_id or {a.id: a for a in fresh_agents}
 
@@ -1626,16 +1878,25 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
             return {"agent_id": agent.id,
                     "agent_name": _agent_display_name(agent),
                     "output": _err_parsed, "per_entry": _err_entry,
-                    "status": "error", "error": _err_msg, "reused": False}
+                    "status": "error", "error": _err_msg, "reused": False,
+                    "evidence": None, "probs": None}
         body = copy.deepcopy(requests.get(agent.id, {}))
         (parsed, pt, ct, tt, rt, dur, served,
          actual, details, served_model) = await _call_single_payload(body)
+        ev_side = None
+        pr_side = None
         try:
             row = by_id.get(agent.id)
             if row is not None and is_identifier(row):
                 if isinstance(parsed, dict) and "_error" not in parsed:
                     try:
-                        parsed = normalize_identifier_output(parsed)
+                        transport = ("decisions"
+                                     if isinstance(body, dict) and body.get("transport") == "decisions"
+                                     else "chat")
+                        bools, ev, pr = split_identifier_result(parsed, transport, n_chunks)
+                        parsed = normalize_identifier_output(bools)
+                        ev_side = ev if isinstance(ev, dict) else None
+                        pr_side = pr if isinstance(pr, dict) else None
                     except Exception:
                         pass
         except Exception:
@@ -1650,11 +1911,13 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
             return {"agent_id": agent.id,
                     "agent_name": _agent_display_name(agent),
                     "output": parsed, "per_entry": per_entry,
-                    "status": "error", "error": err, "reused": False}
+                    "status": "error", "error": err, "reused": False,
+                    "evidence": None, "probs": None}
         return {"agent_id": agent.id,
                 "agent_name": _agent_display_name(agent),
                 "output": parsed, "per_entry": per_entry,
-                "status": "done", "error": None, "reused": False}
+                "status": "done", "error": None, "reused": False,
+                "evidence": ev_side, "probs": pr_side}
 
     if not fresh_agents:
         return
@@ -1697,7 +1960,8 @@ def _new_run_ids() -> tuple[str, str]:
 async def _create_run_stream(db: Session, *, payload, agents, snapshots,
                              requests, input_type, input_data, effort,
                              task_title, filters, provider_requested,
-                             wall_start) -> StreamingResponse:
+                             wall_start, n_chunks: int = 0,
+                             fireflies_url: str = "") -> StreamingResponse:
     """Streaming NDJSON variant of POST /runs (stream=true).
 
     Events: start -> agent* (completion order, reused first) -> done.
@@ -1717,6 +1981,7 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
             valid_reuse = _resolve_valid_reuse(
                 db, agents, requests, reuse_map, model, effort, provider_requested)
             outputs, per_agent, reused_agents = _seed_reused_state(valid_reuse)
+            evidence_all, probs_all = _copy_reuse_sidecars(valid_reuse)
             # start after plan + reuse known (agents list fixed)
             yield _ndjson_line({"type": "start", "run_id": run_id,
                                 "log_id": log_id, "model": model,
@@ -1735,10 +2000,13 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
             fresh_agents = [a for a in agents if a.id not in valid_reuse]
             agents_by_id = {a.id: a for a in agents}
             async for res in _stream_fresh_results(
-                    fresh_agents, requests, model, agents_by_id):
+                    fresh_agents, requests, model, agents_by_id,
+                    n_chunks=n_chunks):
                 try:
                     outputs[res["agent_id"]] = res["output"]
                     per_agent[res["agent_id"]] = res["per_entry"]
+                    _merge_sidecars(evidence_all, probs_all, res["agent_id"],
+                                    res.get("evidence"), res.get("probs"))
                     yield _ndjson_line(_agent_event_for(
                         res["agent_id"], res["agent_name"],
                         res["output"], res["per_entry"], reused=False))
@@ -1841,7 +2109,9 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
                          reasoning_effort=effort, provider=provider_requested,
                          run_group_id=getattr(payload, "run_group_id", "") or "",
                          reused_from_log_id=log_reused_id or "",
-                         reused_from_created_at=log_reused_at, consistency={})
+                         reused_from_created_at=log_reused_at, consistency={},
+                         fireflies_url=fireflies_url,
+                         evidence=evidence_all, probabilities=probs_all)
             db.add(log)
             db.commit()
             db.refresh(log)
@@ -1874,7 +2144,10 @@ async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
                            planned_agents, attr_subsets, snapshots_sel,
                            requests_sel, snapshots, requests, valid_reuse,
                            outputs, per_agent, reused_agents, plan_stored,
-                           provider_requested, filters, wall_start) -> StreamingResponse:
+                           provider_requested, filters, wall_start,
+                           n_chunks: int = 0,
+                           evidence_all=None, probs_all=None,
+                           fireflies_url: str = "") -> StreamingResponse:
     """Streaming NDJSON variant of POST /runs/auto (stream=true).
 
     Events: start (after identifier+plan known) -> identifier ->
@@ -1933,13 +2206,21 @@ async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
                         a.id, _agent_display_name(a), out, entry, reused=True))
                 except Exception:
                     continue
+            try:
+                stream_evidence = dict(evidence_all) if isinstance(evidence_all, dict) else {}
+                stream_probs = dict(probs_all) if isinstance(probs_all, dict) else {}
+            except Exception:
+                stream_evidence, stream_probs = {}, {}
             fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
             agents_by_id = {a.id: a for a in all_agents}
             async for res in _stream_fresh_results(
-                    fresh_agents, requests, model, agents_by_id):
+                    fresh_agents, requests, model, agents_by_id,
+                    n_chunks=n_chunks):
                 try:
                     outputs[res["agent_id"]] = res["output"]
                     per_agent[res["agent_id"]] = res["per_entry"]
+                    _merge_sidecars(stream_evidence, stream_probs, res["agent_id"],
+                                    res.get("evidence"), res.get("probs"))
                     yield _ndjson_line(_agent_event_for(
                         res["agent_id"], res["agent_name"],
                         res["output"], res["per_entry"], reused=False))
@@ -2021,7 +2302,9 @@ async def _auto_run_stream(db: Session, *, payload, identifier, ident_id,
                          reasoning_effort=effort, provider=provider_requested,
                          run_group_id=getattr(payload, "run_group_id", "") or "",
                          reused_from_log_id="", reused_from_created_at=None,
-                         consistency=consistency)
+                         consistency=consistency,
+                         fireflies_url=fireflies_url,
+                         evidence=stream_evidence, probabilities=stream_probs)
             db.add(log)
             db.commit()
             db.refresh(log)
@@ -2380,11 +2663,16 @@ def _find_existing_log(
 async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
     _stream_flag = bool(getattr(payload, "stream", False))
-    input_type, input_data, effort, task_title, agents, snapshots, requests = _plan_run(
+    (input_type, input_data, effort, task_title, agents, snapshots,
+     requests, chunks, fireflies_url) = _plan_run(
         db, meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, agent_ids=payload.agent_ids,
         model=payload.model, reasoning_effort=payload.reasoning_effort,
         provider=provider_requested)
+    try:
+        n_chunks = len(chunks) if isinstance(chunks, list) else 0
+    except Exception:
+        n_chunks = 0
     filters = payload.filters if isinstance(payload.filters, dict) else {}
     wall_start = perf_counter()
     if _stream_flag:
@@ -2392,7 +2680,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             db, payload=payload, agents=agents, snapshots=snapshots,
             requests=requests, input_type=input_type, input_data=input_data,
             effort=effort, task_title=task_title, filters=filters,
-            provider_requested=provider_requested, wall_start=wall_start)
+            provider_requested=provider_requested, wall_start=wall_start,
+            n_chunks=n_chunks, fireflies_url=fireflies_url)
 
     # --- Per-agent reuse (shared helper) + shared run loop -------------------
     # Non-streaming and streaming share _resolve_valid_reuse,
@@ -2404,11 +2693,13 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     valid_reuse = _resolve_valid_reuse(
         db, agents, requests, reuse_map, payload.model, effort, provider_requested)
     outputs, per_agent, reused_agents = _seed_reused_state(valid_reuse)
+    evidence_all, probs_all = _copy_reuse_sidecars(valid_reuse)
     fresh_agents = [a for a in agents if a.id not in valid_reuse]
     agents_by_id = {a.id: a for a in agents}
     _collected: dict = {}
     async for _res in _stream_fresh_results(
-            fresh_agents, requests, payload.model, agents_by_id):
+            fresh_agents, requests, payload.model, agents_by_id,
+            n_chunks=n_chunks):
         _collected[_res["agent_id"]] = _res
     total_in = 0
     total_out = 0
@@ -2427,6 +2718,8 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
         if _res is None:
             continue
         outputs[_ag.id] = _res["output"]
+        _merge_sidecars(evidence_all, probs_all, _ag.id,
+                        _res.get("evidence"), _res.get("probs"))
         _pe = _res["per_entry"]
         try:
             total_in += int(_pe.get("prompt_tokens", 0) or 0)
@@ -2521,7 +2814,9 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
                   reasoning_effort=effort, provider=provider_requested,
                   run_group_id=payload.run_group_id or "",
                   reused_from_log_id=log_reused_id or "",
-                  reused_from_created_at=log_reused_at, consistency={})
+                  reused_from_created_at=log_reused_at, consistency={},
+                  fireflies_url=fireflies_url,
+                  evidence=evidence_all, probabilities=probs_all)
     db.add(log)
     db.commit()
     db.refresh(log)
@@ -2727,6 +3022,19 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
             _reuse_cons = {}
     except Exception:
         _reuse_cons = {}
+    # Reuse-from-source copy: identifier sidecars + Fireflies URL ride along.
+    try:
+        _reuse_ev = copy.deepcopy(getattr(source, "evidence", None) or {})
+        if not isinstance(_reuse_ev, dict):
+            _reuse_ev = {}
+    except Exception:
+        _reuse_ev = {}
+    try:
+        _reuse_pr = copy.deepcopy(getattr(source, "probabilities", None) or {})
+        if not isinstance(_reuse_pr, dict):
+            _reuse_pr = {}
+    except Exception:
+        _reuse_pr = {}
     # Reused outputs share ONE source of truth: the new row stores NO
     # feedback copy (display merges the source's feedback with a
     # source_log_id marker). Legacy rows holding a copy are ignored for
@@ -2762,6 +3070,9 @@ def reuse_run(payload: ReuseRunIn, db: Session = Depends(get_db)):
         reused_from_log_id=original_id,
         reused_from_created_at=original_created_at,
         consistency=_reuse_cons,
+        fireflies_url=getattr(source, "fireflies_url", None) or "",
+        evidence=_reuse_ev,
+        probabilities=_reuse_pr,
     )
     db.add(log)
     db.commit()
@@ -2777,7 +3088,7 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
     # Efforts are already validated by CheckModelSlot; use the first slot's
     # effort for input resolution (resolution is effort-independent).
     first_effort = (payload.models[0].reasoning_effort or "").strip()
-    resolved_type, resolved_data, _, _ = _resolve_run_input(
+    resolved_type, resolved_data, _, _, _ = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=first_effort)
     agents = _load_run_agents(db, payload.agent_ids)
@@ -2897,7 +3208,7 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
     check-existing.
     """
     first_effort = (payload.models[0].reasoning_effort or "").strip()
-    _, resolved_data, _, task_title = _resolve_run_input(
+    _, resolved_data, _, task_title, _ = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=first_effort)
     identifier = (
@@ -3072,9 +3383,17 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     wall_start = perf_counter()
     _auto_stream = bool(getattr(payload, "stream", False))
     provider_requested = (payload.provider or "").strip() if isinstance(payload.provider, str) else ""
-    resolved_type, resolved_data, effort, task_title = _resolve_run_input(
+    resolved_type, resolved_data, effort, task_title, fireflies_url = _resolve_run_input(
         meeting_id=payload.meeting_id, input_type=payload.input_type,
         input_data=payload.input_data, reasoning_effort=payload.reasoning_effort)
+    try:
+        chunks = chunk_transcript(resolved_data)
+    except Exception:
+        chunks = []
+    try:
+        n_chunks = len(chunks) if isinstance(chunks, list) else 0
+    except Exception:
+        n_chunks = 0
     identifier = (
         db.query(Agent).filter(Agent.kind == IDENTIFIER_KIND)
         .order_by(Agent.name.asc()).first()
@@ -3088,13 +3407,21 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         meeting_type = ""
     snapshots_ident, requests_ident = _build_agent_requests(
         db, agents=[identifier], input_data=resolved_data,
-        model=payload.model, reasoning_effort=effort, provider=provider_requested)
+        model=payload.model, reasoning_effort=effort, provider=provider_requested,
+        chunks=chunks)
     ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
     (parsed_ident, ipt, ict, itt, irt, idur, iserved,
      iactual, idetails, iserved_model) = await _call_single_payload(ident_body)
+    evidence_all: dict = {}
+    probs_all: dict = {}
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
         try:
-            parsed_ident = normalize_identifier_output(parsed_ident)
+            ident_transport = ("decisions"
+                               if isinstance(ident_body, dict) and ident_body.get("transport") == "decisions"
+                               else "chat")
+            _bools, _ev, _pr = split_identifier_result(parsed_ident, ident_transport, n_chunks)
+            parsed_ident = normalize_identifier_output(_bools)
+            _merge_sidecars(evidence_all, probs_all, ident_id, _ev, _pr)
         except Exception:
             pass
     per_ident = _per_agent_entry(ipt, ict, itt, irt, idur, payload.model, iserved,
@@ -3131,7 +3458,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     snapshots_sel, requests_sel = _build_agent_requests(
         db, agents=planned_agents, input_data=resolved_data,
         model=payload.model, reasoning_effort=effort, provider=provider_requested,
-        attr_subsets=attr_subsets)
+        attr_subsets=attr_subsets, chunks=chunks)
     snapshots = {**snapshots_ident, **snapshots_sel}
     requests = {**requests_ident, **requests_sel}
     # Stored plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
@@ -3162,6 +3489,11 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         db, planned_agents, requests, reuse_map, payload.model, effort,
         provider_requested)
     _reused_out, _reused_per, _reused_map = _seed_reused_state(valid_reuse)
+    _reuse_ev, _reuse_pr = _copy_reuse_sidecars(valid_reuse)
+    for _k, _v in _reuse_ev.items():
+        evidence_all.setdefault(_k, _v)
+    for _k, _v in _reuse_pr.items():
+        probs_all.setdefault(_k, _v)
     outputs: dict = {ident_id: parsed_ident}
     per_agent: dict = {ident_id: per_ident}
     reused_agents: dict = {}
@@ -3185,15 +3517,22 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
             reused_agents=reused_agents, plan_stored=plan_stored,
             provider_requested=provider_requested,
             filters=payload.filters if isinstance(payload.filters, dict) else {},
-            wall_start=wall_start)
+            wall_start=wall_start, n_chunks=n_chunks,
+            evidence_all=evidence_all, probs_all=probs_all,
+            fireflies_url=fireflies_url)
     fresh_agents = [a for a in planned_agents if a.id not in valid_reuse]
     fresh_requests = {a.id: requests[a.id] for a in fresh_agents if a.id in requests}
     if fresh_agents:
-        outputs_sel, per_agent_sel = await _execute_agents(db, fresh_agents, fresh_requests, payload.model)
+        outputs_sel, per_agent_sel, ev_sel, pr_sel = await _execute_agents(
+            db, fresh_agents, fresh_requests, payload.model, n_chunks=n_chunks)
         for k, v in outputs_sel.items():
             outputs[k] = v
         for k, v in per_agent_sel.items():
             per_agent[k] = v
+        for k, v in ev_sel.items():
+            evidence_all.setdefault(k, v)
+        for k, v in pr_sel.items():
+            probs_all.setdefault(k, v)
     agents = [identifier] + planned_agents
     agent_ids = [ident_id] + [a.id for a in planned_agents]
     try:
@@ -3245,13 +3584,15 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(run)
     log = RunLog(run_id=run.id, input_type=run.input_type, input_data=run.input_data, model=run.model,
-                  agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback=feedback,
-                  usage=usage, filters=filters, requests=requests,
-                  client=client_name, meeting_type=meeting_type, meeting_title=meeting_title,
-                  reasoning_effort=effort, provider=provider_requested,
-                  run_group_id=payload.run_group_id or "",
-                  reused_from_log_id="", reused_from_created_at=None,
-                  consistency=consistency)
+                   agent_snapshot=snapshots, attribute_snapshot=snapshots, outputs=outputs, feedback=feedback,
+                   usage=usage, filters=filters, requests=requests,
+                   client=client_name, meeting_type=meeting_type, meeting_title=meeting_title,
+                   reasoning_effort=effort, provider=provider_requested,
+                   run_group_id=payload.run_group_id or "",
+                   reused_from_log_id="", reused_from_created_at=None,
+                   consistency=consistency,
+                   fireflies_url=fireflies_url,
+                   evidence=evidence_all, probabilities=probs_all)
     db.add(log)
     db.commit()
     db.refresh(log)
@@ -3302,10 +3643,33 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
     else:
         (parsed, pt, ct, tt, rt, dur, served,
          actual_cost, cost_details, served_model) = await _call_single_payload(stored_body)
-    # Identifier normalisation when the retried agent is the identifier.
+    # Identifier split + normalisation when the retried agent is the
+    # identifier (same as every other identifier consumer). Sidecars merge
+    # into the log columns without touching other agents' keys; the
+    # Fireflies URL is kept as-is.
     try:
         if is_ident and isinstance(parsed, dict) and "_error" not in parsed:
-            parsed = normalize_identifier_output(parsed)
+            retry_transport = ("decisions"
+                               if isinstance(stored_body, dict) and stored_body.get("transport") == "decisions"
+                               else "chat")
+            try:
+                retry_n = len(chunk_transcript(getattr(log, "input_data", None) or ""))
+            except Exception:
+                retry_n = 0
+            _rbools, _rev, _rpr = split_identifier_result(parsed, retry_transport, retry_n)
+            parsed = normalize_identifier_output(_rbools)
+            try:
+                log_ev = getattr(log, "evidence", None)
+                log_ev = dict(log_ev) if isinstance(log_ev, dict) else {}
+                log_pr = getattr(log, "probabilities", None)
+                log_pr = dict(log_pr) if isinstance(log_pr, dict) else {}
+                _merge_sidecars(log_ev, log_pr, agent_id, _rev, _rpr)
+                log.evidence = log_ev
+                log.probabilities = log_pr
+                flag_modified(log, "evidence")
+                flag_modified(log, "probabilities")
+            except Exception:
+                pass
     except Exception:
         pass
     outputs = log.outputs if isinstance(getattr(log, "outputs", None), dict) else {}

@@ -55,9 +55,14 @@ def test_identifier_schema_shape():
     assert schema["additionalProperties"] is False
     for q in IDENTIFIER_QUESTIONS:
         prop = schema["properties"][q["key"]]
-        assert prop == {"type": "boolean", "description": q["question"]}
+        assert prop == {
+            "type": "object", "description": q["question"],
+            "properties": {"value": {"type": "boolean"},
+                           "evidence": {"type": ["integer", "null"]}},
+            "required": ["value", "evidence"],
+            "additionalProperties": False,
+        }
     assert "$ref" not in str(schema)
-    assert "null" not in str(schema)
 
 
 def test_envelope_builder_schema_name_branch():
@@ -145,7 +150,7 @@ def test_identifier_run_path_uses_boolean_envelope(client, monkeypatch):
     assert body["outputs"][ident]["tax"] is False
     assert len(seen["calls"]) == 1
     call = seen["calls"][0]
-    assert call["messages"][1] == {"role": "user", "content": "advisor was great"}
+    assert call["messages"][1] == {"role": "user", "content": "[1] advisor was great"}
     assert call["response_format"]["json_schema"]["name"] == "agent_selection"
     assert "Q1 (has_assets)" in call["messages"][0]["content"]
     assert "Turtle Finance" in call["messages"][0]["content"]

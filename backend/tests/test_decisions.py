@@ -22,7 +22,9 @@ from app.modules.runs.router import (
     _request_match_key,
     build_identifier_decisions_questions,
     decisions_answers_to_bools,
+    fireflies_url_from_task,
     normalize_identifier_output,
+    split_identifier_result,
 )
 
 
@@ -365,3 +367,205 @@ def test_request_match_key_decisions_equal_unequal():
     assert _request_match_key(chat_a) != _request_match_key(chat_c)
     # Cross-transport never matches.
     assert _request_match_key(stored) != _request_match_key(chat_a)
+
+
+# --- chunk evidence: __evidence score questions ---------------------------------
+
+
+def _chunks(n):
+    return [{"n": i + 1, "text": f"turn {i + 1}"} for i in range(n)]
+
+
+def test_decisions_questions_with_chunks_add_evidence_scores():
+    questions = build_identifier_decisions_questions(_chunks(3))
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    assert len(questions) == 22
+    for k in keys:
+        assert questions[k]["type"] == "noul"
+        ev = questions[f"{k}__evidence"]
+        assert ev["type"] == "score"
+        assert ev["instructions"] == (
+            f"Which transcript chunk (1..3) best supports a true answer to {k}?")
+        assert ev["criteria"] == ["chunk 1", "chunk 2", "chunk 3"]
+
+
+def test_decisions_questions_without_chunks_stays_eleven():
+    # Backward compat: no chunks -> only the 11 noul questions.
+    assert len(build_identifier_decisions_questions()) == 11
+    assert len(build_identifier_decisions_questions([])) == 11
+
+
+def test_split_decisions_evidence_round_clamp_ignore_when_false():
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    answers = {k: {"type": "noul", "noul": 0.9} for k in keys}
+    answers[f"{keys[0]}__evidence"] = {"type": "score", "score": 0}  # -> chunk 1
+    answers[f"{keys[1]}__evidence"] = {"type": "score", "score": 1.6}  # round 2 -> chunk 3
+    answers[f"{keys[2]}__evidence"] = {"type": "score", "score": 99}  # clamp -> chunk 3
+    answers[f"{keys[3]}__evidence"] = {"type": "score", "score": -4}  # clamp -> chunk 1
+    answers[f"{keys[4]}__evidence"] = {"type": "choice", "choice": "chunk 2"}  # wrong type
+    answers[f"{keys[5]}__evidence"] = {"type": "score"}  # missing score
+    # keys[6] has no __evidence entry at all.
+    answers[keys[7]] = {"type": "noul", "noul": 0.1}  # False ...
+    answers[f"{keys[7]}__evidence"] = {"type": "score", "score": 2}  # ... so ignored
+    bools, evidence, probs = split_identifier_result(answers, "decisions", 3)
+    assert bools[keys[0]] is True and evidence[keys[0]] == 1
+    assert evidence[keys[1]] == 3
+    assert evidence[keys[2]] == 3
+    assert evidence[keys[3]] == 1
+    assert evidence[keys[4]] is None
+    assert evidence[keys[5]] is None
+    assert evidence[keys[6]] is None
+    assert bools[keys[7]] is False and evidence[keys[7]] is None
+    # Probs carry the noul floats; non-numeric/missing become None.
+    assert probs[keys[0]] == 0.9
+    assert probs[keys[7]] == 0.1
+    answers2 = dict(answers)
+    answers2[keys[8]] = {"type": "noul"}  # missing noul
+    answers2[keys[9]] = "yes"  # non-dict
+    _, _, probs2 = split_identifier_result(answers2, "decisions", 3)
+    assert probs2[keys[8]] is None
+    assert probs2[keys[9]] is None
+
+
+def test_split_decisions_bool_score_never_numeric():
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    answers = {k: {"type": "noul", "noul": 0.9} for k in keys}
+    answers[f"{keys[0]}__evidence"] = {"type": "score", "score": True}
+    _, evidence, _ = split_identifier_result(answers, "decisions", 3)
+    assert evidence[keys[0]] is None
+
+
+def test_split_chat_value_evidence_objects_and_legacy():
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    parsed = {k: {"value": True, "evidence": 2} for k in keys}
+    parsed[keys[1]] = {"value": False, "evidence": 2}  # chat: range-valid only
+    parsed[keys[2]] = {"value": True, "evidence": 9}  # out of range -> None
+    parsed[keys[3]] = {"value": True, "evidence": None}
+    parsed[keys[4]] = True  # legacy bool
+    parsed[keys[5]] = "TrUe"  # legacy string
+    bools, evidence, probs = split_identifier_result(parsed, "chat", 4)
+    assert bools[keys[0]] is True and evidence[keys[0]] == 2
+    assert bools[keys[1]] is False and evidence[keys[1]] == 2
+    assert evidence[keys[2]] is None
+    assert evidence[keys[3]] is None
+    assert bools[keys[4]] is True and evidence[keys[4]] is None
+    assert bools[keys[5]] is True
+    assert all(v is None for v in probs.values())
+
+
+def test_split_never_raises_unknown_shapes():
+    for bad in (["x"], "str", None, 42):
+        assert split_identifier_result(bad, "chat", 3) == (bad, {}, {})
+        assert split_identifier_result(bad, "decisions", 3) == (bad, {}, {})
+    err = {"_error": "boom"}
+    assert split_identifier_result(err, "chat", 3) == (err, {}, {})
+    bools, evidence, probs = split_identifier_result({"weird": 1}, "chat", 3)
+    assert set(bools) == {q["key"] for q in IDENTIFIER_QUESTIONS}
+    assert all(v is False for v in bools.values())
+    assert all(v is None for v in evidence.values())
+    assert all(v is None for v in probs.values())
+
+
+def test_normalize_chat_value_evidence_objects():
+    parsed = {"has_assets": {"value": True, "evidence": 3},
+              "insurance": {"value": "TrUe", "evidence": None},
+              "tax": {"value": "FALSE", "evidence": 1},
+              "income": {"value": 1, "evidence": 1}}
+    out = normalize_identifier_output(parsed)
+    assert out["has_assets"] is True
+    assert out["insurance"] is True
+    assert out["tax"] is False
+    assert out["income"] is False
+
+
+def test_fireflies_url_helper_edge_cases():
+    assert fireflies_url_from_task(
+        {"transcriptUrl": "https://fireflies.ai/abc"}) == "https://fireflies.ai/abc"
+    assert fireflies_url_from_task({"transcriptUrl": "  http://x  "}) == "http://x"
+    for bad in ({}, {"transcriptUrl": ""}, {"transcriptUrl": None},
+                {"transcriptUrl": 123}, {"transcriptUrl": "/relative/path"},
+                {"transcriptUrl": "ftp://x"}, None, "str", ["x"]):
+        assert fireflies_url_from_task(bad) == ""
+
+
+def test_chat_identifier_request_uses_numbered_chunks(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    seen = {}
+
+    async def _capture(payload):
+        seen["payload"] = payload
+        return ({q["key"]: False for q in IDENTIFIER_QUESTIONS},
+                {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_json_payload", _capture)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = client.post("/api/v1/agents", json={
+        "name": "agent_identifier", "kind": "identifier"}).json()["id"]
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription",
+        "input_data": "Anita: salary talk\nBob: noted",
+        "agent_ids": [ident], "model": "m"}).json()
+    payload = seen["payload"]
+    assert payload["messages"][1] == {
+        "role": "user", "content": "[1] Anita: salary talk\n\n[2] Bob: noted"}
+    assert "state" not in payload  # chat bodies carry no decisions state
+    # {value, evidence} object schema per key.
+    props = payload["response_format"]["json_schema"]["schema"]["properties"]
+    assert props["has_assets"]["properties"]["value"] == {"type": "boolean"}
+    assert props["has_assets"]["properties"]["evidence"] == {"type": ["integer", "null"]}
+    # Stored outputs stay {key: bool}; sidecars land on the log.
+    assert body["outputs"][ident]["has_assets"] is False
+    log = client.get("/api/v1/logs").json()[0]
+    assert log["evidence"] == {ident: {q["key"]: None for q in IDENTIFIER_QUESTIONS}}
+    assert log["probabilities"] == {ident: {q["key"]: None for q in IDENTIFIER_QUESTIONS}}
+    assert log["fireflies_url"] == ""
+
+
+def test_decisions_identifier_request_chunks_state_and_sidecars(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    seen = {}
+
+    async def _fake_decisions(payload):
+        seen["payload"] = payload
+        keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+        answers = {k: {"type": "noul", "noul": 0.8} for k in keys}
+        answers["tax"] = {"type": "noul", "noul": 0.2}
+        answers["has_assets__evidence"] = {"type": "score", "score": 1}
+        return answers, {"prompt_tokens": 10, "completion_tokens": 5,
+                         "total_tokens": 15, "reasoning_tokens": 0,
+                         "provider": "pv", "cost": 0.001,
+                         "cost_details": None,
+                         "served_model": "typesafe/jev-1.13"}
+
+    async def _no_chat(payload):
+        raise AssertionError("chat must not be called for decision models")
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_decisions_payload", _fake_decisions)
+    monkeypatch.setattr(rr, "complete_json_payload", _no_chat)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = client.post("/api/v1/agents", json={
+        "name": "agent_identifier", "kind": "identifier"}).json()["id"]
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription",
+        "input_data": "Anita: salary talk\nBob: noted",
+        "agent_ids": [ident], "model": "typesafe/jev-1.13"}).json()
+    # Same numbered chunks travel in decisions state (no raw transcript key).
+    assert seen["payload"]["state"] == {
+        "chunks": [{"n": 1, "text": "Anita: salary talk"},
+                   {"n": 2, "text": "Bob: noted"}]}
+    assert "has_assets__evidence" in seen["payload"]["questions"]
+    out = body["outputs"][ident]
+    assert out["has_assets"] is True and out["tax"] is False
+    log = client.get("/api/v1/logs").json()[0]
+    assert log["evidence"][ident]["has_assets"] == 2  # score 1 -> clamp+1
+    assert log["evidence"][ident]["tax"] is None  # false -> None
+    assert log["probabilities"][ident]["has_assets"] == 0.8
+    assert log["probabilities"][ident]["tax"] == 0.2

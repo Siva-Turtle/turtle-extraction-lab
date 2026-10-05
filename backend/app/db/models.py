@@ -125,4 +125,10 @@ class RunLog(Base):
     reused_from_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     # Auto-select consistency snapshot ({} on manual runs). No FKs.
     consistency: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+    # Denormalized Fireflies URL snapshot (Mongo task transcriptUrl, "" when absent/old rows).
+    fireflies_url: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # Per-answer chunk evidence for identifier agents: {agent_id: {question_key: chunk_no:int}}.
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+    # Per-answer noul probabilities: {agent_id: {question_key: float|null}} (Jev floats; Opus nulls).
+    probabilities: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
