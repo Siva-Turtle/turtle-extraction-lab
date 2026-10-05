@@ -1,12 +1,26 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Scale } from "lucide-react";
+import { ExternalLink, Pencil, Scale, Star } from "lucide-react";
 import { api } from "../lib/api";
 import { fmt, fmtCostBoth, modelLabel, serverDetail } from "../lib/format";
 import { IDENTIFIER_QUESTION_KEYS } from "../lib/format";
 import type { LogRow } from "../lib/logTypes";
-import { buildRows, chunkText, pairGroups } from "../lib/review";
-import type { ReviewGroup, ReviewRow, ReviewSide } from "../lib/review";
+import {
+  batchDisplayName,
+  buildRows,
+  chunkText,
+  clusterBatches,
+  isStarred,
+  loadBatchNames,
+  loadBatchSel,
+  loadStars,
+  pairGroups,
+  saveBatchNames,
+  saveBatchSel,
+  saveStars,
+  toggleStar,
+} from "../lib/review";
+import type { ReviewBatch, ReviewGroup, ReviewRow, ReviewSide } from "../lib/review";
 import { useFeedback } from "../lib/useFeedback";
 import { useIsNarrow } from "../lib/useIsNarrow";
 import { cn } from "../lib/cn";
@@ -18,7 +32,46 @@ import { ThumbButtons } from "../components/ui/ThumbButtons";
 import { RemarksPopover } from "../components/ui/RemarksPopover";
 import { SingleSelectFilter } from "../components/ui/Combobox";
 
-type Mode = "discrepancies" | "all";
+type Mode = "discrepancies" | "all" | "starred";
+
+const MODE_LABELS: Record<Mode, string> = {
+  discrepancies: "Discrepancies",
+  all: "All",
+  starred: "Starred",
+};
+
+/** Browser-local bookmark toggle for one review row (★ fills amber). */
+function StarButton({
+  starred,
+  onToggle,
+}: {
+  starred: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      aria-pressed={starred}
+      aria-label={starred ? "Unstar row" : "Star row"}
+      title={starred ? "Unstar row" : "Star row"}
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors",
+        starred
+          ? "border-amber-400 bg-amber-100 text-amber-500 dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-300"
+          : "border-[#e5e7eb] text-[#8a8f98] hover:border-amber-400 hover:text-amber-500 dark:border-white/10 dark:hover:border-amber-400/60",
+      )}
+    >
+      <Star
+        className={cn("h-4 w-4", starred && "fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-300")}
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
 
 /** Muted "—" placeholder for missing data (never crashes on old logs). */
 function Dash({ label = "—" }: { label?: string }): React.JSX.Element {
@@ -299,7 +352,16 @@ export default function Review(): React.JSX.Element {
   const feedback = useFeedback();
   const [mode, setMode] = React.useState<Mode>("discrepancies");
   const [question, setQuestion] = React.useState("all");
-  const [selected, setSelected] = React.useState<string[] | null>(null);
+  const [selected, setSelected] = React.useState<string[] | null>(
+    () => loadBatchSel()?.selected ?? null,
+  );
+  const [batchId, setBatchId] = React.useState<string | null>(
+    () => loadBatchSel()?.batchId ?? null,
+  );
+  const [batchNames, setBatchNames] = React.useState<Record<string, string>>(
+    () => loadBatchNames(),
+  );
+  const [stars, setStars] = React.useState<string[]>(() => loadStars());
   const [remarksFor, setRemarksFor] = React.useState<string | null>(null);
 
   const logsQuery = useQuery({
@@ -309,22 +371,72 @@ export default function Review(): React.JSX.Element {
   });
   const logs = logsQuery.data ?? [];
   const groups = React.useMemo(() => pairGroups(logs), [logs]);
+  const batches = React.useMemo(() => clusterBatches(groups), [groups]);
+
+  // Drop a persisted batch once the fetched groups no longer contain it.
+  React.useEffect(() => {
+    if (groups.length === 0 || batchId === null) return;
+    if (!batches.some((b) => b.id === batchId)) setBatchId(null);
+  }, [groups.length, batches, batchId]);
 
   // Default = all pair groups from the fetched set.
   const effectiveSelected = selected ?? groups.map((g) => g.id);
-  const selectedSet = React.useMemo(() => new Set(effectiveSelected), [effectiveSelected]);
-  const selectedGroups = React.useMemo(
-    () => groups.filter((g) => selectedSet.has(g.id)),
-    [groups, selectedSet],
+
+  // Persist where Siva left off (selected batch + checkbox selection).
+  React.useEffect(() => {
+    saveBatchSel({ batchId, selected: effectiveSelected });
+  }, [batchId, selected, groups]);
+
+  React.useEffect(() => {
+    saveBatchNames(batchNames);
+  }, [batchNames]);
+
+  React.useEffect(() => {
+    saveStars(stars);
+  }, [stars]);
+
+  const batchGroupIds = React.useMemo(() => {
+    if (batchId === null) return null;
+    const found = batches.find((b) => b.id === batchId);
+    return found ? new Set(found.groupIds) : new Set<string>();
+  }, [batches, batchId]);
+
+  // Group picker is restricted to the selected batch (checkbox behavior
+  // inside the batch stays the same).
+  const visibleGroups = React.useMemo(
+    () =>
+      batchGroupIds === null
+        ? groups
+        : groups.filter((g) => batchGroupIds.has(g.id)),
+    [groups, batchGroupIds],
+  );
+  const visibleIds = React.useMemo(
+    () => new Set(visibleGroups.map((g) => g.id)),
+    [visibleGroups],
+  );
+  const pickerSelected = React.useMemo(
+    () => effectiveSelected.filter((id) => visibleIds.has(id)),
+    [effectiveSelected, visibleIds],
   );
 
+  const selectedSet = React.useMemo(() => new Set(effectiveSelected), [effectiveSelected]);
+  const selectedGroups = React.useMemo(
+    () =>
+      groups.filter(
+        (g) => selectedSet.has(g.id) && (batchGroupIds === null || batchGroupIds.has(g.id)),
+      ),
+    [groups, selectedSet, batchGroupIds],
+  );
+
+  const starredSet = React.useMemo(() => new Set(stars), [stars]);
   const allRows = React.useMemo(() => buildRows(selectedGroups), [selectedGroups]);
   const rows = React.useMemo(() => {
     let out = allRows;
     if (mode === "discrepancies") out = out.filter((r) => !r.agree);
+    else if (mode === "starred") out = out.filter((r) => starredSet.has(r.key));
     if (question !== "all") out = out.filter((r) => r.questionKey === question);
     return out;
-  }, [allRows, mode, question]);
+  }, [allRows, mode, question, starredSet]);
 
   // Rated-progress tally over the filtered rows (2 rateable cells per row).
   const rated = React.useMemo(() => {
@@ -345,6 +457,27 @@ export default function Review(): React.JSX.Element {
     if (cur.has(id)) cur.delete(id);
     else cur.add(id);
     setSelected([...cur]);
+  }
+
+  function toggleStarKey(key: string): void {
+    setStars((cur) => toggleStar(cur, key));
+  }
+
+  function renameBatch(batch: ReviewBatch): void {
+    try {
+      const current = batchDisplayName(batch, batchNames);
+      const next = window.prompt("Rename batch", current);
+      if (next === null) return;
+      const t = next.trim();
+      setBatchNames((prev) => {
+        const copy = { ...prev };
+        if (t === "" || t === batch.name) delete copy[batch.id];
+        else copy[batch.id] = t;
+        return copy;
+      });
+    } catch {
+      // ignore (no window / prompt blocked)
+    }
   }
 
   function saveRemarksForCell(runId: string, agent: string, attr: string, text: string): void {
@@ -371,19 +504,85 @@ export default function Review(): React.JSX.Element {
       <PageHeader
         title="Evidence review"
         actions={
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/10 dark:text-[#C3C2B7]">
-            <Scale className="h-3.5 w-3.5" aria-hidden="true" />
-            Jev vs Opus · rated {rated}/{totalCells}
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f2f3] px-2.5 py-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:bg-white/10 dark:text-[#C3C2B7]">
+              <Scale className="h-3.5 w-3.5" aria-hidden="true" />
+              Jev vs Opus · rated {rated}/{totalCells}
+            </span>
+            <span
+              title="Starred rows"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 font-heading text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"
+            >
+              ★ {stars.length}
+            </span>
           </span>
         }
       />
 
+      <Card>
+        <div
+          role="group"
+          aria-label="Batch filter"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          <button
+            type="button"
+            aria-pressed={batchId === null}
+            onClick={() => setBatchId(null)}
+            title="Show all batches"
+            className={cn(
+              "rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
+              batchId === null
+                ? "bg-[#1d1d1d] text-white dark:bg-[#F0EFEC] dark:text-[#1d1d1d]"
+                : "bg-[#f1f2f3] text-[#4a5058] hover:text-[#1d1d1d] dark:bg-white/5 dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
+            )}
+          >
+            All · {groups.length}
+          </button>
+          {batches.map((b, i) => {
+            const active = batchId === b.id;
+            const latest = i === batches.length - 1;
+            const label = batchDisplayName(b, batchNames);
+            return (
+              <span key={b.id} className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setBatchId(active ? null : b.id)}
+                  title={`${label} — ${b.groupIds.length} group${b.groupIds.length === 1 ? "" : "s"}${latest ? " (newest)" : ""}`}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
+                    active
+                      ? "bg-[#1d1d1d] text-white dark:bg-[#F0EFEC] dark:text-[#1d1d1d]"
+                      : "bg-[#f1f2f3] text-[#4a5058] hover:text-[#1d1d1d] dark:bg-white/5 dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
+                  )}
+                >
+                  {label} · {b.groupIds.length}
+                  {latest && <Badge tone="brand">latest</Badge>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => renameBatch(b)}
+                  title={`Rename ${label}`}
+                  aria-label={`Rename ${label}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-[#e5e7eb] text-[#8a8f98] transition-colors hover:border-[#1d1d1d] hover:text-[#1d1d1d] dark:border-white/10 dark:hover:border-[#F0EFEC] dark:hover:text-[#F0EFEC]"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </Card>
+
       <GroupPicker
-        groups={groups}
-        selected={effectiveSelected}
+        groups={visibleGroups}
+        selected={pickerSelected}
         onToggle={toggleGroup}
-        onAll={() => setSelected(groups.map((g) => g.id))}
-        onNone={() => setSelected([])}
+        onAll={() =>
+          setSelected([...new Set([...effectiveSelected, ...visibleGroups.map((g) => g.id)])])
+        }
+        onNone={() => setSelected(effectiveSelected.filter((id) => !visibleIds.has(id)))}
       />
 
       <Card>
@@ -393,7 +592,7 @@ export default function Review(): React.JSX.Element {
             aria-label="Row filter"
             className="flex items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
           >
-            {(["discrepancies", "all"] as Mode[]).map((m) => {
+            {(["discrepancies", "all", "starred"] as Mode[]).map((m) => {
               const active = mode === m;
               return (
                 <button
@@ -408,7 +607,7 @@ export default function Review(): React.JSX.Element {
                       : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
                   )}
                 >
-                  {m === "discrepancies" ? "Discrepancies" : "All"}
+                  {MODE_LABELS[m]}
                 </button>
               );
             })}
@@ -425,7 +624,7 @@ export default function Review(): React.JSX.Element {
             />
           </div>
           <span className="font-heading text-xs font-bold text-[#4a5058] dark:text-[#C3C2B7]">
-            {rows.length} rows · rated {rated}/{totalCells} cells
+            {rows.length} rows · rated {rated}/{totalCells} cells · ★ {stars.length}
           </span>
         </div>
       </Card>
@@ -461,13 +660,23 @@ export default function Review(): React.JSX.Element {
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
             {mode === "discrepancies"
               ? "No disagreements — Jev and Opus agree on every question here."
-              : "No rows match these filters."}
+              : mode === "starred"
+                ? "No starred rows match these filters — tap ★ on a row to bookmark it."
+                : "No rows match these filters."}
           </p>
         </Card>
       ) : narrow ? (
         <div className="grid gap-3">
-          {rows.map((row) => (
-            <Card key={row.key}>
+          {rows.map((row) => {
+            const starred = isStarred(stars, row.key);
+            return (
+            <Card
+              key={row.key}
+              className={cn(
+                starred &&
+                  "border-amber-300 bg-amber-50/60 dark:border-amber-400/40 dark:bg-amber-400/5",
+              )}
+            >
               <div className="flex min-w-0 items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]" title={row.sample}>
@@ -489,16 +698,19 @@ export default function Review(): React.JSX.Element {
                   <p className="mb-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
                     Jev
                   </p>
-                  <ModelCell
-                    side={row.jev}
-                    attr={row.questionKey}
-                    showProb
-                    feedback={feedback}
-                    remarksFor={remarksFor}
-                    onRemarksToggle={(k) => setRemarksFor((cur) => (cur === k ? null : k))}
-                    onRemarksClose={() => setRemarksFor(null)}
-                    onRemarksSave={saveRemarksForCell}
-                  />
+                  <div className="flex items-start gap-1.5">
+                    <StarButton starred={starred} onToggle={() => toggleStarKey(row.key)} />
+                    <ModelCell
+                      side={row.jev}
+                      attr={row.questionKey}
+                      showProb
+                      feedback={feedback}
+                      remarksFor={remarksFor}
+                      onRemarksToggle={(k) => setRemarksFor((cur) => (cur === k ? null : k))}
+                      onRemarksClose={() => setRemarksFor(null)}
+                      onRemarksSave={saveRemarksForCell}
+                    />
+                  </div>
                 </div>
                 <div>
                   <p className="mb-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
@@ -528,7 +740,8 @@ export default function Review(): React.JSX.Element {
                 <EvidenceCell row={row} />
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <Card padded={false} className="overflow-x-auto">
@@ -546,10 +759,15 @@ export default function Review(): React.JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {rows.map((row) => {
+                const starred = isStarred(stars, row.key);
+                return (
                 <tr
                   key={row.key}
-                  className="group/row border-b border-[#e5e7eb] align-top last:border-0 dark:border-white/10"
+                  className={cn(
+                    "group/row border-b border-[#e5e7eb] align-top last:border-0 dark:border-white/10",
+                    starred && "bg-amber-50/70 dark:bg-amber-400/5",
+                  )}
                 >
                   <td
                     className="max-w-48 truncate px-4 py-3 font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
@@ -566,16 +784,19 @@ export default function Review(): React.JSX.Element {
                     )}
                   </td>
                   <td className="min-w-36 px-4 py-3">
-                    <ModelCell
-                      side={row.jev}
-                      attr={row.questionKey}
-                      showProb
-                      feedback={feedback}
-                      remarksFor={remarksFor}
-                      onRemarksToggle={(k) => setRemarksFor((cur) => (cur === k ? null : k))}
-                      onRemarksClose={() => setRemarksFor(null)}
-                      onRemarksSave={saveRemarksForCell}
-                    />
+                    <div className="flex items-start gap-1.5">
+                      <StarButton starred={starred} onToggle={() => toggleStarKey(row.key)} />
+                      <ModelCell
+                        side={row.jev}
+                        attr={row.questionKey}
+                        showProb
+                        feedback={feedback}
+                        remarksFor={remarksFor}
+                        onRemarksToggle={(k) => setRemarksFor((cur) => (cur === k ? null : k))}
+                        onRemarksClose={() => setRemarksFor(null)}
+                        onRemarksSave={saveRemarksForCell}
+                      />
+                    </div>
                   </td>
                   <td className="min-w-36 px-4 py-3">
                     <ModelCell
@@ -602,7 +823,8 @@ export default function Review(): React.JSX.Element {
                     <FirefliesLink url={row.firefliesUrl} />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Card>

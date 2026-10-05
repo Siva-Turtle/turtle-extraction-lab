@@ -438,3 +438,212 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
   }
   return rows;
 }
+
+// ---------------------------------------------------------------------------
+// Batches (auto-clustered eval runs) + row stars (browser-local bookmarks).
+// All browser persistence is frontend-local localStorage; never throws.
+// ---------------------------------------------------------------------------
+
+/** Gap that splits one batch from the next (3h). */
+export const BATCH_GAP_MS = 3 * 60 * 60 * 1000;
+
+export type ReviewBatch = {
+  /** Stable id = first (oldest) group id in the batch. */
+  id: string;
+  /** Default name "Run N" (N = 1-based oldest-first); overridable in storage. */
+  name: string;
+  groupIds: string[];
+  /** createdAt of the first (oldest) group. */
+  startedAt: string;
+};
+
+export const BATCH_NAMES_KEY = "review:batchNames";
+export const BATCH_SEL_KEY = "review:batchSel";
+export const STARS_KEY = "review:stars";
+
+export type BatchSelection = {
+  /** Selected batch id; null = All batches. */
+  batchId: string | null;
+  selected: string[];
+};
+
+function storageGet(key: string): string | null {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore (private mode etc.)
+  }
+}
+
+/**
+ * Auto-cluster groups into batches: sort by newest-log time ascending,
+ * split into a new batch wherever the gap to the previous group exceeds
+ * BATCH_GAP_MS. Oldest batch first ("Run 1" …). Never throws.
+ */
+export function clusterBatches(groups: ReviewGroup[]): ReviewBatch[] {
+  try {
+    const sorted = [...(groups ?? [])]
+      .filter((g) => g && typeof g.id === "string")
+      .sort((a, b) => timeOf(a.createdAt) - timeOf(b.createdAt));
+    const batches: ReviewBatch[] = [];
+    let cur: ReviewGroup[] = [];
+    let prevT = Number.NEGATIVE_INFINITY;
+    let prevValid = false;
+    for (const g of sorted) {
+      const t = timeOf(g.createdAt);
+      const valid = Number.isFinite(t) && t !== Number.NEGATIVE_INFINITY;
+      if (cur.length > 0 && valid && prevValid && t - prevT > BATCH_GAP_MS) {
+        const n = batches.length + 1;
+        batches.push({
+          id: cur[0].id,
+          name: `Run ${n}`,
+          groupIds: cur.map((x) => x.id),
+          startedAt: cur[0].createdAt,
+        });
+        cur = [];
+      }
+      cur.push(g);
+      if (valid) {
+        prevT = t;
+        prevValid = true;
+      }
+    }
+    if (cur.length > 0) {
+      const n = batches.length + 1;
+      batches.push({
+        id: cur[0].id,
+        name: `Run ${n}`,
+        groupIds: cur.map((x) => x.id),
+        startedAt: cur[0].createdAt,
+      });
+    }
+    return batches;
+  } catch {
+    return [];
+  }
+}
+
+/** Custom batch names keyed by batch id. Never throws. */
+export function loadBatchNames(): Record<string, string> {
+  try {
+    const raw = storageGet(BATCH_NAMES_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim() !== "") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveBatchNames(names: Record<string, string>): void {
+  try {
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(names ?? {})) {
+      if (typeof v === "string" && v.trim() !== "") clean[k] = v;
+    }
+    storageSet(BATCH_NAMES_KEY, JSON.stringify(clean));
+  } catch {
+    // ignore
+  }
+}
+
+/** Display name for a batch (custom override wins). Never throws. */
+export function batchDisplayName(
+  batch: ReviewBatch,
+  overrides?: Record<string, string>,
+): string {
+  try {
+    const custom = overrides?.[batch.id];
+    if (typeof custom === "string" && custom.trim() !== "") return custom;
+    return batch.name;
+  } catch {
+    return batch.name;
+  }
+}
+
+/** Persisted batch + group selection; null when nothing stored yet. */
+export function loadBatchSel(): BatchSelection | null {
+  try {
+    const raw = storageGet(BATCH_SEL_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<BatchSelection> | null;
+    if (!parsed || typeof parsed !== "object") return null;
+    const batchId =
+      parsed.batchId === null || typeof parsed.batchId === "string"
+        ? parsed.batchId
+        : null;
+    const selected = Array.isArray(parsed.selected)
+      ? parsed.selected.filter((s): s is string => typeof s === "string")
+      : null;
+    if (selected === null) return null;
+    return { batchId, selected };
+  } catch {
+    return null;
+  }
+}
+
+export function saveBatchSel(sel: BatchSelection): void {
+  try {
+    storageSet(
+      BATCH_SEL_KEY,
+      JSON.stringify({ batchId: sel.batchId ?? null, selected: sel.selected ?? [] }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+/** Starred row keys (`${groupId}|${questionKey}`). Never throws. */
+export function loadStars(): string[] {
+  try {
+    const raw = storageGet(STARS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((s): s is string => typeof s === "string");
+  } catch {
+    return [];
+  }
+}
+
+export function saveStars(stars: string[]): void {
+  try {
+    const clean = (stars ?? []).filter((s) => typeof s === "string");
+    storageSet(STARS_KEY, JSON.stringify(clean));
+  } catch {
+    // ignore
+  }
+}
+
+export function isStarred(stars: string[], key: string): boolean {
+  try {
+    return (stars ?? []).includes(key);
+  } catch {
+    return false;
+  }
+}
+
+export function toggleStar(stars: string[], key: string): string[] {
+  try {
+    const cur = (stars ?? []).filter((s) => typeof s === "string");
+    if (cur.includes(key)) return cur.filter((s) => s !== key);
+    return [...cur, key];
+  } catch {
+    return stars ?? [];
+  }
+}
