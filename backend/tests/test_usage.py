@@ -519,11 +519,11 @@ def test_served_model_recorded_when_differs(client, monkeypatch):
     monkeypatch.setattr(runs_router, "get_model_pricing", _fake_pricing)
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
-        "agent_ids": [aid], "model": "typesafe/jev-router"}).json()
+        "agent_ids": [aid], "model": "openai/gpt-4o-mini"}).json()
     per = body["usage"]["per_agent"][aid]
     assert per["cost_usd"] == pytest.approx(0.01)
     assert per["served_model"] == "openai/gpt-4o"
-    assert per["model"] == "typesafe/jev-router"
+    assert per["model"] == "openai/gpt-4o-mini"
 
 
 def test_served_model_omitted_when_same(client, monkeypatch):

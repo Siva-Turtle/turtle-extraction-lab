@@ -557,6 +557,171 @@ def _endpoint_entry(e: dict) -> dict:
     }
 
 
+# --- Decision models (OpenRouter /api/alpha/decisions) ------------------------
+
+DECISION_MODEL_PREFIXES = ("typesafe/jev-",)
+DECISION_MODEL_SUBSTRINGS = ("solar-decide",)
+
+
+def is_decision_model(model: str) -> bool:
+    """True when this model id must use the decisions endpoint.
+
+    Case-insensitive: True when the stripped id starts with a
+    DECISION_MODEL_PREFIXES entry or contains a DECISION_MODEL_SUBSTRINGS
+    entry. Anything else (blank, non-string, unknown) is False. Never raises.
+    """
+    try:
+        mid = model.strip().lower() if isinstance(model, str) else ""
+    except Exception:
+        return False
+    if not mid:
+        return False
+    try:
+        for prefix in DECISION_MODEL_PREFIXES:
+            if mid.startswith(prefix):
+                return True
+        for sub in DECISION_MODEL_SUBSTRINGS:
+            if sub in mid:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def build_decisions_payload(
+    *, model: str, state, questions: dict, provider: str | None = None,
+) -> dict:
+    """Build the EXACT JSON body POSTed to /api/alpha/decisions.
+
+    Pure function (no I/O, no secrets): ``{"model", "state", "questions"}``
+    plus ``{"provider": {"order": [value], "allow_fallbacks": False}}`` only
+    when ``provider`` is a non-blank string (same rule as chat).
+    Deterministic: same input -> byte-identical payload.
+    """
+    payload: dict = {"model": model, "state": state, "questions": questions}
+    prov = provider.strip() if isinstance(provider, str) else ""
+    if prov:
+        payload["provider"] = {"order": [prov], "allow_fallbacks": False}
+    return payload
+
+
+def _decisions_url() -> str:
+    """Decisions endpoint URL from the configured chat base URL.
+
+    ``{root}/api/alpha/decisions`` where ``{root}`` is
+    ``openrouter_base_url`` minus a trailing ``/v1`` (default base
+    ``https://openrouter.ai/api/v1`` ->
+    ``https://openrouter.ai/api/alpha/decisions``).
+    """
+    base = (settings.openrouter_base_url or "").rstrip("/")
+    if base.lower().endswith("/v1"):
+        base = base[: -len("/v1")]
+    return f"{base.rstrip('/')}/alpha/decisions"
+
+
+def _extract_decisions_usage(usage: object) -> dict:
+    """Normalize a decisions ``usage`` block; never raises.
+
+    Maps ``input_tokens``/``output_tokens``/``cost`` to the chat usage
+    shape (``total_tokens`` is derived as prompt + completion;
+    ``reasoning_tokens`` is always 0 and ``cost_details`` always None).
+    Missing/negative tokens become 0; absent/negative/unparseable cost
+    becomes None — the same zero/None rules as ``_extract_usage``.
+    """
+
+    def _safe_int(v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+            return n if n >= 0 else 0
+        except Exception:
+            return 0
+
+    def _safe_cost(v: object):
+        try:
+            if v is None:
+                return None
+            f = float(v)  # type: ignore[arg-type]
+            if not (f >= 0):
+                return None
+            import math as _math
+            if not _math.isfinite(f):
+                return None
+            return f
+        except Exception:
+            return None
+
+    prompt = 0
+    completion = 0
+    cost = None
+    try:
+        if isinstance(usage, dict):
+            prompt = _safe_int(usage.get("input_tokens"))
+            completion = _safe_int(usage.get("output_tokens"))
+            cost = _safe_cost(usage.get("cost"))
+    except Exception:
+        prompt, completion, cost = 0, 0, None
+    return {"prompt_tokens": prompt, "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+            "reasoning_tokens": 0, "cost": cost, "cost_details": None}
+
+
+async def complete_decisions_payload(payload: dict) -> tuple[dict, dict]:
+    """POST a prebuilt decisions payload and return (answers_dict, usage).
+
+    usage is always {"prompt_tokens": int, "completion_tokens": int,
+    "total_tokens": int, "reasoning_tokens": 0, "provider": str,
+    "cost": float|None, "cost_details": None, "served_model": str};
+    missing/partial ``usage`` blocks become zeros and never raise.
+    ``provider`` is the top-level response ``provider`` string ("" when
+    absent). ``cost`` is usage.cost (actual charge, None when
+    absent/negative/unparseable). ``served_model`` is the top-level
+    response ``model`` ("" when absent). OpenRouter JSON error bodies are
+    preserved exactly like ``complete_json_payload``.
+    """
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            _decisions_url(),
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Same envelope as chat ({"error": {"code", "message"}}) — keep
+            # the body verbatim so the real cause survives.
+            try:
+                detail = (resp.text or "").strip()
+            except Exception:
+                detail = ""
+            if detail:
+                raise RuntimeError(
+                    f"OpenRouter error {resp.status_code}: {detail[:2000]}"
+                ) from exc
+            raise
+        data = resp.json()
+
+    answers = data.get("answers") if isinstance(data, dict) else None
+    if not isinstance(answers, dict):
+        answers = {}
+    usage = _extract_decisions_usage(data.get("usage") if isinstance(data, dict) else None)
+    try:
+        prov = data.get("provider") if isinstance(data, dict) else ""
+    except Exception:
+        prov = ""
+    usage["provider"] = prov if isinstance(prov, str) else ""
+    try:
+        served = data.get("model") if isinstance(data, dict) else ""
+    except Exception:
+        served = ""
+    usage["served_model"] = served if isinstance(served, str) else ""
+    return answers, usage
+
+
 async def fetch_model_endpoints(model_id: str) -> list[dict]:
     """Return normalized provider endpoints for one model, or [].
 

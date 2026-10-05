@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, complete_json, complete_json_payload, get_model_pricing
+from app.core.openrouter import REASONING_EFFORTS, build_chat_payload, build_decisions_payload, complete_decisions_payload, complete_json, complete_json_payload, get_model_pricing, is_decision_model
 from app.db.models import Agent, Attribute, Feedback, Run, RunLog, agent_attributes
 from app.db.session import get_db
 from app.modules.logs.router import (
@@ -177,6 +177,60 @@ def normalize_identifier_output(parsed, _candidates=None) -> object:
             else:
                 out[k] = False
         else:
+            out[k] = False
+    return out
+
+
+def build_identifier_decisions_questions() -> dict:
+    """One noul question per IDENTIFIER_QUESTIONS entry (decisions API).
+
+    Keyed by question key: ``{"type": "noul", "instructions": "Q{i} (key):
+    question", "criteria": {"true": ..., "false": ...}}``. Pure function.
+    """
+    questions: dict = {}
+    for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
+        key = q["key"]
+        questions[key] = {
+            "type": "noul",
+            "instructions": f"Q{i} ({key}): {q['question']}",
+            "criteria": {
+                "true": "The CLIENT's own situation includes this, explicitly stated or clearly implied.",
+                "false": "Not mentioned for the client, or only someone else's situation.",
+            },
+        }
+    return questions
+
+
+def decisions_answers_to_bools(answers) -> object:
+    """Normalise a decisions answers dict to {key: bool} identifier answers.
+
+    True when the answer for a question key is a dict with
+    ``type == "noul"`` and a numeric ``noul >= 0.5``; missing keys and
+    unexpected types are False (never crash, never default True).
+    Non-dict inputs (and {"_error": ...} payloads) are returned untouched,
+    the same convention as ``normalize_identifier_output`` — so bools pass
+    through ``normalize_identifier_output`` unchanged downstream.
+    """
+    if not isinstance(answers, dict):
+        return answers
+    if "_error" in answers:
+        return answers
+    out: dict[str, bool] = {}
+    for q in IDENTIFIER_QUESTIONS:
+        k = q["key"]
+        try:
+            a = answers.get(k)
+            if isinstance(a, dict) and a.get("type") == "noul":
+                v = a.get("noul")
+                if isinstance(v, bool):
+                    out[k] = False
+                elif isinstance(v, (int, float)) and v >= 0.5:
+                    out[k] = True
+                else:
+                    out[k] = False
+            else:
+                out[k] = False
+        except Exception:
             out[k] = False
     return out
 
@@ -1068,21 +1122,36 @@ def _build_agent_requests(
                             "wrap_result": (False if _is_unwrapped(a) else True)} for a in attrs],
         }
         user_content = input_data
+        transport = ""
         if is_identifier(agent):
-            # Router path: code-owned 11-question prompt; strict boolean envelope.
-            system_content = _identifier_system_content(agent)
-            schema: dict | None = build_identifier_schema()
-            payload_body = build_chat_payload(
-                model=model, system=system_content, user=user_content,
-                json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
-                reasoning_effort=effort, provider=prov)
+            if is_decision_model(model):
+                # Decisions-model path: noul questions over the transcript.
+                # Reasoning effort is never sent here (it stays in the log
+                # column only). The stored body carries a "transport" marker
+                # that is stripped before POSTing.
+                payload_body = build_decisions_payload(
+                    model=model, state={"transcript": input_data},
+                    questions=build_identifier_decisions_questions(),
+                    provider=(prov if prov else None))
+                transport = "decisions"
+            else:
+                # Router path: code-owned 11-question prompt; strict boolean envelope.
+                system_content = _identifier_system_content(agent)
+                schema: dict | None = build_identifier_schema()
+                payload_body = build_chat_payload(
+                    model=model, system=system_content, user=user_content,
+                    json_schema=schema, schema_name=IDENTIFIER_SCHEMA_NAME,
+                    reasoning_effort=effort, provider=prov)
         else:
             system_content = _agent_system_content(agent, attrs)
             schema = build_extraction_schema(attrs)
             payload_body = build_chat_payload(
                 model=model, system=system_content, user=user_content, json_schema=schema,
                 reasoning_effort=effort, provider=prov)
-        requests[agent.id] = copy.deepcopy(payload_body)
+        stored_body = copy.deepcopy(payload_body)
+        if transport:
+            stored_body["transport"] = transport
+        requests[agent.id] = stored_body
     return snapshots, requests
 
 
@@ -1115,7 +1184,64 @@ async def _call_single_payload(payload_body: dict):
     None, None, ""). ``actual_cost`` is usage.cost (None when unknown);
     preferred over tokens x catalog price for dynamic routers.
     ``served_model`` is the top-level response model ("" when absent).
+    Decisions bodies (``transport == "decisions"``) go to
+    ``complete_decisions_payload`` (marker stripped before POST) and return
+    the same 10-tuple shape with ``reasoning_tokens = 0`` and
+    ``cost_details = None``.
     """
+    if isinstance(payload_body, dict) and payload_body.get("transport") == "decisions":
+        decide_start = perf_counter()
+        try:
+            clean_body = {k: v for k, v in payload_body.items() if k != "transport"}
+            answers, usage = await complete_decisions_payload(clean_body)
+            parsed = decisions_answers_to_bools(answers)
+            try:
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                total_tokens = int(usage.get("total_tokens", 0) or 0)
+            except Exception:
+                prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
+            if prompt_tokens < 0:
+                prompt_tokens = 0
+            if completion_tokens < 0:
+                completion_tokens = 0
+            if total_tokens < 0:
+                total_tokens = 0
+            reasoning_tokens = 0
+            try:
+                served = usage.get("provider", "") if isinstance(usage, dict) else ""
+            except Exception:
+                served = ""
+            if not isinstance(served, str):
+                served = ""
+            try:
+                actual = usage.get("cost") if isinstance(usage, dict) else None
+            except Exception:
+                actual = None
+            if not isinstance(actual, (int, float)):
+                actual = None
+            else:
+                try:
+                    import math as _math
+                    if not (_math.isfinite(float(actual)) and float(actual) >= 0):
+                        actual = None
+                    else:
+                        actual = float(actual)
+                except Exception:
+                    actual = None
+            details = None
+            try:
+                served_model = usage.get("served_model", "") if isinstance(usage, dict) else ""
+            except Exception:
+                served_model = ""
+            if not isinstance(served_model, str):
+                served_model = ""
+            duration_ms = (perf_counter() - decide_start) * 1000.0
+            return (parsed, prompt_tokens, completion_tokens, total_tokens,
+                    reasoning_tokens, duration_ms, served, actual, details, served_model)
+        except Exception as exc:
+            duration_ms = (perf_counter() - decide_start) * 1000.0
+            return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms, "", None, None, ""
     agent_start = perf_counter()
     try:
         parsed, usage = await complete_json_payload(payload_body)
@@ -1369,6 +1495,25 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     return outputs, per_agent
 
 
+def _request_match_key(body):
+    """Comparable request identity for reuse/check-existing matching.
+
+    Chat bodies compare by ``messages`` (exactly as before); decisions
+    bodies (no ``messages`` key) compare by
+    ``(model, state, questions)``. The decisions ``transport`` marker and
+    ``provider`` never affect matching (provider/effort are already
+    SQL-filtered per row). Non-dict inputs compare as-is.
+    """
+    try:
+        if isinstance(body, dict) and "messages" in body:
+            return body.get("messages")
+        if isinstance(body, dict):
+            return (body.get("model"), body.get("state"), body.get("questions"))
+        return body
+    except Exception:
+        return None
+
+
 def _resolve_valid_reuse(db: Session, agents: list[Agent], requests: dict,
                           reuse_map, model: str, effort: str, provider: str) -> dict:
     """Validate per-agent reuse entries like create_run (invalid ignored)."""
@@ -1390,10 +1535,9 @@ def _resolve_valid_reuse(db: Session, agents: list[Agent], requests: dict,
         if source is None:
             continue
         fresh_body = requests.get(agent.id)
-        fresh_msgs = fresh_body.get("messages") if isinstance(fresh_body, dict) else None
         if not _is_valid_reuse_source(
             source, agent_id=agent.id, model=model,
-            reasoning_effort=effort, expected_messages=fresh_msgs,
+            reasoning_effort=effort, expected_body=fresh_body,
             provider=provider,
         ):
             continue
@@ -1460,6 +1604,29 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
     by_id = agents_by_id or {a.id: a for a in fresh_agents}
 
     async def _one(agent):
+        # Decision models serve the identifier agent only: extraction agents
+        # fail with the identifier-only error WITHOUT an API call (no spend).
+        try:
+            _one_is_ident = bool(is_identifier(agent))
+        except Exception:
+            _one_is_ident = False
+        try:
+            _one_is_dec = bool(is_decision_model(model))
+        except Exception:
+            _one_is_dec = False
+        if _one_is_dec and not _one_is_ident:
+            _err_start = perf_counter()
+            _err_parsed = {"_error": "decision models support the identifier agent only"}
+            _err_dur = (perf_counter() - _err_start) * 1000.0
+            _err_entry = _per_agent_entry(0, 0, 0, 0, _err_dur, model, "", None, None, "")
+            try:
+                _err_msg = str(_err_parsed.get("_error", ""))
+            except Exception:
+                _err_msg = "agent failed"
+            return {"agent_id": agent.id,
+                    "agent_name": _agent_display_name(agent),
+                    "output": _err_parsed, "per_entry": _err_entry,
+                    "status": "error", "error": _err_msg, "reused": False}
         body = copy.deepcopy(requests.get(agent.id, {}))
         (parsed, pt, ct, tt, rt, dur, served,
          actual, details, served_model) = await _call_single_payload(body)
@@ -2009,14 +2176,16 @@ def _source_agent_info(log: RunLog, agent_id: str) -> tuple[str, float | None, f
 
 def _find_existing_log_for_agent(
     db: Session, *, model: str, reasoning_effort: str,
-    agent_id: str, expected_messages,
+    agent_id: str, expected_body,
     provider: str = "",
 ) -> RunLog | None:
     """Newest RunLog (same model+effort+provider) with a usable output for one agent.
 
     - SQL filter on model + reasoning_effort + provider, newest first, limit 300.
-    - ``log.requests[agent_id]["messages"]`` must equal the would-be-sent
-      messages. Other agents in the log do not matter (any agent mix).
+    - The stored request for this agent must match the would-be-sent body
+      (``_request_match_key``: chat compares ``messages``, decisions
+      compares ``(model, state, questions)``). Other agents in the log do
+      not matter (any agent mix).
     - ``log.outputs[agent_id]`` must exist, be a dict, and have no "_error".
     """
     effort = (reasoning_effort or "").strip()
@@ -2041,7 +2210,7 @@ def _find_existing_log_for_agent(
         stored_body = stored_reqs.get(agent_id)
         if not isinstance(stored_body, dict):
             continue
-        if stored_body.get("messages") != expected_messages:
+        if _request_match_key(stored_body) != _request_match_key(expected_body):
             continue
         outs = log.outputs or {}
         if not isinstance(outs, dict):
@@ -2057,7 +2226,7 @@ def _find_existing_log_for_agent(
 
 def _is_valid_reuse_source(
     source: RunLog, *, agent_id: str, model: str,
-    reasoning_effort: str, expected_messages,
+    reasoning_effort: str, expected_body,
     provider: str = "",
 ) -> bool:
     """Same rule as per-agent matching (server-side reuse validation)."""
@@ -2075,7 +2244,7 @@ def _is_valid_reuse_source(
         stored_body = stored_reqs.get(agent_id)
         if not isinstance(stored_body, dict):
             return False
-        if stored_body.get("messages") != expected_messages:
+        if _request_match_key(stored_body) != _request_match_key(expected_body):
             return False
         outs = getattr(source, "outputs", None) or {}
         if not isinstance(outs, dict):
@@ -2152,11 +2321,12 @@ def _find_existing_log(
     db: Session, *, model: str, reasoning_effort: str, expected_requests: dict,
     provider: str = "",
 ) -> RunLog | None:
-    """Newest RunLog with this model/effort/provider whose requests messages match.
+    """Newest RunLog with this model/effort/provider whose requests match.
 
     - SQL filter on model + reasoning_effort + provider, newest first, limit 200.
     - set(log.requests keys) must equal set(expected agent ids).
-    - every agent's stored messages must equal the would-be-sent messages.
+    - every agent's stored body must match the would-be-sent body
+      (``_request_match_key``).
     - not every output may carry _error (at least one success required).
     """
     effort = (reasoning_effort or "").strip()
@@ -2187,7 +2357,7 @@ def _find_existing_log(
             if not isinstance(stored_body, dict) or not isinstance(expected_body, dict):
                 same = False
                 break
-            if stored_body.get("messages") != expected_body.get("messages"):
+            if _request_match_key(stored_body) != _request_match_key(expected_body):
                 same = False
                 break
         if not same:
@@ -2628,10 +2798,9 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
         slot_agents: list[dict] = []
         for agent in agents:
             exp_body = expected_requests.get(agent.id)
-            exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
             log = _find_existing_log_for_agent(
                 db, model=model, reasoning_effort=effort,
-                agent_id=agent.id, expected_messages=exp_msgs,
+                agent_id=agent.id, expected_body=exp_body,
                 provider=prov)
             if log is None:
                 continue
@@ -2652,15 +2821,15 @@ def check_existing(payload: CheckExistingIn, db: Session = Depends(get_db)):
 
 def _find_existing_auto_log(
     db: Session, *, model: str, reasoning_effort: str,
-    identifier_id: str, expected_messages,
+    identifier_id: str, expected_body,
     provider: str = "",
 ) -> RunLog | None:
     """Newest auto RunLog (same model+effort+provider) matching the identifier request.
 
     - SQL filter on model + reasoning_effort + provider, newest first, limit 300.
     - ``consistency`` must be a dict with ``auto is True``.
-    - ``requests[identifier_id]["messages"]`` must equal the would-be-sent
-      identifier messages (other agents in the log do not matter).
+    - ``requests[identifier_id]`` must match the would-be-sent identifier
+      body (``_request_match_key``; other agents in the log do not matter).
     - ``outputs[identifier_id]`` must exist, be a dict, and have no "_error".
     """
     effort = (reasoning_effort or "").strip()
@@ -2698,7 +2867,7 @@ def _find_existing_auto_log(
                 stored_body = stored_reqs.get(identifier_id)
             if not isinstance(stored_body, dict):
                 continue
-        if stored_body.get("messages") != expected_messages:
+        if _request_match_key(stored_body) != _request_match_key(expected_body):
             continue
         outs = getattr(log, "outputs", None) or {}
         if not isinstance(outs, dict):
@@ -2776,10 +2945,9 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
             db, agents=[identifier], input_data=resolved_data,
             model=model, reasoning_effort=effort, provider=prov)
         exp_body = expected_requests.get(ident_id)
-        exp_msgs = exp_body.get("messages") if isinstance(exp_body, dict) else None
         log = _find_existing_auto_log(
             db, model=model, reasoning_effort=effort,
-            identifier_id=ident_id, expected_messages=exp_msgs,
+            identifier_id=ident_id, expected_body=exp_body,
             provider=prov)
         slot_agents: list[dict] = []
         try:
@@ -2791,10 +2959,9 @@ def check_existing_auto(payload: CheckExistingIn, db: Session = Depends(get_db))
                 for ag in always_agents:
                     try:
                         exp_b = always_requests.get(ag.id)
-                        exp_m = exp_b.get("messages") if isinstance(exp_b, dict) else None
                         found = _find_existing_log_for_agent(
                             db, model=model, reasoning_effort=effort,
-                            agent_id=ag.id, expected_messages=exp_m,
+                            agent_id=ag.id, expected_body=exp_b,
                             provider=prov)
                     except Exception:
                         found = None
@@ -3105,9 +3272,7 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
     if not agent_id or not isinstance(stored_requests.get(agent_id), dict):
         raise HTTPException(400, "agent_id has no stored request")
     stored_body = copy.deepcopy(stored_requests[agent_id])
-    (parsed, pt, ct, tt, rt, dur, served,
-     actual_cost, cost_details, served_model) = await _call_single_payload(stored_body)
-    # Identifier normalisation when the retried agent is the identifier.
+    # Identifier detection (also used for normalisation below).
     try:
         snap_kind = ""
         snaps = log.agent_snapshot if isinstance(getattr(log, "agent_snapshot", None), dict) else {}
@@ -3119,6 +3284,26 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
             row = db.query(Agent).filter(Agent.id == agent_id).first()
             if row is not None:
                 is_ident = is_identifier(row)
+    except Exception:
+        is_ident = False
+    try:
+        retry_is_decision = bool(is_decision_model(log.model or ""))
+    except Exception:
+        retry_is_decision = False
+    if (retry_is_decision and not is_ident
+            and not (isinstance(stored_body, dict)
+                     and stored_body.get("transport") == "decisions")):
+        # Decision models serve the identifier agent only: fail without an
+        # API call (no spend), same per-agent entry shape as other errors.
+        (parsed, pt, ct, tt, rt, dur, served,
+         actual_cost, cost_details, served_model) = (
+            {"_error": "decision models support the identifier agent only"},
+            0, 0, 0, 0, 0.0, "", None, None, "")
+    else:
+        (parsed, pt, ct, tt, rt, dur, served,
+         actual_cost, cost_details, served_model) = await _call_single_payload(stored_body)
+    # Identifier normalisation when the retried agent is the identifier.
+    try:
         if is_ident and isinstance(parsed, dict) and "_error" not in parsed:
             parsed = normalize_identifier_output(parsed)
     except Exception:
