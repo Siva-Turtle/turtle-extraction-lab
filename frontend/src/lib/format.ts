@@ -54,12 +54,13 @@ export function selectedAgentsOf(out: unknown): string[] | null {
     .filter((s) => s !== "");
 }
 
-/** Fixed 11 identifier question keys (v2 routing). */
+/** Fixed 12 identifier question keys (v2 routing). */
 export const IDENTIFIER_QUESTION_KEYS = [
   "has_assets",
   "has_accounts",
   "credit_cards",
   "employment_changed",
+  "employment_status_changed",
   "alumni",
   "expenses",
   "goals",

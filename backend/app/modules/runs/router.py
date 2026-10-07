@@ -68,7 +68,7 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 # --- Agent Identifier meta-agent (kind == "identifier") -------------------
-# The identifier answers 11 fixed yes/no questions about the CLIENT's own
+# The identifier answers 12 fixed yes/no questions about the CLIENT's own
 # situation, then deterministic routing rules (plan_auto_agents) select
 # extraction agents. The prompt is code-owned: the identifier agent's stored
 # system_instruction in the DB is IGNORED. Prompt is built at
@@ -87,7 +87,9 @@ IDENTIFIER_QUESTIONS: list[dict] = [
     {"key": "credit_cards",
      "question": "Did the Client mention that they have or don't have credit card(s)?"},
     {"key": "employment_changed",
-     "question": "Did the Client mention that their employment status or current employer has changed (they have switched company)?"},
+     "question": "Did the Client mention that they have switched company?"},
+    {"key": "employment_status_changed",
+     "question": "Did the Client mention that their employment status has changed?"},
     {"key": "alumni",
      "question": "Did the Client mention anything regarding their old organisation or institution - them being any sort of alumni?"},
     {"key": "expenses",
@@ -101,7 +103,7 @@ IDENTIFIER_QUESTIONS: list[dict] = [
     {"key": "liabilities",
      "question": "Did the Client mention anything related to their Liabilities? (Like credit card debt, education loan, gold loan, home loan, personal loan, vehicle loan or any other loan)"},
     {"key": "tax",
-     "question": 'Did the Client mention anything related to "Advance Tax, Rental TDS, tax filing in India, tax filing outside India, GST services, W8 BEN"'},
+     "question": "Is any of these applicable for the client - Advance Tax, Rental TDS, tax filing in India, tax filing outside India, GST services, W8 BEN?"},
 ]
 
 IDENTIFIER_INSTRUCTION = (
@@ -156,7 +158,7 @@ IDENTIFIER_EVIDENCE_INSTRUCTION = (
 
 
 def _identifier_system_content(agent: Agent, _ignored=None) -> str:
-    """System prompt for the identifier: code-owned instruction + 11 questions.
+    """System prompt for the identifier: code-owned instruction + 12 questions.
 
     The identifier agent's stored system_instruction is IGNORED. The
     optional second arg exists only for backward compatibility with old
@@ -262,7 +264,7 @@ def split_identifier_result(parsed, transport="chat", n_chunks=0) -> tuple:
     """Split a raw identifier answer into (bools, evidence, probs).
 
     - decisions: ``parsed`` is the RAW answers dict. Bools come from
-      ``decisions_answers_to_bools`` on the 11 base keys (``__evidence``
+      ``decisions_answers_to_bools`` on the 12 base keys (``__evidence``
       keys are ignored there). ``evidence[key]`` is ``int(choice)`` from
       ``{key}__evidence`` (``type == "choice"`` with a string choice in
       1..N) when the bool is True, else None (missing/wrong-type /
@@ -563,7 +565,9 @@ def plan_auto_agents(
                                "reasons": reasons, "scored": False})
             else:
                 need_cc = _answer_true(answers, "credit_cards")
-                need_emp = _answer_true(answers, "employment_changed")
+                need_emp_changed = _answer_true(answers, "employment_changed")
+                need_emp_status = _answer_true(answers, "employment_status_changed")
+                need_emp = need_emp_changed or need_emp_status
                 need_al = _answer_true(answers, "alumni")
                 if need_cc or need_emp or need_al:
                     allowed: set[str] = set()
@@ -578,8 +582,10 @@ def plan_auto_agents(
                         rs: list[str] = []
                         if need_cc:
                             rs.append("credit_cards")
-                        if need_emp:
+                        if need_emp_changed:
                             rs.append("employment_changed")
+                        if need_emp_status:
+                            rs.append("employment_status_changed")
                         if need_al:
                             rs.append("alumni")
                         result.append({"agent": _bi_ag, "attribute_ids": sub_ids,
@@ -716,7 +722,7 @@ def _is_filled_entry(entry) -> bool:
 def compute_consistency(answers, outputs, identifier_agent_id="", plan=None) -> dict:
     """Pure consistency v2 snapshot for an auto-select run.
 
-    - answers: normalized {key: bool} (11 questions).
+    - answers: normalized {key: bool} (12 questions).
     - outputs: {agent_id: output dict}.
     - identifier_agent_id: str.
     - plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
@@ -1333,7 +1339,7 @@ def _build_agent_requests(
                     provider=(prov if prov else None))
                 transport = "decisions"
             else:
-                # Router path: code-owned 11-question prompt; strict
+                # Router path: code-owned 12-question prompt; strict
                 # {value, evidence} envelope over the numbered chunks.
                 system_content = _identifier_system_content(agent)
                 schema: dict | None = build_identifier_schema()
@@ -1691,7 +1697,7 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     """Run per-agent payloads concurrently (shared machinery).
 
     Returns (outputs, per_agent, evidence, probs) with costs None; caller
-    prices + totals. Identifier outputs are normalised to 11 yes/no answers
+    prices + totals. Identifier outputs are normalised to 12 yes/no answers
     via split_identifier_result + normalize_identifier_output; the
     per-agent chunk-evidence / noul-probability sidecars land in
     ``evidence``/``probs`` ({agent_id: {question_key: ...}}, identifier
@@ -3393,7 +3399,7 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
 
 @router.post("/auto")
 async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
-    """Auto Select Agents: 11 yes/no questions, then deterministic routing.
+    """Auto Select Agents: 12 yes/no questions, then deterministic routing.
 
     One log per call (one model). Body is RunCreate minus agent_ids
     (those are ignored); ``reuse`` ({agent_id: source_log_id}) is honoured

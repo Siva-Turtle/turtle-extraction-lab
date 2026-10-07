@@ -90,12 +90,13 @@ npm run dev
 
 ## Auto Select Agents
 
-`POST /runs/auto` runs the Agent Identifier (11 fixed yes/no questions about
+`POST /runs/auto` runs the Agent Identifier (12 fixed yes/no questions about
 the CLIENT's own situation) then deterministic routing (`plan_auto_agents`):
 
 - `has_assets` → `asset`, `has_accounts` → `account`, `expenses` → `expense`,
   `goals` → `goal`, `income` → `income`, `liabilities` → `liability` (all attrs).
-- `credit_cards` → `basic_info` Banking, `employment_changed` → Employment,
+- `credit_cards` → `basic_info` Banking, `employment_changed` /
+  `employment_status_changed` → Employment,
   `alumni` → Education / Alumni (subset, DB order).
 - `insurance` → `insurance` (all attrs); `tax` → `tax` (all attrs);
   both → `tax_and_insurance` (all attrs). Fallback to the combined subset

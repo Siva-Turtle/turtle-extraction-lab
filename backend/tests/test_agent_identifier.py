@@ -1,4 +1,4 @@
-"""Coverage: Agent Identifier 11 yes/no questions + deterministic routing."""
+"""Coverage: Agent Identifier 12 yes/no questions + deterministic routing."""
 
 import app.modules.runs.router as runs_router
 from app.core.openrouter import build_chat_payload
@@ -30,6 +30,7 @@ def test_identifier_questions_order_and_text():
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
     assert keys == [
         "has_assets", "has_accounts", "credit_cards", "employment_changed",
+        "employment_status_changed",
         "alumni", "expenses", "goals", "income", "insurance",
         "liabilities", "tax",
     ]
@@ -41,9 +42,13 @@ def test_identifier_questions_order_and_text():
         "REITS, unlisted stocks or any other asset type)")
     assert by_key["credit_cards"] == (
         "Did the Client mention that they have or don't have credit card(s)?")
+    assert by_key["employment_changed"] == (
+        "Did the Client mention that they have switched company?")
+    assert by_key["employment_status_changed"] == (
+        "Did the Client mention that their employment status has changed?")
     assert by_key["tax"] == (
-        'Did the Client mention anything related to "Advance Tax, Rental TDS, '
-        'tax filing in India, tax filing outside India, GST services, W8 BEN"')
+        "Is any of these applicable for the client - Advance Tax, Rental TDS, "
+        "tax filing in India, tax filing outside India, GST services, W8 BEN?")
 
 
 def test_identifier_schema_shape():
@@ -91,7 +96,7 @@ def test_identifier_system_content_code_owned():
     assert "true or false" in system.lower()
     assert "CLIENT" in system
     assert "strictly" in system.lower()
-    # Numbered list Q1..Q11.
+    # Numbered list Q1..Q12.
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         assert f"Q{i} ({q['key']}): {q['question']}" in system
     # No candidate roster.
@@ -115,9 +120,9 @@ def test_identifier_preview_branch(client):
     }
     assert "Turtle Finance" in body["system"]
     assert "Q1 (has_assets)" in body["system"]
-    assert "Q11 (tax)" in body["system"]
+    assert "Q12 (tax)" in body["system"]
     assert body["candidates"] == []
-    assert len(body["questions"]) == 11
+    assert len(body["questions"]) == 12
 
     plain = client.get(f"/api/v1/agents/{kc['id']}/prompt-preview").json()
     assert plain["response_format"]["json_schema"]["name"] == "meeting_extraction"
@@ -314,6 +319,27 @@ def test_plan_employment_only_subset():
     assert bi["scored"] is True
     fb = next(e for e in plan if e["agent"].name == "feedback")
     assert fb["attribute_ids"] is None
+
+    # employment_status_changed alone also routes to Employment.
+    by_name2, attrs_by2 = _plan_setup()
+    ans2 = _false_answers()
+    ans2["employment_status_changed"] = True
+    plan2 = plan_auto_agents(ans2, "Quarterly Review", by_name2, attrs_by2)
+    bi2 = next(e for e in plan2 if e["agent"].name == "basic_info")
+    assert bi2["attribute_ids"] == ["bi-emp"]
+    assert bi2["reasons"] == ["employment_status_changed"]
+    assert bi2["scored"] is True
+
+    # Both true -> single Employment subset with both reasons.
+    by_name3, attrs_by3 = _plan_setup()
+    ans3 = _false_answers()
+    ans3["employment_changed"] = True
+    ans3["employment_status_changed"] = True
+    plan3 = plan_auto_agents(ans3, "Quarterly Review", by_name3, attrs_by3)
+    bi3 = next(e for e in plan3 if e["agent"].name == "basic_info")
+    assert bi3["attribute_ids"] == ["bi-emp"]
+    assert bi3["reasons"] == ["employment_changed", "employment_status_changed"]
+    assert bi3["scored"] is True
 
 
 def test_plan_credit_cards_only():

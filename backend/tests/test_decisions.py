@@ -84,7 +84,7 @@ def test_build_decisions_payload_without_provider():
 def test_build_identifier_decisions_questions_shape():
     questions = build_identifier_decisions_questions()
     assert set(questions) == {q["key"] for q in IDENTIFIER_QUESTIONS}
-    assert len(questions) == 11
+    assert len(questions) == 12
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         entry = questions[q["key"]]
         assert entry["type"] == "noul"
@@ -125,7 +125,7 @@ def _fake_decisions_client(monkeypatch, *, status=200, body=None, seen=None):
     return seen
 
 
-def _eleven_answers():
+def _twelve_answers():
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
     answers = {k: {"type": "noul", "noul": 0.9} for k in keys}
     return answers
@@ -133,7 +133,7 @@ def _eleven_answers():
 
 def test_decisions_success_maps_bools_and_usage(monkeypatch):
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
-    answers = _eleven_answers()
+    answers = _twelve_answers()
     answers[keys[0]] = {"type": "noul", "noul": 0.5}  # threshold -> True
     answers[keys[1]] = {"type": "noul", "noul": 0.49}  # below -> False
     answers[keys[2]] = {"type": "choice", "choice": "yes"}  # wrong type -> False
@@ -379,7 +379,7 @@ def _chunks(n):
 def test_decisions_questions_with_chunks_add_evidence_scores():
     questions = build_identifier_decisions_questions(_chunks(3))
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
-    assert len(questions) == 22
+    assert len(questions) == 24
     for k in keys:
         assert questions[k]["type"] == "noul"
         ev = questions[f"{k}__evidence"]
@@ -390,10 +390,10 @@ def test_decisions_questions_with_chunks_add_evidence_scores():
         assert ev["criteria"] == {"1": "chunk 1", "2": "chunk 2", "3": "chunk 3"}
 
 
-def test_decisions_questions_without_chunks_stays_eleven():
-    # Backward compat: no chunks -> only the 11 noul questions.
-    assert len(build_identifier_decisions_questions()) == 11
-    assert len(build_identifier_decisions_questions([])) == 11
+def test_decisions_questions_without_chunks_stays_twelve():
+    # Backward compat: no chunks -> only the 12 noul questions.
+    assert len(build_identifier_decisions_questions()) == 12
+    assert len(build_identifier_decisions_questions([])) == 12
 
 
 def test_split_decisions_evidence_round_clamp_ignore_when_false():

@@ -97,7 +97,7 @@ def prompt_preview(agent_id: str, db: Session = Depends(get_db)):
     if not row:
         raise HTTPException(404, "agent not found")
     if is_identifier(row):
-        # Router preview: code-owned 11-question prompt (DB instruction
+        # Router preview: code-owned 12-question prompt (DB instruction
         # ignored) + strict boolean envelope. No candidate roster.
         system = _identifier_system_content(row)
         schema = build_identifier_schema()
