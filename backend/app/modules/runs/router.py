@@ -236,15 +236,219 @@ def build_identifier_decisions_questions(chunks=None) -> dict:
     except Exception:
         n = 0
     if n > 0:
-        criteria = {str(i): f"chunk {i}" for i in range(1, n + 1)}
+        # Criteria use each chunk's GLOBAL number (chunk["n"]), not its
+        # position in this list, so per-window questions (split fan-out
+        # below) cite chunk numbers that stay valid in the review UI. For
+        # the full chunk list the numbers are 1..n contiguous, identical
+        # to the old positional criteria.
+        nums: list[int] = []
+        for idx, c in enumerate(list(chunks or []), start=1):
+            try:
+                v = c.get("n") if isinstance(c, dict) else None
+                if isinstance(v, bool):
+                    raise ValueError
+                v = int(v)  # type: ignore[arg-type]
+                nums.append(v if v >= 1 else idx)
+            except Exception:
+                nums.append(idx)
+        criteria = {str(v): f"chunk {v}" for v in nums}
+        lo, hi = min(nums), max(nums)
         for q in IDENTIFIER_QUESTIONS:
             key = q["key"]
             questions[f"{key}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {
                 "type": "choice",
-                "instructions": f"Which transcript chunk (1..{n}) best supports a true answer to {key}? Reply with the chunk number.",
+                "instructions": f"Which transcript chunk ({lo}..{hi}) best supports a true answer to {key}? Reply with the chunk number.",
                 "criteria": dict(criteria),
             }
     return questions
+
+
+# --- Decisions 3-window fan-out (oversized identifier states) -----------------
+# Live proof: a 49-chunk / ~88k-char scrubbed state fails with
+# max_tokens_exceeded on typesafe/jev-1.13 (single 1.3s call, zero usage),
+# while ~50-chunk smaller states pass. Above DECISIONS_SPLIT_STATE_CHARS the
+# GLOBAL chunk list is split into 3 overlapping windows with one decisions
+# call per window (sequential); small states keep a single call exactly as
+# today (byte-identical bodies, no split markers).
+DECISIONS_SPLIT_STATE_CHARS = 80000
+
+
+def _decisions_state_chars(chunks) -> int:
+    """Total characters across chunk texts (split-threshold measure)."""
+    total = 0
+    try:
+        for c in chunks or []:
+            try:
+                t = c.get("text") if isinstance(c, dict) else ""
+            except Exception:
+                t = ""
+            if isinstance(t, str):
+                total += len(t)
+    except Exception:
+        pass
+    return total
+
+
+def _decisions_window_bounds(n) -> tuple | None:
+    """(k1, k2, k3, k4) 1-based inclusive window bounds for N chunks.
+
+    - P1 (large start) = chunks 1..k1
+    - P2 (short overlap middle) = chunks k2..k3
+    - P3 (large end) = chunks k4..N
+    Base formula (exact integer arithmetic, no float drift):
+    k1 = ceil(3N/5), k2 = floor(2N/5), k3 = ceil(7N/10), k4 = floor(11N/20)
+    (i.e. ceil(0.6N), floor(0.4N), ceil(0.7N), floor(0.55N)), then repaired
+    with clamps so 1 <= k2 < k1 < k3 <= N and k2 < k4 < k3: each window is
+    non-empty, P1/P3 overlap P2, and 1..N is fully covered. The clamps are
+    identity when the raw formula already satisfies the invariants (all
+    large N, e.g. N=49 -> (30, 19, 35, 26)). Returns None when N < 3 (strict
+    overlap is impossible; caller keeps the single call).
+    """
+    try:
+        n = int(n)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    if isinstance(n, bool) or n < 3:
+        return None
+    k1 = (3 * n + 4) // 5
+    k2 = (2 * n) // 5
+    k3 = (7 * n + 9) // 10
+    k4 = (11 * n) // 20
+    k1 = min(max(k1, 2), n - 1)
+    k2 = min(max(k2, 1), k1 - 1)
+    k3 = min(max(k3, k1 + 1), n)
+    k4 = min(max(k4, k2 + 1), k3 - 1)
+    return (k1, k2, k3, k4)
+
+
+def _parse_split_formula(value, n) -> tuple | None:
+    """Parse a stored ``split_formula`` ("k1,k2,k3,k4") back to bounds.
+
+    Returns None unless the four ints satisfy the window invariants
+    against ``n`` (the full chunk count). Never raises.
+    """
+    try:
+        n = int(n)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    try:
+        parts = str(value).split(",")
+        if len(parts) != 4:
+            return None
+        k1, k2, k3, k4 = (int(p.strip()) for p in parts)
+    except Exception:
+        return None
+    try:
+        if not (1 <= k2 < k1 < k3 <= n and k2 < k4 < k3):
+            return None
+    except Exception:
+        return None
+    return (k1, k2, k3, k4)
+
+
+def _merge_decisions_window_answers(ok_answers: list, n_chunks: int) -> dict:
+    """Merge successful per-window RAW answers (P1, P2, P3 order) into one.
+
+    Per question key: bool = OR of window bools; evidence = the global
+    chunk number from the FIRST window (P1, P2, P3 order) whose bool is
+    True (None when all false); prob = max noul float across windows (None
+    when absent everywhere). Each window is split with the GLOBAL chunk
+    count so evidence stays globally valid. The merged dict is a synthetic
+    RAW answers dict (noul floats + choice ints) that re-splits to exactly
+    these merged values via split_identifier_result. Pure; never raises.
+    """
+    try:
+        n = _coerce_n_chunks(n_chunks)
+    except Exception:
+        n = 0
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    per_window: list = []
+    try:
+        for answers in ok_answers or []:
+            try:
+                if not isinstance(answers, dict) or "_error" in answers:
+                    continue
+                bools, ev, pr = split_identifier_result(answers, "decisions", n)
+                if not isinstance(bools, dict):
+                    continue
+                per_window.append((bools, ev if isinstance(ev, dict) else {},
+                                   pr if isinstance(pr, dict) else {}))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    merged_bools: dict = {}
+    merged_ev: dict = {}
+    merged_pr: dict = {}
+    for k in keys:
+        b = False
+        e = None
+        p = None
+        for (wb, we, wp) in per_window:
+            try:
+                if wb.get(k) is True and not b:
+                    # First-true window decides the evidence (may be None
+                    # when that window cited nothing usable).
+                    b = True
+                    try:
+                        e = we.get(k)
+                    except Exception:
+                        e = None
+                elif wb.get(k) is True:
+                    b = True
+            except Exception:
+                pass
+            try:
+                q = wp.get(k)
+                if isinstance(q, bool):
+                    continue
+                if isinstance(q, (int, float)):
+                    import math as _math
+                    f = float(q)
+                    if _math.isfinite(f) and (p is None or f > p):
+                        p = f
+            except Exception:
+                pass
+        merged_bools[k] = b
+        merged_ev[k] = e
+        merged_pr[k] = p
+    raw: dict = {}
+    for k in keys:
+        try:
+            b = bool(merged_bools[k])
+            p = merged_pr[k]
+            if isinstance(p, bool):
+                p = None
+            if not b and p is None:
+                # False everywhere with no noul anywhere: omit the key so
+                # re-splitting gives False/None/None (a noul 0.0 would
+                # wrongly surface as prob 0.0 instead of None).
+                continue
+            if isinstance(p, (int, float)):
+                noul = float(p)
+            else:
+                noul = 1.0 if b else 0.0
+            raw[k] = {"type": "noul", "noul": noul}
+            if not b:
+                continue
+            e = merged_ev[k]
+            if isinstance(e, bool):
+                e = None
+            if isinstance(e, int) and 1 <= e <= max(n, 1):
+                raw[f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {"type": "choice", "choice": e}
+            elif isinstance(e, str) and e.strip() != "":
+                try:
+                    iv = int(e.strip())
+                    if 1 <= iv <= max(n, 1):
+                        raw[f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {"type": "choice", "choice": iv}
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                raw[k] = {"type": "noul", "noul": 1.0 if merged_bools.get(k) else 0.0}
+            except Exception:
+                pass
+    return raw
 
 
 def _coerce_n_chunks(n_chunks) -> int:
@@ -1284,7 +1488,10 @@ def _build_agent_requests(
     ONLY sees the numbered chunks — chat user content becomes
     ``format_chunks_numbered(chunks)`` and decisions state becomes
     ``{"chunks": [...]}`` — while extraction agents keep the raw input
-    byte-identical.
+    byte-identical. Oversized decisions states (chars >
+    ``DECISIONS_SPLIT_STATE_CHARS``) store the FIRST window's body plus
+    ``split_windows``/``split_formula`` markers; small states stay
+    byte-identical with no split markers.
     """
     effort = (reasoning_effort or "").strip()
     prov = (provider or "").strip() if isinstance(provider, str) else ""
@@ -1324,6 +1531,7 @@ def _build_agent_requests(
         }
         user_content = input_data
         transport = ""
+        split_markers: dict = {}
         if is_identifier(agent):
             if is_decision_model(model):
                 # Decisions-model path: noul questions over the SAME numbered
@@ -1332,11 +1540,35 @@ def _build_agent_requests(
                 # sent here (it stays in the log column only). The stored
                 # body carries a "transport" marker that is stripped before
                 # POSTing.
-                payload_body = build_decisions_payload(
-                    model=model, state={"chunks": [dict(c) for c in shared_chunks
-                                                  if isinstance(c, dict)]},
-                    questions=build_identifier_decisions_questions(shared_chunks),
-                    provider=(prov if prov else None))
+                state_chunks = [dict(c) for c in shared_chunks if isinstance(c, dict)]
+                bounds = None
+                try:
+                    if _decisions_state_chars(state_chunks) > DECISIONS_SPLIT_STATE_CHARS:
+                        bounds = _decisions_window_bounds(len(state_chunks))
+                except Exception:
+                    bounds = None
+                if bounds is not None:
+                    # Oversized state: store the FIRST window's body plus
+                    # split markers (same marker pattern as "transport").
+                    # The per-window bodies cannot all fit requests[agent_id]
+                    # (single dict); the call layer rebuilds P2/P3 from the
+                    # full chunks + split_formula. Same meeting + same
+                    # chunker + same threshold = identical first-window body,
+                    # so _request_match_key keeps working (it ignores the
+                    # markers, like "transport").
+                    k1, k2, k3, k4 = bounds
+                    first = state_chunks[0:k1]
+                    payload_body = build_decisions_payload(
+                        model=model, state={"chunks": first},
+                        questions=build_identifier_decisions_questions(first),
+                        provider=(prov if prov else None))
+                    split_markers = {"split_windows": 3,
+                                     "split_formula": f"{k1},{k2},{k3},{k4}"}
+                else:
+                    payload_body = build_decisions_payload(
+                        model=model, state={"chunks": state_chunks},
+                        questions=build_identifier_decisions_questions(shared_chunks),
+                        provider=(prov if prov else None))
                 transport = "decisions"
             else:
                 # Router path: code-owned 12-question prompt; strict
@@ -1358,6 +1590,8 @@ def _build_agent_requests(
         stored_body = copy.deepcopy(payload_body)
         if transport:
             stored_body["transport"] = transport
+        if split_markers:
+            stored_body.update(split_markers)
         requests[agent.id] = stored_body
     return snapshots, requests
 
@@ -1391,7 +1625,155 @@ def _plan_run(
             snapshots, requests, chunks, fireflies_url)
 
 
-async def _call_single_payload(payload_body: dict):
+async def _call_decisions_split(stored_body: dict, chunks):
+    """Run the 3 sequential decisions calls for an oversized identifier state.
+
+    ``stored_body`` is the FIRST window's stored body (with ``transport``,
+    ``split_windows`` and ``split_formula`` markers); ``chunks`` is the FULL
+    global chunk list. P1 is POSTed byte-identical to the stored body minus
+    markers; P2/P3 reuse its model/provider keys with windowed state +
+    window-limited questions. Returns the same 10-tuple as
+    ``_call_single_payload``'s decisions branch, or None when the split
+    cannot run (bad markers/chunks) so the caller falls back to a single
+    call of the stored body. Merging: per-key OR-bool / first-true evidence
+    / max-prob via ``_merge_decisions_window_answers``; usage sums tokens
+    and cost, duration sums, provider/served_model come from the first
+    successful window; some-ok adds ``"partial": True`` to the merged raw
+    answers; all-failed returns ``{"_error": <last error>}``. Never raises.
+    """
+    try:
+        if not isinstance(stored_body, dict):
+            return None
+        if stored_body.get("split_windows") != 3:
+            return None
+        try:
+            items = list(chunks) if isinstance(chunks, (list, tuple)) else []
+        except Exception:
+            return None
+        n = len(items)
+        bounds = _parse_split_formula(stored_body.get("split_formula"), n)
+        if bounds is None:
+            return None
+        k1, k2, k3, k4 = bounds
+        try:
+            clean = {k: v for k, v in stored_body.items()
+                     if k not in ("transport", "split_windows", "split_formula")}
+        except Exception:
+            return None
+        ranges = [(1, k1), (k2, k3), (k4, n)]
+        bodies: list[dict] = []
+        for idx, (s, e) in enumerate(ranges):
+            try:
+                win = [dict(c) for c in items[s - 1:e] if isinstance(c, dict)]
+            except Exception:
+                return None
+            if not win:
+                return None
+            if idx == 0:
+                bodies.append(clean)
+            else:
+                try:
+                    bodies.append(dict(clean, state={"chunks": win},
+                                       questions=build_identifier_decisions_questions(win)))
+                except Exception:
+                    return None
+        results: list = []
+        for body in bodies:
+            t0 = perf_counter()
+            try:
+                ans, use = await complete_decisions_payload(body)
+                dur = (perf_counter() - t0) * 1000.0
+                if isinstance(ans, dict) and "_error" not in ans:
+                    results.append((ans, use if isinstance(use, dict) else {}, dur, None))
+                else:
+                    try:
+                        msg = str(ans.get("_error", "")) if isinstance(ans, dict) else ""
+                    except Exception:
+                        msg = ""
+                    results.append((None, {}, dur, msg or "invalid decisions answers"))
+            except Exception as exc:
+                dur = (perf_counter() - t0) * 1000.0
+                try:
+                    msg = str(exc) or "decisions call failed"
+                except Exception:
+                    msg = "decisions call failed"
+                results.append((None, {}, dur, msg))
+        try:
+            dur_sum = float(sum(float(r[2]) for r in results))
+        except Exception:
+            dur_sum = 0.0
+        ok = [(a, u) for (a, u, _d, e) in results if e is None]
+        if not ok:
+            try:
+                last_err = str(results[-1][3]) if results else "decisions call failed"
+            except Exception:
+                last_err = "decisions call failed"
+            return ({"_error": last_err or "decisions call failed"},
+                    0, 0, 0, 0, dur_sum, "", None, None, "")
+        merged = _merge_decisions_window_answers([a for (a, _u) in ok], n)
+        if len(ok) < len(results):
+            # Some (not all) windows failed: merge from the ok windows and
+            # mark it. No log-column change: like "_error", "partial" rides
+            # as a top-level output key (consumers copy it onto the
+            # normalised answers; there is no chat-partial output
+            # convention to mirror — none exists in this codebase).
+            try:
+                merged["partial"] = True
+            except Exception:
+                pass
+        pt = ct = tt = 0
+        for (_a, u) in ok:
+            try:
+                v = int(u.get("prompt_tokens", 0) or 0)
+                pt += v if v >= 0 else 0
+            except Exception:
+                pass
+            try:
+                v = int(u.get("completion_tokens", 0) or 0)
+                ct += v if v >= 0 else 0
+            except Exception:
+                pass
+            try:
+                v = int(u.get("total_tokens", 0) or 0)
+                tt += v if v >= 0 else 0
+            except Exception:
+                pass
+        cost = None
+        try:
+            known: list[float] = []
+            for (_a, u) in ok:
+                try:
+                    c = u.get("cost")
+                    if isinstance(c, bool):
+                        continue
+                    if isinstance(c, (int, float)):
+                        import math as _math
+                        f = float(c)
+                        if _math.isfinite(f) and f >= 0:
+                            known.append(f)
+                except Exception:
+                    continue
+            cost = float(sum(known)) if known else None
+        except Exception:
+            cost = None
+        provider = ""
+        served_model = ""
+        try:
+            u0 = ok[0][1]
+            p0 = u0.get("provider", "")
+            if isinstance(p0, str):
+                provider = p0
+            s0 = u0.get("served_model", "")
+            if isinstance(s0, str):
+                served_model = s0
+        except Exception:
+            pass
+        return (merged, pt, ct, tt, 0, dur_sum, provider, cost, None, served_model)
+    except Exception:
+        return None
+
+
+async def _call_single_payload(payload_body: dict, chunks=None):
     """One OpenRouter call + timing (shared by create_run/retry/auto).
 
     Returns (parsed, prompt_tokens, completion_tokens, total_tokens,
@@ -1401,14 +1783,27 @@ async def _call_single_payload(payload_body: dict):
     preferred over tokens x catalog price for dynamic routers.
     ``served_model`` is the top-level response model ("" when absent).
     Decisions bodies (``transport == "decisions"``) go to
-    ``complete_decisions_payload`` (marker stripped before POST) and return
+    ``complete_decisions_payload`` (markers stripped before POST) and return
     the same 10-tuple shape with ``reasoning_tokens = 0`` and
-    ``cost_details = None``.
+    ``cost_details = None``. Split bodies (``split_windows == 3`` plus a
+    valid ``split_formula``) fan out to 3 sequential decisions calls over
+    the FULL ``chunks`` list via ``_call_decisions_split`` (usage summed,
+    some-ok marked ``"partial"``); without usable chunks they fall back to
+    a single call of the stored (first-window) body. ``chunks`` is ignored
+    for chat bodies.
     """
     if isinstance(payload_body, dict) and payload_body.get("transport") == "decisions":
+        if payload_body.get("split_windows") == 3:
+            try:
+                split_res = await _call_decisions_split(payload_body, chunks)
+            except Exception:
+                split_res = None
+            if split_res is not None:
+                return split_res
         decide_start = perf_counter()
         try:
-            clean_body = {k: v for k, v in payload_body.items() if k != "transport"}
+            clean_body = {k: v for k, v in payload_body.items()
+                          if k not in ("transport", "split_windows", "split_formula")}
             answers, usage = await complete_decisions_payload(clean_body)
             # RAW answers dict: every identifier consumer
             # (_stream_fresh_results._one, auto_run, retry_agent, create
@@ -1693,7 +2088,7 @@ def _build_usage(per_agent: dict, model: str, totals: dict, duration_ms: float,
 
 
 async def _execute_agents(db: Session, agents: list[Agent], requests: dict, model: str,
-                          n_chunks: int = 0):
+                          n_chunks: int = 0, chunks=None):
     """Run per-agent payloads concurrently (shared machinery).
 
     Returns (outputs, per_agent, evidence, probs) with costs None; caller
@@ -1703,12 +2098,13 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     ``evidence``/``probs`` ({agent_id: {question_key: ...}}, identifier
     agents with clean answers only). Uses the shared as_completed generator
     so streaming and non-streaming share the same run loop; final dict
-    order follows ``agents`` order.
+    order follows ``agents`` order. ``chunks`` is the full global chunk
+    list for the decisions 3-window fan-out.
     """
     agents_by_id = {a.id: a for a in agents}
     collected: dict = {}
     async for res in _stream_fresh_results(agents, requests, model, agents_by_id,
-                                           n_chunks=n_chunks):
+                                           n_chunks=n_chunks, chunks=chunks):
         collected[res["agent_id"]] = res
     outputs: dict = {}
     per_agent: dict = {}
@@ -1735,9 +2131,10 @@ def _request_match_key(body):
 
     Chat bodies compare by ``messages`` (exactly as before); decisions
     bodies (no ``messages`` key) compare by
-    ``(model, state, questions)``. The decisions ``transport`` marker and
-    ``provider`` never affect matching (provider/effort are already
-    SQL-filtered per row). Non-dict inputs compare as-is.
+    ``(model, state, questions)``. The decisions ``transport`` marker,
+    ``split_windows``/``split_formula`` markers and ``provider`` never
+    affect matching (provider/effort are already SQL-filtered per row).
+    Non-dict inputs compare as-is.
     """
     try:
         if isinstance(body, dict) and "messages" in body:
@@ -1867,7 +2264,7 @@ def _agent_event_for(agent_id: str, agent_name: str, output, per_entry: dict,
 
 async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
                                 model: str, agents_by_id: dict | None = None,
-                                n_chunks: int = 0):
+                                n_chunks: int = 0, chunks=None):
     """Shared run loop: run fresh agents concurrently, yield in completion order.
 
     Each yield is {"agent_id", "agent_name", "output", "per_entry",
@@ -1877,7 +2274,8 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
     along as ``evidence``/``probs`` (dicts for clean identifier answers,
     else None). Both the non-streaming paths (via _execute_agents) and the
     streaming NDJSON paths consume this generator so the two paths don't
-    duplicate the run logic.
+    duplicate the run logic. ``chunks`` is the full global chunk list for
+    the decisions 3-window fan-out (ignored for chat bodies).
     """
     by_id = agents_by_id or {a.id: a for a in fresh_agents}
 
@@ -1908,7 +2306,7 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
                     "evidence": None, "probs": None}
         body = copy.deepcopy(requests.get(agent.id, {}))
         (parsed, pt, ct, tt, rt, dur, served,
-         actual, details, served_model) = await _call_single_payload(body)
+         actual, details, served_model) = await _call_single_payload(body, chunks)
         ev_side = None
         pr_side = None
         try:
@@ -1919,8 +2317,21 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
                         transport = ("decisions"
                                      if isinstance(body, dict) and body.get("transport") == "decisions"
                                      else "chat")
+                        try:
+                            _partial = parsed.get("partial") is True
+                        except Exception:
+                            _partial = False
                         bools, ev, pr = split_identifier_result(parsed, transport, n_chunks)
                         parsed = normalize_identifier_output(bools)
+                        if _partial and isinstance(parsed, dict) and "_error" not in parsed:
+                            # Split fan-out merged from some (not all)
+                            # windows: keep the marker on the stored output
+                            # (no log-column change; answers stay clean
+                            # because normalize drops unknown keys).
+                            try:
+                                parsed["partial"] = True
+                            except Exception:
+                                pass
                         ev_side = ev if isinstance(ev, dict) else None
                         pr_side = pr if isinstance(pr, dict) else None
                     except Exception:
@@ -1987,7 +2398,8 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
                              requests, input_type, input_data, effort,
                              task_title, filters, provider_requested,
                              wall_start, n_chunks: int = 0,
-                             fireflies_url: str = "") -> StreamingResponse:
+                             fireflies_url: str = "",
+                             chunks=None) -> StreamingResponse:
     """Streaming NDJSON variant of POST /runs (stream=true).
 
     Events: start -> agent* (completion order, reused first) -> done.
@@ -2027,7 +2439,7 @@ async def _create_run_stream(db: Session, *, payload, agents, snapshots,
             agents_by_id = {a.id: a for a in agents}
             async for res in _stream_fresh_results(
                     fresh_agents, requests, model, agents_by_id,
-                    n_chunks=n_chunks):
+                    n_chunks=n_chunks, chunks=chunks):
                 try:
                     outputs[res["agent_id"]] = res["output"]
                     per_agent[res["agent_id"]] = res["per_entry"]
@@ -2707,7 +3119,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
             requests=requests, input_type=input_type, input_data=input_data,
             effort=effort, task_title=task_title, filters=filters,
             provider_requested=provider_requested, wall_start=wall_start,
-            n_chunks=n_chunks, fireflies_url=fireflies_url)
+            n_chunks=n_chunks, fireflies_url=fireflies_url, chunks=chunks)
 
     # --- Per-agent reuse (shared helper) + shared run loop -------------------
     # Non-streaming and streaming share _resolve_valid_reuse,
@@ -2725,7 +3137,7 @@ async def create_run(payload: RunCreate, db: Session = Depends(get_db)):
     _collected: dict = {}
     async for _res in _stream_fresh_results(
             fresh_agents, requests, payload.model, agents_by_id,
-            n_chunks=n_chunks):
+            n_chunks=n_chunks, chunks=chunks):
         _collected[_res["agent_id"]] = _res
     total_in = 0
     total_out = 0
@@ -3437,7 +3849,7 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
         chunks=chunks)
     ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
     (parsed_ident, ipt, ict, itt, irt, idur, iserved,
-     iactual, idetails, iserved_model) = await _call_single_payload(ident_body)
+     iactual, idetails, iserved_model) = await _call_single_payload(ident_body, chunks)
     evidence_all: dict = {}
     probs_all: dict = {}
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
@@ -3445,8 +3857,17 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
             ident_transport = ("decisions"
                                if isinstance(ident_body, dict) and ident_body.get("transport") == "decisions"
                                else "chat")
+            try:
+                _ident_partial = parsed_ident.get("partial") is True
+            except Exception:
+                _ident_partial = False
             _bools, _ev, _pr = split_identifier_result(parsed_ident, ident_transport, n_chunks)
             parsed_ident = normalize_identifier_output(_bools)
+            if _ident_partial and isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
+                try:
+                    parsed_ident["partial"] = True
+                except Exception:
+                    pass
             _merge_sidecars(evidence_all, probs_all, ident_id, _ev, _pr)
         except Exception:
             pass
@@ -3667,8 +4088,12 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
             {"_error": "decision models support the identifier agent only"},
             0, 0, 0, 0, 0.0, "", None, None, "")
     else:
+        try:
+            retry_chunks = chunk_transcript(getattr(log, "input_data", None) or "")
+        except Exception:
+            retry_chunks = None
         (parsed, pt, ct, tt, rt, dur, served,
-         actual_cost, cost_details, served_model) = await _call_single_payload(stored_body)
+         actual_cost, cost_details, served_model) = await _call_single_payload(stored_body, retry_chunks)
     # Identifier split + normalisation when the retried agent is the
     # identifier (same as every other identifier consumer). Sidecars merge
     # into the log columns without touching other agents' keys; the
@@ -3682,8 +4107,17 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
                 retry_n = len(chunk_transcript(getattr(log, "input_data", None) or ""))
             except Exception:
                 retry_n = 0
+            try:
+                _retry_partial = parsed.get("partial") is True
+            except Exception:
+                _retry_partial = False
             _rbools, _rev, _rpr = split_identifier_result(parsed, retry_transport, retry_n)
             parsed = normalize_identifier_output(_rbools)
+            if _retry_partial and isinstance(parsed, dict) and "_error" not in parsed:
+                try:
+                    parsed["partial"] = True
+                except Exception:
+                    pass
             try:
                 log_ev = getattr(log, "evidence", None)
                 log_ev = dict(log_ev) if isinstance(log_ev, dict) else {}

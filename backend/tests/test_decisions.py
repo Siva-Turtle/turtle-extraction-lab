@@ -634,3 +634,350 @@ def test_identifier_chat_request_carries_max_tokens(client, monkeypatch):
         "agent_ids": [ident, ext], "model": "m"}).json()
     assert body["requests"][ident]["max_tokens"] == 2048
     assert "max_tokens" not in body["requests"][ext]
+
+
+# --- 3-window fan-out for oversized decisions states ---------------------------
+
+
+def _lines_input(n, pad=20):
+    # N lines -> N chunks (turn-per-line), each line a fixed char count.
+    return "\n".join(f"Speaker{i}: {'x' * pad}" for i in range(n))
+
+
+def test_window_bounds_math():
+    mod = runs_router
+    assert mod._decisions_window_bounds(49) == (30, 19, 35, 26)
+    assert mod._decisions_window_bounds(10) == (6, 4, 7, 5)
+    for n in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 20, 30, 49, 50, 100):
+        b = mod._decisions_window_bounds(n)
+        assert b is not None
+        k1, k2, k3, k4 = b
+        assert 1 <= k2 < k1 < k3 <= n
+        assert k2 < k4 < k3
+        # Each window non-empty and 1..N fully covered.
+        assert k1 >= 1 and k3 >= k2 and n >= k4
+        covered = (set(range(1, k1 + 1)) | set(range(k2, k3 + 1))
+                   | set(range(k4, n + 1)))
+        assert covered == set(range(1, n + 1))
+        # P1/P3 overlap P2.
+        assert set(range(1, k1 + 1)) & set(range(k2, k3 + 1))
+        assert set(range(k4, n + 1)) & set(range(k2, k3 + 1))
+    for bad in (0, 1, 2, -5, None, "x", True):
+        assert mod._decisions_window_bounds(bad) is None
+    assert mod._parse_split_formula("6,4,7,5", 10) == (6, 4, 7, 5)
+    for bad in ("6,4,7", "6,4,7,5,1", "a,b,c,d", "6,6,7,5", "0,4,7,5",
+                "6,4,7,11", None, ""):
+        assert mod._parse_split_formula(bad, 10) is None
+
+
+def _all_false_window(noul=0.1):
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    return {k: {"type": "noul", "noul": noul} for k in keys}
+
+
+def _usage_window(prompt, completion, cost, provider, served):
+    return {"prompt_tokens": prompt, "completion_tokens": completion,
+            "total_tokens": prompt + completion, "reasoning_tokens": 0,
+            "provider": provider, "cost": cost, "cost_details": None,
+            "served_model": served}
+
+
+def test_split_threshold_boundary_single_vs_three(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    monkeypatch.setattr(rr, "DECISIONS_SPLIT_STATE_CHARS", 60)
+    calls = []
+
+    async def _fake(payload):
+        calls.append(dict(payload))
+        return _all_false_window(), _usage_window(5, 1, 0.001, "pv", "m")
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_decisions_payload", _fake)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = _make_identifier(client)
+
+    def _run(text):
+        calls.clear()
+        body = client.post("/api/v1/runs", json={
+            "input_type": "transcription", "input_data": text,
+            "agent_ids": [ident], "model": "typesafe/jev-1.13"}).json()
+        return body
+
+    # Just under (29 chars): single call, transport marker only.
+    body = _run("Anita: salary talk\nBob: noted")
+    assert len(calls) == 1
+    req = body["requests"][ident]
+    assert req["transport"] == "decisions"
+    assert "split_windows" not in req
+    assert "split_formula" not in req
+
+    # Exactly at threshold (60 chars): not exceeded -> single call.
+    line = "Speaker0: " + "x" * 20
+    assert len(line) == 30
+    body = _run(line + "\n" + line.replace("Speaker0", "Speaker1"))
+    assert len(calls) == 1
+    req = body["requests"][ident]
+    assert "split_windows" not in req
+    assert "split_formula" not in req
+
+    # Just over (90 chars, 3 chunks): 3 sequential calls + markers.
+    body = _run("\n".join(line.replace("Speaker0", f"Speaker{i}") for i in range(3)))
+    assert len(calls) == 3
+    req = body["requests"][ident]
+    assert req["transport"] == "decisions"
+    assert req["split_windows"] == 3
+    assert req["split_formula"] == "2,1,3,2"
+    # Stored body is the FIRST window's body (chunks 1..2, global numbering).
+    assert [c["n"] for c in req["state"]["chunks"]] == [1, 2]
+    # Markers are storage-only: never POSTed.
+    for posted in calls:
+        assert "transport" not in posted
+        assert "split_windows" not in posted
+        assert "split_formula" not in posted
+    # P1 POSTed byte-identical to the stored body minus markers.
+    assert calls[0] == {k: v for k, v in req.items()
+                        if k not in ("transport", "split_windows", "split_formula")}
+    # Window first-chunk numbers: P1 starts 1, P2 starts 1, P3 starts 2.
+    assert [p["state"]["chunks"][0]["n"] for p in calls] == [1, 1, 2]
+    # All-false merge: clean output, no partial marker.
+    out = body["outputs"][ident]
+    assert all(v is False for k, v in out.items() if k != "partial")
+    assert "partial" not in out
+
+
+def _ten_chunk_window_answers(first_n):
+    keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
+    answers = {k: {"type": "noul", "noul": 0.1} for k in keys}
+    del answers["has_assets"]  # omitted by the model in every window
+    if first_n == 1:  # P1 = chunks 1..6
+        answers["income"] = {"type": "noul", "noul": 0.6}
+        answers["income__evidence"] = {"type": "choice", "choice": "2"}
+    elif first_n == 4:  # P2 = chunks 4..7
+        answers["income"] = {"type": "noul", "noul": 0.9}
+        answers["income__evidence"] = {"type": "choice", "choice": "7"}
+        answers["insurance"] = {"type": "noul", "noul": 0.75}
+        answers["insurance__evidence"] = {"type": "choice", "choice": "5"}
+        answers["goals"] = {"type": "noul", "noul": 0.2}
+    else:  # P3 = chunks 5..10
+        assert first_n == 5
+        answers["tax"] = {"type": "noul", "noul": 0.7}
+        answers["tax__evidence"] = {"type": "choice", "choice": "10"}
+        answers["goals"] = {"type": "noul", "noul": 0.15}
+    return answers
+
+
+def _ten_chunk_window_usage(first_n):
+    table = {1: (100, 10, 0.001, "p1", "m1"),
+             4: (200, 20, 0.002, "p2", "m2"),
+             5: (300, 30, 0.003, "p3", "m3")}
+    p, c, cost, prov, served = table[first_n]
+    return _usage_window(p, c, cost, prov, served)
+
+
+def test_split_merge_or_first_true_max_prob_and_usage(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    monkeypatch.setattr(rr, "DECISIONS_SPLIT_STATE_CHARS", 50)
+    calls = []
+
+    async def _fake(payload):
+        calls.append(dict(payload))
+        first_n = payload["state"]["chunks"][0]["n"]
+        return (_ten_chunk_window_answers(first_n),
+                _ten_chunk_window_usage(first_n))
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_decisions_payload", _fake)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = _make_identifier(client)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": _lines_input(10),
+        "agent_ids": [ident], "model": "typesafe/jev-1.13"}).json()
+
+    assert len(calls) == 3
+    # Windows cover 1..10 with global numbering.
+    assert [[c["n"] for c in p["state"]["chunks"]] for p in calls] == [
+        [1, 2, 3, 4, 5, 6], [4, 5, 6, 7], [5, 6, 7, 8, 9, 10]]
+    # Per-window evidence criteria are limited to that window's chunks.
+    p2_ev = calls[1]["questions"]["income__evidence"]
+    assert set(p2_ev["criteria"]) == {"4", "5", "6", "7"}
+    assert "(4..7)" in p2_ev["instructions"]
+    req = body["requests"][ident]
+    assert req["split_windows"] == 3
+    assert req["split_formula"] == "6,4,7,5"
+    assert [c["n"] for c in req["state"]["chunks"]] == [1, 2, 3, 4, 5, 6]
+    assert set(req["questions"]["income__evidence"]["criteria"]) == {
+        "1", "2", "3", "4", "5", "6"}
+
+    out = body["outputs"][ident]
+    # OR-merge: true in any window -> true.
+    assert out["income"] is True
+    assert out["insurance"] is True  # true only in P2
+    assert out["tax"] is True  # true only in P3
+    assert out["goals"] is False
+    assert "partial" not in out  # all windows ok -> no marker
+
+    log = client.get("/api/v1/logs").json()[0]
+    ev = log["evidence"][ident]
+    pr = log["probabilities"][ident]
+    # First-true window (P1, P2, P3 order) decides the evidence chunk.
+    assert ev["income"] == 2  # P1 and P2 true -> P1's chunk wins
+    assert ev["insurance"] == 5
+    assert ev["tax"] == 10
+    assert ev["goals"] is None
+    # Max noul float across windows; absent everywhere -> None.
+    assert pr["income"] == 0.9
+    assert pr["insurance"] == 0.75
+    assert pr["tax"] == 0.7
+    assert pr["goals"] == 0.2
+    assert pr["has_assets"] is None
+
+    # Usage sums; provider/served_model from the first successful window.
+    per = body["usage"]["per_agent"][ident]
+    assert per["prompt_tokens"] == 600
+    assert per["completion_tokens"] == 60
+    assert per["total_tokens"] == 660
+    assert per["cost_usd"] == 0.006
+    assert per["provider"] == "p1"
+    assert per["served_model"] == "m1"
+    assert isinstance(per["duration_ms"], float)
+
+    # Reuse matching ignores the split markers (same first-window body).
+    from app.modules.runs.router import _request_match_key
+    clean_first = {k: v for k, v in req.items()
+                   if k not in ("transport", "split_windows", "split_formula")}
+    assert _request_match_key(req) == _request_match_key(clean_first)
+
+
+def test_merge_helper_or_first_true_max_prob_round_trip():
+    import app.modules.runs.router as rr
+
+    w1 = _all_false_window()
+    w1["income"] = {"type": "noul", "noul": 0.6}
+    w1["income__evidence"] = {"type": "choice", "choice": "2"}
+    w2 = _all_false_window()
+    w2["income"] = {"type": "noul", "noul": 0.9}
+    w2["income__evidence"] = {"type": "choice", "choice": "7"}
+    w2["insurance"] = {"type": "noul", "noul": 0.75}
+    w2["insurance__evidence"] = {"type": "choice", "choice": "5"}
+    w3 = _all_false_window()
+    w3["tax"] = {"type": "noul", "noul": 0.7}
+    w3["tax__evidence"] = {"type": "choice", "choice": "10"}
+    for w in (w1, w2, w3):
+        del w["has_assets"]  # omitted by the model in every window
+    merged = rr._merge_decisions_window_answers([w1, w2, w3], 10)
+    bools, evidence, probs = split_identifier_result(merged, "decisions", 10)
+    assert bools["income"] is True and evidence["income"] == 2
+    assert probs["income"] == 0.9
+    assert bools["insurance"] is True and evidence["insurance"] == 5
+    assert probs["insurance"] == 0.75
+    assert bools["tax"] is True and evidence["tax"] == 10
+    assert probs["tax"] == 0.7
+    assert bools["goals"] is False and evidence["goals"] is None
+    assert probs["goals"] == 0.1
+    # Absent everywhere -> False/None/None (key omitted from the raw merge).
+    assert bools["has_assets"] is False and evidence["has_assets"] is None
+    assert probs["has_assets"] is None
+    assert "partial" not in merged
+
+
+def test_split_all_fail_returns_last_error(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    monkeypatch.setattr(rr, "DECISIONS_SPLIT_STATE_CHARS", 50)
+    calls = {"n": 0}
+
+    async def _fake(payload):
+        calls["n"] += 1
+        raise RuntimeError(f"boom-{calls['n']}")
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_decisions_payload", _fake)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = _make_identifier(client)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": _lines_input(10),
+        "agent_ids": [ident], "model": "typesafe/jev-1.13"}).json()
+    assert calls["n"] == 3
+    assert body["outputs"][ident] == {"_error": "boom-3"}
+    per = body["usage"]["per_agent"][ident]
+    assert per["prompt_tokens"] == 0
+    assert per["completion_tokens"] == 0
+    assert per["cost_usd"] is None
+    assert per["provider"] == ""
+    # Markers are still stored (first-window body) for reuse matching.
+    req = body["requests"][ident]
+    assert req["split_windows"] == 3
+    assert req["split_formula"] == "6,4,7,5"
+
+
+def test_split_partial_merges_ok_windows_first_successful_provider(client, monkeypatch):
+    import app.modules.runs.router as rr
+
+    monkeypatch.setattr(rr, "DECISIONS_SPLIT_STATE_CHARS", 50)
+    calls = []
+
+    async def _fake(payload):
+        first_n = payload["state"]["chunks"][0]["n"]
+        calls.append(first_n)
+        if first_n == 1:
+            raise RuntimeError("p1-down")
+        return (_ten_chunk_window_answers(first_n),
+                _ten_chunk_window_usage(first_n))
+
+    async def _fake_pricing(model):
+        return (None, None)
+
+    monkeypatch.setattr(rr, "complete_decisions_payload", _fake)
+    monkeypatch.setattr(rr, "get_model_pricing", _fake_pricing)
+    ident = _make_identifier(client)
+    body = client.post("/api/v1/runs", json={
+        "input_type": "transcription", "input_data": _lines_input(10),
+        "agent_ids": [ident], "model": "typesafe/jev-1.13"}).json()
+    assert calls == [1, 4, 5]  # all three attempted in order, sequentially
+    out = body["outputs"][ident]
+    # Merged from the ok windows (P2, P3); P1-only evidence is gone.
+    assert out["partial"] is True
+    assert out["income"] is True  # P2 true
+    assert out["insurance"] is True
+    assert out["tax"] is True
+    assert out["goals"] is False
+    log = client.get("/api/v1/logs").json()[0]
+    ev = log["evidence"][ident]
+    pr = log["probabilities"][ident]
+    assert ev["income"] == 7  # first TRUE window now P2
+    assert ev["tax"] == 10
+    assert pr["income"] == 0.9
+    per = body["usage"]["per_agent"][ident]
+    # Usage sums the ok windows only; provider from first SUCCESSFUL window.
+    assert per["prompt_tokens"] == 500
+    assert per["completion_tokens"] == 50
+    assert per["total_tokens"] == 550
+    assert per["cost_usd"] == 0.005
+    assert per["provider"] == "p2"
+    assert per["served_model"] == "m2"
+
+
+def test_questions_window_global_numbering_shape():
+    import app.modules.runs.router as rr
+
+    win = [{"n": 4, "text": "d"}, {"n": 5, "text": "e"},
+           {"n": 6, "text": "f"}, {"n": 7, "text": "g"}]
+    questions = rr.build_identifier_decisions_questions(win)
+    assert len(questions) == 24
+    ev = questions["income__evidence"]
+    assert ev["criteria"] == {"4": "chunk 4", "5": "chunk 5",
+                              "6": "chunk 6", "7": "chunk 7"}
+    assert "(4..7)" in ev["instructions"]
+    # Full contiguous chunks stay byte-identical to the old positional shape.
+    full = [{"n": i + 1, "text": f"turn {i + 1}"} for i in range(3)]
+    q2 = rr.build_identifier_decisions_questions(full)
+    assert q2["has_assets__evidence"]["criteria"] == {
+        "1": "chunk 1", "2": "chunk 2", "3": "chunk 3"}
