@@ -23,6 +23,8 @@ export type ReviewSide = {
   /** Snapshot agent name used for feedback writes/reads. */
   agentName: string;
   feedback: ReviewFeedback | null;
+  /** Failed-run message from `outputs[agentId]._error` (null when the run succeeded). */
+  error: string | null;
 };
 
 export type ReviewRow = {
@@ -37,6 +39,10 @@ export type ReviewRow = {
   agree: boolean;
   firefliesUrl: string;
   chunks: ReviewChunk[];
+  /** Failed-run message for the Jev side (`outputs[agentId]._error`, null when ok). */
+  jevError: string | null;
+  /** Failed-run message for the Opus side (`outputs[agentId]._error`, null when ok). */
+  opusError: string | null;
 };
 
 export type ReviewGroup = {
@@ -51,6 +57,10 @@ export type ReviewGroup = {
   /** Summed cost_usd over both logs, or null when neither reports one. */
   cost: number | null;
   chunks: ReviewChunk[];
+  /** Failed-run message for the Jev log (`outputs[agentId]._error`, null when ok). */
+  jevError: string | null;
+  /** Failed-run message for the Opus log (`outputs[agentId]._error`, null when ok). */
+  opusError: string | null;
 };
 
 /** Case-insensitive `typesafe/jev-*` match (mirrors the backend decisions prefix). */
@@ -126,6 +136,31 @@ function identifierOutputOf(log: LogRow, agentId: string, agentName: string): un
     // ignore
   }
   return undefined;
+}
+
+/**
+ * Failed-run message for one log's identifier output: `outputs[agentId]?._error`
+ * (string) when the model's run failed, else null. Checks the snapshot name
+ * key as a fallback (mirrors identifierOutputOf). Never throws.
+ */
+export function errorOf(log: LogRow): string | null {
+  try {
+    if (!log || typeof log !== "object") return null;
+    const agent = identifierAgentOf(log);
+    const agentId = agent ? agent.id : "agent_identifier";
+    const agentName = agent ? agent.name : "agent_identifier";
+    const outs = (log.outputs ?? {}) as Record<string, unknown>;
+    for (const aid of [agentId, agentName]) {
+      if (typeof aid !== "string" || aid === "") continue;
+      const out = outs[aid];
+      if (!out || typeof out !== "object" || Array.isArray(out)) continue;
+      const err = (out as Record<string, unknown>)._error;
+      if (typeof err === "string" && err.trim() !== "") return err;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 /** Identifier boolean answers, or null when this log has no v2 identifier
@@ -334,6 +369,7 @@ function sideOf(log: LogRow, key: string): ReviewSide {
     runId: typeof log.run_id === "string" ? log.run_id : "",
     agentName,
     feedback: savedFeedbackOf(log, agentName, key),
+    error: errorOf(log),
   };
 }
 
@@ -445,6 +481,8 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
       const title = sampleOf(jev) !== "Untitled run" ? sampleOf(jev) : sampleOf(opus);
       const createdAt =
         timeOf(jev.created_at) >= timeOf(opus.created_at) ? jev.created_at : opus.created_at;
+      const jevError = errorOf(jev);
+      const opusError = errorOf(opus);
       groups.push({
         id: key,
         title,
@@ -456,6 +494,8 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
         opusModel: typeof opus.model === "string" ? opus.model : "",
         cost: hasCost ? (costs[0] ?? 0) + (costs[1] ?? 0) : null,
         chunks,
+        jevError,
+        opusError,
       });
     } catch {
       // skip malformed groups, keep the rest
@@ -468,7 +508,9 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
 /**
  * One row per group x per identifier question key. `agree` is true when
  * both sides hold the same value (including both missing — that is not a
- * discrepancy). Never throws.
+ * discrepancy), except rows where either side's run failed (`jevError` /
+ * `opusError` from `outputs[agentId]._error`) always keep `agree: false`
+ * so they stay visible under Discrepancies. Never throws.
  */
 export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
   const rows: ReviewRow[] = [];
@@ -477,10 +519,15 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
       if (!g) continue;
       const firefliesUrl = firefliesOf(g.jev) !== "" ? firefliesOf(g.jev) : firefliesOf(g.opus);
       const sample = g.sample || g.title || "Untitled run";
+      const jevError: string | null = g.jevError ?? errorOf(g.jev);
+      const opusError: string | null = g.opusError ?? errorOf(g.opus);
+      const errored = jevError !== null || opusError !== null;
       for (const key of IDENTIFIER_QUESTION_KEYS) {
         try {
           const jev = sideOf(g.jev, key);
+          jev.error = jevError;
           const opus = sideOf(g.opus, key);
+          opus.error = opusError;
           let question = "";
           try {
             const jevAgent = identifierAgentOf(g.jev);
@@ -508,9 +555,11 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
             question,
             jev,
             opus,
-            agree: jev.value === opus.value,
+            agree: errored ? false : jev.value === opus.value,
             firefliesUrl,
             chunks: g.chunks ?? [],
+            jevError,
+            opusError,
           });
         } catch {
           // skip malformed rows, keep the rest

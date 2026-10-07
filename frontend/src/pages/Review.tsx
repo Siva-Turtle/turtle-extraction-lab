@@ -96,6 +96,45 @@ function BoolMark({ value }: { value: boolean | null }): React.JSX.Element {
   );
 }
 
+/** Truncate a failed-run message to ~60 chars for badge display (full text stays in title). */
+function truncateError(err: string): string {
+  try {
+    if (err.length > 60) return `${err.slice(0, 60)}…`;
+    return err;
+  } catch {
+    return err;
+  }
+}
+
+/** Red error badge naming the failed model; full error text in the title tooltip. */
+function RunErrorBadge({ model, error }: { model: string; error: string }): React.JSX.Element {
+  return (
+    <span
+      title={error}
+      aria-label={`${model} run failed: ${error}`}
+      className="inline-flex max-w-full items-center gap-1 rounded-full bg-[#fdecec] px-2 py-0.5 font-heading text-[10px] font-bold uppercase tracking-wide text-[#b91c1c] dark:bg-[#ef4444]/15 dark:text-[#f87171]"
+    >
+      <span className="shrink-0">{model} failed</span>
+      <span className="min-w-0 truncate font-sans normal-case tracking-normal">
+        {truncateError(error)}
+      </span>
+    </span>
+  );
+}
+
+/** Red "failed" marker replacing ✅/❌ for errored model cells. */
+function FailedMark({ error }: { error: string }): React.JSX.Element {
+  return (
+    <span
+      title={error}
+      aria-label={`run failed: ${error}`}
+      className="inline-flex h-6 items-center rounded-full bg-[#fdecec] px-2 text-xs font-bold text-[#b91c1c] dark:bg-[#ef4444]/15 dark:text-[#f87171]"
+    >
+      failed
+    </span>
+  );
+}
+
 /**
  * One model cell: ✅/❌ value, noul probability (Jev shows the prob line
  * always, muted when null; Opus omits it), thumbs underneath with a remarks
@@ -130,6 +169,7 @@ function ModelCell({
     : "";
   const hasRemarks = remarks.trim() !== "";
   const open = remarksFor === cellKey;
+  const failed = typeof side.error === "string" && side.error !== "";
 
   function handleRate(next: "up" | "down" | null): void {
     if (side.runId === "") return;
@@ -142,18 +182,28 @@ function ModelCell({
   return (
     <div className="relative flex min-w-0 flex-col gap-1.5">
       <span className="flex items-center gap-1.5">
-        <BoolMark value={side.value} />
+        {failed && side.error ? (
+          <FailedMark error={side.error} />
+        ) : (
+          <BoolMark value={side.value} />
+        )}
         {showProb && (
           <span
             className={cn(
               "font-mono text-[11px]",
-              typeof side.prob === "number" && Number.isFinite(side.prob)
+              !failed && typeof side.prob === "number" && Number.isFinite(side.prob)
                 ? "text-[#4a5058] dark:text-[#C3C2B7]"
                 : "text-[#8a8f98]",
             )}
-            title={typeof side.prob === "number" ? `noul probability ${side.prob}` : "no probability recorded"}
+            title={
+              failed && side.error
+                ? side.error
+                : typeof side.prob === "number"
+                  ? `noul probability ${side.prob}`
+                  : "no probability recorded"
+            }
           >
-            {typeof side.prob === "number" && Number.isFinite(side.prob)
+            {!failed && typeof side.prob === "number" && Number.isFinite(side.prob)
               ? `p ${side.prob.toFixed(2)}`
               : "p —"}
           </span>
@@ -203,18 +253,35 @@ function EvNum({ n }: { n: number | null }): React.JSX.Element {
 }
 
 /** Evidence text: clamped to ~4 lines with expand; both chunks shown labeled
- * when the models cite different chunks. */
+ * when the models cite different chunks. Errored sides show a muted
+ * "run failed" instead of a blank. */
 function EvidenceCell({ row }: { row: ReviewRow }): React.JSX.Element {
   const [expanded, setExpanded] = React.useState(false);
-  const jevN = row.jev.evidence;
-  const opusN = row.opus.evidence;
-  if (jevN === null && opusN === null) return <Dash />;
+  const jevFailed =
+    (typeof row.jevError === "string" && row.jevError !== "") ||
+    (typeof row.jev.error === "string" && row.jev.error !== "");
+  const opusFailed =
+    (typeof row.opusError === "string" && row.opusError !== "") ||
+    (typeof row.opus.error === "string" && row.opus.error !== "");
+  const jevN = jevFailed ? null : row.jev.evidence;
+  const opusN = opusFailed ? null : row.opus.evidence;
+  if (jevN === null && opusN === null && !jevFailed && !opusFailed) return <Dash />;
   const blocks: { label: string; text: string }[] = [];
   if (jevN !== null && opusN !== null && jevN === opusN) {
     blocks.push({ label: `#${jevN}`, text: chunkText(row.chunks, jevN) });
   } else {
     if (jevN !== null) blocks.push({ label: `Jev #${jevN}`, text: chunkText(row.chunks, jevN) });
     if (opusN !== null) blocks.push({ label: `Opus #${opusN}`, text: chunkText(row.chunks, opusN) });
+  }
+  if (blocks.length === 0 && (jevFailed || opusFailed)) {
+    if (jevFailed && opusFailed) {
+      return <span className="font-sans text-xs italic text-[#8a8f98]">run failed</span>;
+    }
+    return (
+      <span className="font-sans text-xs italic text-[#8a8f98]">
+        {jevFailed ? "Jev run failed" : "Opus run failed"}
+      </span>
+    );
   }
   return (
     <div className="grid min-w-0 gap-1.5">
@@ -238,13 +305,21 @@ function EvidenceCell({ row }: { row: ReviewRow }): React.JSX.Element {
           )}
         </div>
       ))}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-fit font-heading text-[11px] font-bold text-[#0d5c4a] hover:underline focus-visible:outline-2 focus-visible:outline-brand dark:text-[#5ee8cf]"
-      >
-        {expanded ? "Show less" : "Show more"}
-      </button>
+      {jevFailed && (
+        <p className="font-sans text-xs italic text-[#8a8f98]">Jev run failed</p>
+      )}
+      {opusFailed && (
+        <p className="font-sans text-xs italic text-[#8a8f98]">Opus run failed</p>
+      )}
+      {blocks.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-fit font-heading text-[11px] font-bold text-[#0d5c4a] hover:underline focus-visible:outline-2 focus-visible:outline-brand dark:text-[#5ee8cf]"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
     </div>
   );
 }
@@ -583,6 +658,12 @@ export default function Review(): React.JSX.Element {
                   <p className="truncate font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]" title={row.sample}>
                     {row.sample}
                   </p>
+                  {(row.jevError || row.opusError) && (
+                    <div className="mt-1.5 flex min-w-0 flex-wrap gap-1.5">
+                      {row.jevError && <RunErrorBadge model="Jev" error={row.jevError} />}
+                      {row.opusError && <RunErrorBadge model="Opus" error={row.opusError} />}
+                    </div>
+                  )}
                   <p className="mt-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-[#8a8f98]">
                     {row.questionKey}
                   </p>
@@ -603,8 +684,9 @@ export default function Review(): React.JSX.Element {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <p className="mb-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
+                  <p className="mb-1 flex flex-wrap items-center gap-1.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
                     Jev
+                    {row.jevError && <RunErrorBadge model="Jev" error={row.jevError} />}
                   </p>
                   <div className="flex items-start gap-1.5">
                     <StarButton starred={starred} onToggle={() => toggleStarKey(row.key)} />
@@ -621,8 +703,9 @@ export default function Review(): React.JSX.Element {
                   </div>
                 </div>
                 <div>
-                  <p className="mb-1 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
+                  <p className="mb-1 flex flex-wrap items-center gap-1.5 font-heading text-[11px] font-bold uppercase tracking-wide text-[#4a5058] dark:text-[#C3C2B7]">
                     Opus
+                    {row.opusError && <RunErrorBadge model="Opus" error={row.opusError} />}
                   </p>
                   <ModelCell
                     side={row.opus}
@@ -638,10 +721,10 @@ export default function Review(): React.JSX.Element {
               </div>
               <div className="mt-3 flex min-w-0 gap-4 font-mono text-[11px] text-[#4a5058] dark:text-[#C3C2B7]">
                 <span>
-                  Ev# Jev <EvNum n={row.jev.evidence} />
+                  Ev# Jev <EvNum n={row.jevError ? null : row.jev.evidence} />
                 </span>
                 <span>
-                  Ev# Opus <EvNum n={row.opus.evidence} />
+                  Ev# Opus <EvNum n={row.opusError ? null : row.opus.evidence} />
                 </span>
               </div>
               <div className="mt-1.5 min-w-0">
@@ -677,11 +760,23 @@ export default function Review(): React.JSX.Element {
                     starred && "bg-amber-50/70 dark:bg-amber-400/5",
                   )}
                 >
-                  <td
-                    className="max-w-48 truncate px-4 py-3 font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
-                    title={row.sample}
-                  >
-                    {row.sample}
+                  <td className="max-w-48 px-4 py-3">
+                    <span
+                      className="block truncate font-heading text-xs font-bold text-[#1d1d1d] dark:text-[#F0EFEC]"
+                      title={row.sample}
+                    >
+                      {row.sample}
+                    </span>
+                    {row.jevError && (
+                      <span className="mt-1 block">
+                        <RunErrorBadge model="Jev" error={row.jevError} />
+                      </span>
+                    )}
+                    {row.opusError && (
+                      <span className="mt-1 block">
+                        <RunErrorBadge model="Opus" error={row.opusError} />
+                      </span>
+                    )}
                   </td>
                   <td className="min-w-64 max-w-96 px-4 py-3">
                     <div className="grid min-w-0 gap-1">
@@ -730,10 +825,10 @@ export default function Review(): React.JSX.Element {
                     />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <EvNum n={row.jev.evidence} />
+                    <EvNum n={row.jevError ? null : row.jev.evidence} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <EvNum n={row.opus.evidence} />
+                    <EvNum n={row.opusError ? null : row.opus.evidence} />
                   </td>
                   <td className="min-w-64 max-w-96 px-4 py-3">
                     <EvidenceCell row={row} />
