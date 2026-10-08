@@ -1,4 +1,4 @@
-"""Auto Select Agents v2: 12 questions -> deterministic routing + consistency v2."""
+"""Auto Select Agents v2: 27 questions -> deterministic routing + consistency v2."""
 
 import copy
 

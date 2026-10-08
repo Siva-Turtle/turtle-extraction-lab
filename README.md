@@ -90,14 +90,17 @@ npm run dev
 
 ## Auto Select Agents
 
-`POST /runs/auto` runs the Agent Identifier (12 fixed yes/no questions about
+`POST /runs/auto` runs the Agent Identifier (27 fixed yes/no questions about
 the CLIENT's own situation) then deterministic routing (`plan_auto_agents`):
 
-- `has_assets` → `asset`, `has_accounts` → `account`, `expenses` → `expense`,
+- ANY of `has_assets` + 13 `asset_*` → `asset`, `has_accounts` → `account`,
+  `expenses` → `expense`,
   `goals` → `goal`, `income` → `income`, `liabilities` → `liability` (all attrs).
 - `credit_cards` → `basic_info` Banking, `employment_changed` /
-  `employment_status_changed` → Employment,
-  `alumni` → Education / Alumni (subset, DB order).
+  `employment_status_changed` / `current_employer_mentioned` / `alumni` → Employment,
+  `education_institution` → Education / Alumni (subset, DB order).
+  NOTE: `asset_pension` overlaps `has_accounts` (NPS/EPF/PPF appear in both
+  wordings) — both agents will run when both fire. Intended per spec.
 - `insurance` → `insurance` (all attrs); `tax` → `tax` (all attrs);
   both → `tax_and_insurance` (all attrs). Fallback to the combined subset
   when the split agent is missing/disabled; both splits (insurance then tax)

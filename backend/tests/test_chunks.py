@@ -12,7 +12,7 @@ from app.core.chunks import (
 
 
 def test_max_chunks_constant():
-    assert MAX_TRANSCRIPT_CHUNKS == 50
+    assert MAX_TRANSCRIPT_CHUNKS == 100
 
 
 def test_split_paras_fixture_style_turns():
@@ -56,22 +56,22 @@ def test_split_paras_blank_and_non_string():
 def test_chunk_transcript_even_packing_under_cap():
     paras = [f"Speaker{i}: line {i}" for i in range(7)]
     chunks = chunk_transcript("\n".join(paras))
-    # 7 paras, cap 50 -> one para per chunk.
+    # 7 paras, cap 100 -> one para per chunk.
     assert [c["n"] for c in chunks] == [1, 2, 3, 4, 5, 6, 7]
     assert [c["text"] for c in chunks] == paras
 
 
 def test_chunk_transcript_many_paras_capped_all_text_preserved():
-    paras = [f"Speaker{i}: line {i}" for i in range(120)]
+    paras = [f"Speaker{i}: line {i}" for i in range(250)]
     chunks = chunk_transcript("\n".join(paras))
-    assert len(chunks) <= 50
+    assert len(chunks) <= 100
     assert [c["n"] for c in chunks] == list(range(1, len(chunks) + 1))
     # Every para's text survives verbatim inside exactly one chunk.
     for p in paras:
         hits = sum(1 for c in chunks if p in c["text"])
         assert hits == 1
-    # ceil(120/50) = 3 paras per chunk -> 40 chunks.
-    assert len(chunks) == 40
+    # ceil(250/100) = 3 paras per chunk -> 84 chunks (last holds 1).
+    assert len(chunks) == 84
 
 
 def test_chunk_transcript_custom_cap():
@@ -118,9 +118,9 @@ def test_split_paras_timestamped_turn_per_line():
     paras = split_paras(text)
     assert len(paras) == len(lines)
     assert paras == [line.strip() for line in lines]
-    # Packing: capped at <= 50 chunks, all text preserved, 1-based numbering.
+    # Packing: capped at <= 100 chunks, all text preserved, 1-based numbering.
     chunks = chunk_transcript(text)
-    assert len(chunks) <= 50
+    assert len(chunks) <= 100
     assert [c["n"] for c in chunks] == list(range(1, len(chunks) + 1))
     for p in paras:
         hits = sum(1 for c in chunks if p in c["text"])

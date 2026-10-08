@@ -22,7 +22,7 @@ import math
 import re
 
 # Tunable cap: a run never sends more than this many numbered chunks.
-MAX_TRANSCRIPT_CHUNKS = 50
+MAX_TRANSCRIPT_CHUNKS = 100
 
 # Fireflies-style speaker-turn start: a line beginning with a name followed
 # by a colon, e.g. "Anita: Hello" or "Bob Smith: ...". The name starts with

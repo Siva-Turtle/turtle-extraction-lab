@@ -68,7 +68,7 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 # --- Agent Identifier meta-agent (kind == "identifier") -------------------
-# The identifier answers 12 fixed yes/no questions about the CLIENT's own
+# The identifier answers 27 fixed yes/no questions about the CLIENT's own
 # situation, then deterministic routing rules (plan_auto_agents) select
 # extraction agents. The prompt is code-owned: the identifier agent's stored
 # system_instruction in the DB is IGNORED. Prompt is built at
@@ -81,7 +81,33 @@ IDENTIFIER_SCHEMA_NAME = "agent_selection"
 
 IDENTIFIER_QUESTIONS: list[dict] = [
     {"key": "has_assets",
-     "question": "Did the Client mention about their assets? (Any mention of asset type like - bonds, cash, commodity, ETFs, mutual funds, crypto, debt instruments, deposits, equity, personal debt that they have given to someone, real estate or property, REITS, unlisted stocks or any other asset type)"},
+     "question": "Did the Client mention about any of their assets?"},
+    {"key": "asset_bonds",
+     "question": "Does the Client or their family have bonds?"},
+    {"key": "asset_cash",
+     "question": "Does the Client or their family have cash?"},
+    {"key": "asset_commodity",
+     "question": "Does the Client or their family have commodity (gold, silver, platinum, diamonds)?"},
+    {"key": "asset_etfs",
+     "question": "Does the Client have ETFs?"},
+    {"key": "asset_mutual_funds",
+     "question": "Does the Client have mutual funds?"},
+    {"key": "asset_crypto",
+     "question": "Does the Client have crypto (Bitcoin, Ethereum, Solana)?"},
+    {"key": "asset_fd",
+     "question": "Does the Client have Fixed Deposits (FD)?"},
+    {"key": "asset_pension",
+     "question": "Does the Client have Pension Fund (NPS, EPF, PPF)?"},
+    {"key": "asset_stocks",
+     "question": "Does the Client have Stocks or shares?"},
+    {"key": "asset_personal_loans",
+     "question": "Did the Client lend money to friends or family or anyone (personal loans given to others)?"},
+    {"key": "asset_real_estate",
+     "question": "Does the Client have real estate (house, commercial property)?"},
+    {"key": "asset_reits",
+     "question": "Does the Client have REITs?"},
+    {"key": "asset_other",
+     "question": "Does the Client have any other type of assets not covered in the previous questions?"},
     {"key": "has_accounts",
      "question": "Did the Client mention about any of their accounts that they hold? (Any mention of accounts like - alternate investment fund accounts, bank account, bank deposit, crypto broker, EPF, investment account, NPS, PMS, PPF, Self-custody investment/crypto accounts or wallets, SSY (Sukanya Samriddhi Yojana) or any other account type)"},
     {"key": "credit_cards",
@@ -90,8 +116,12 @@ IDENTIFIER_QUESTIONS: list[dict] = [
      "question": "Did the Client mention that they have switched company?"},
     {"key": "employment_status_changed",
      "question": "Did the Client mention that their employment status has changed?"},
+    {"key": "current_employer_mentioned",
+     "question": "Did the Client mention which company they work at?"},
     {"key": "alumni",
-     "question": "Did the Client mention anything regarding their old organisation or institution - them being any sort of alumni?"},
+     "question": "Did the client mention any of the companies that they have worked with in the past (even if it was just a day ago)?"},
+    {"key": "education_institution",
+     "question": "Did the client mention which institute, college or university they graduated from?"},
     {"key": "expenses",
      "question": "Did the Client mention anything related to their current general monthly expenses, family expenses or annual expenses? (like charity donations, childcare school fees, entertainment dining, family support, groceries, household staff, insurance premiums, Loan EMIs, medical expenses, miscellaneous, rent, shopping purchases, subscriptions memberships, transport fuel, travel vacations, utilities)"},
     {"key": "goals",
@@ -158,7 +188,7 @@ IDENTIFIER_EVIDENCE_INSTRUCTION = (
 
 
 def _identifier_system_content(agent: Agent, _ignored=None) -> str:
-    """System prompt for the identifier: code-owned instruction + 12 questions.
+    """System prompt for the identifier: code-owned instruction + 27 questions.
 
     The identifier agent's stored system_instruction is IGNORED. The
     optional second arg exists only for backward compatibility with old
@@ -468,7 +498,7 @@ def split_identifier_result(parsed, transport="chat", n_chunks=0) -> tuple:
     """Split a raw identifier answer into (bools, evidence, probs).
 
     - decisions: ``parsed`` is the RAW answers dict. Bools come from
-      ``decisions_answers_to_bools`` on the 12 base keys (``__evidence``
+      ``decisions_answers_to_bools`` on the base keys (``__evidence``
       keys are ignored there). ``evidence[key]`` is ``int(choice)`` from
       ``{key}__evidence`` (``type == "choice"`` with a string choice in
       1..N) when the bool is True, else None (missing/wrong-type /
@@ -771,15 +801,18 @@ def plan_auto_agents(
                 need_cc = _answer_true(answers, "credit_cards")
                 need_emp_changed = _answer_true(answers, "employment_changed")
                 need_emp_status = _answer_true(answers, "employment_status_changed")
-                need_emp = need_emp_changed or need_emp_status
-                need_al = _answer_true(answers, "alumni")
-                if need_cc or need_emp or need_al:
+                need_current_employer = _answer_true(answers, "current_employer_mentioned")
+                need_alumni_employment = _answer_true(answers, "alumni")
+                need_emp = (need_emp_changed or need_emp_status
+                            or need_current_employer or need_alumni_employment)
+                need_edu = _answer_true(answers, "education_institution")
+                if need_cc or need_emp or need_edu:
                     allowed: set[str] = set()
                     if need_cc:
                         allowed.add("banking")
                     if need_emp:
                         allowed.add("employment")
-                    if need_al:
+                    if need_edu:
                         allowed.add("education / alumni")
                     sub_ids = [a.id for a in _bi_attrs if _group_of_attr(a) in allowed]
                     if sub_ids:
@@ -790,13 +823,21 @@ def plan_auto_agents(
                             rs.append("employment_changed")
                         if need_emp_status:
                             rs.append("employment_status_changed")
-                        if need_al:
+                        if need_current_employer:
+                            rs.append("current_employer_mentioned")
+                        if need_alumni_employment:
                             rs.append("alumni")
+                        if need_edu:
+                            rs.append("education_institution")
                         result.append({"agent": _bi_ag, "attribute_ids": sub_ids,
                                        "reasons": rs, "scored": True})
-    # e-j. single-question full agents.
+    # e-j. asset (any of has_assets + asset_* true -> full) + single-question full agents.
+    _asset_keys = [q["key"] for q in IDENTIFIER_QUESTIONS
+                   if q["key"] == "has_assets" or q["key"].startswith("asset_")]
+    _asset_reasons = [k for k in _asset_keys if _answer_true(answers, k)]
+    if _asset_reasons:
+        _push_all("asset", _asset_reasons, True)
     _single_map = [
-        ("has_assets", "asset"),
         ("has_accounts", "account"),
         ("expenses", "expense"),
         ("goals", "goal"),
@@ -926,7 +967,7 @@ def _is_filled_entry(entry) -> bool:
 def compute_consistency(answers, outputs, identifier_agent_id="", plan=None) -> dict:
     """Pure consistency v2 snapshot for an auto-select run.
 
-    - answers: normalized {key: bool} (12 questions).
+    - answers: normalized {key: bool} (27 questions).
     - outputs: {agent_id: output dict}.
     - identifier_agent_id: str.
     - plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
@@ -2092,7 +2133,7 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     """Run per-agent payloads concurrently (shared machinery).
 
     Returns (outputs, per_agent, evidence, probs) with costs None; caller
-    prices + totals. Identifier outputs are normalised to 12 yes/no answers
+    prices + totals. Identifier outputs are normalised to 27 yes/no answers
     via split_identifier_result + normalize_identifier_output; the
     per-agent chunk-evidence / noul-probability sidecars land in
     ``evidence``/``probs`` ({agent_id: {question_key: ...}}, identifier
@@ -3811,7 +3852,7 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
 
 @router.post("/auto")
 async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
-    """Auto Select Agents: 12 yes/no questions, then deterministic routing.
+    """Auto Select Agents: 27 yes/no questions, then deterministic routing.
 
     One log per call (one model). Body is RunCreate minus agent_ids
     (those are ignored); ``reuse`` ({agent_id: source_log_id}) is honoured

@@ -1,4 +1,4 @@
-"""Coverage: Agent Identifier 12 yes/no questions + deterministic routing."""
+"""Coverage: Agent Identifier 27 yes/no questions + deterministic routing."""
 
 import app.modules.runs.router as runs_router
 from app.core.openrouter import build_chat_payload
@@ -29,23 +29,58 @@ def _make_attr(client, agent_id, name, description="", group=""):
 def test_identifier_questions_order_and_text():
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
     assert keys == [
-        "has_assets", "has_accounts", "credit_cards", "employment_changed",
-        "employment_status_changed",
-        "alumni", "expenses", "goals", "income", "insurance",
+        "has_assets", "asset_bonds", "asset_cash", "asset_commodity",
+        "asset_etfs", "asset_mutual_funds", "asset_crypto", "asset_fd",
+        "asset_pension", "asset_stocks", "asset_personal_loans",
+        "asset_real_estate", "asset_reits", "asset_other",
+        "has_accounts", "credit_cards", "employment_changed",
+        "employment_status_changed", "current_employer_mentioned",
+        "alumni", "education_institution",
+        "expenses", "goals", "income", "insurance",
         "liabilities", "tax",
     ]
+    assert len(keys) == 27
     by_key = {q["key"]: q["question"] for q in IDENTIFIER_QUESTIONS}
     assert by_key["has_assets"] == (
-        "Did the Client mention about their assets? (Any mention of asset type like - "
-        "bonds, cash, commodity, ETFs, mutual funds, crypto, debt instruments, deposits, "
-        "equity, personal debt that they have given to someone, real estate or property, "
-        "REITS, unlisted stocks or any other asset type)")
+        "Did the Client mention about any of their assets?")
+    assert by_key["asset_bonds"] == (
+        "Does the Client or their family have bonds?")
+    assert by_key["asset_cash"] == (
+        "Does the Client or their family have cash?")
+    assert by_key["asset_commodity"] == (
+        "Does the Client or their family have commodity (gold, silver, platinum, diamonds)?")
+    assert by_key["asset_etfs"] == (
+        "Does the Client have ETFs?")
+    assert by_key["asset_mutual_funds"] == (
+        "Does the Client have mutual funds?")
+    assert by_key["asset_crypto"] == (
+        "Does the Client have crypto (Bitcoin, Ethereum, Solana)?")
+    assert by_key["asset_fd"] == (
+        "Does the Client have Fixed Deposits (FD)?")
+    assert by_key["asset_pension"] == (
+        "Does the Client have Pension Fund (NPS, EPF, PPF)?")
+    assert by_key["asset_stocks"] == (
+        "Does the Client have Stocks or shares?")
+    assert by_key["asset_personal_loans"] == (
+        "Did the Client lend money to friends or family or anyone (personal loans given to others)?")
+    assert by_key["asset_real_estate"] == (
+        "Does the Client have real estate (house, commercial property)?")
+    assert by_key["asset_reits"] == (
+        "Does the Client have REITs?")
+    assert by_key["asset_other"] == (
+        "Does the Client have any other type of assets not covered in the previous questions?")
     assert by_key["credit_cards"] == (
         "Did the Client mention that they have or don't have credit card(s)?")
     assert by_key["employment_changed"] == (
         "Did the Client mention that they have switched company?")
     assert by_key["employment_status_changed"] == (
         "Did the Client mention that their employment status has changed?")
+    assert by_key["current_employer_mentioned"] == (
+        "Did the Client mention which company they work at?")
+    assert by_key["alumni"] == (
+        "Did the client mention any of the companies that they have worked with in the past (even if it was just a day ago)?")
+    assert by_key["education_institution"] == (
+        "Did the client mention which institute, college or university they graduated from?")
     assert by_key["tax"] == (
         "Is any of these applicable for the client - Advance Tax, Rental TDS, "
         "tax filing in India, tax filing outside India, GST services, W8 BEN?")
@@ -96,7 +131,7 @@ def test_identifier_system_content_code_owned():
     assert "true or false" in system.lower()
     assert "CLIENT" in system
     assert "strictly" in system.lower()
-    # Numbered list Q1..Q12.
+    # Numbered list Q1..Q27.
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         assert f"Q{i} ({q['key']}): {q['question']}" in system
     # No candidate roster.
@@ -120,9 +155,9 @@ def test_identifier_preview_branch(client):
     }
     assert "Turtle Finance" in body["system"]
     assert "Q1 (has_assets)" in body["system"]
-    assert "Q12 (tax)" in body["system"]
+    assert "Q27 (tax)" in body["system"]
     assert body["candidates"] == []
-    assert len(body["questions"]) == 12
+    assert len(body["questions"]) == 27
 
     plain = client.get(f"/api/v1/agents/{kc['id']}/prompt-preview").json()
     assert plain["response_format"]["json_schema"]["name"] == "meeting_extraction"
@@ -176,6 +211,27 @@ def test_normalize_boolean_answers():
     # Missing keys become False.
     assert out["liabilities"] is False
     assert set(out.keys()) == {q["key"] for q in IDENTIFIER_QUESTIONS}
+    assert len(out) == 27
+
+
+def test_normalize_old_log_compat_missing_new_keys_false():
+    # Old 12-key logs: missing new keys -> False via generic loops.
+    old = {
+        "has_assets": True, "has_accounts": False, "credit_cards": False,
+        "employment_changed": False, "employment_status_changed": False,
+        "alumni": True, "expenses": False, "goals": False, "income": False,
+        "insurance": False, "liabilities": False, "tax": False,
+    }
+    out = normalize_identifier_output(old)
+    assert len(out) == 27
+    assert out["has_assets"] is True
+    assert out["alumni"] is True
+    for k in ("asset_bonds", "asset_cash", "asset_commodity", "asset_etfs",
+              "asset_mutual_funds", "asset_crypto", "asset_fd",
+              "asset_pension", "asset_stocks", "asset_personal_loans",
+              "asset_real_estate", "asset_reits", "asset_other",
+              "current_employer_mentioned", "education_institution"):
+        assert out[k] is False
 
 
 def test_normalize_non_dict_untouched():
@@ -350,6 +406,78 @@ def test_plan_credit_cards_only():
     bi = next(e for e in plan if e["agent"].name == "basic_info")
     assert bi["attribute_ids"] == ["bi-bank"]
     assert bi["reasons"] == ["credit_cards"]
+
+
+def test_plan_asset_any_of_14():
+    # has_assets alone runs asset full.
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["has_assets"] = True
+    plan = plan_auto_agents(ans, "Other", by_name, attrs_by)
+    asset = next(e for e in plan if e["agent"].name == "asset")
+    assert asset["attribute_ids"] is None
+    assert asset["reasons"] == ["has_assets"]
+    assert asset["scored"] is True
+
+    # Only a sub-key true (has_assets False) still runs asset full.
+    by_name2, attrs_by2 = _plan_setup()
+    ans2 = _false_answers()
+    ans2["asset_crypto"] = True
+    plan2 = plan_auto_agents(ans2, "Other", by_name2, attrs_by2)
+    asset2 = next(e for e in plan2 if e["agent"].name == "asset")
+    assert asset2["attribute_ids"] is None
+    assert asset2["reasons"] == ["asset_crypto"]
+    assert asset2["scored"] is True
+
+    # Multiple sub-keys true -> reasons list all true keys in question order.
+    by_name3, attrs_by3 = _plan_setup()
+    ans3 = _false_answers()
+    ans3["asset_fd"] = True
+    ans3["asset_stocks"] = True
+    plan3 = plan_auto_agents(ans3, "Other", by_name3, attrs_by3)
+    asset3 = next(e for e in plan3 if e["agent"].name == "asset")
+    assert asset3["attribute_ids"] is None
+    assert asset3["reasons"] == ["asset_fd", "asset_stocks"]
+    assert asset3["scored"] is True
+
+    # All false -> asset not planned.
+    by_name4, attrs_by4 = _plan_setup()
+    plan4 = plan_auto_agents(_false_answers(), "Other", by_name4, attrs_by4)
+    assert "asset" not in _plan_names(plan4)
+
+
+def test_plan_employment_via_alumni_only():
+    # alumni now routes to the Employment group (not Education / Alumni).
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["alumni"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-emp"]
+    assert bi["reasons"] == ["alumni"]
+    assert bi["scored"] is True
+
+
+def test_plan_employment_via_current_employer_only():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["current_employer_mentioned"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-emp"]
+    assert bi["reasons"] == ["current_employer_mentioned"]
+    assert bi["scored"] is True
+
+
+def test_plan_education_via_education_institution_only():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["education_institution"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-alu"]
+    assert bi["reasons"] == ["education_institution"]
+    assert bi["scored"] is True
 
 
 def test_plan_insurance_only_tax_only_both():

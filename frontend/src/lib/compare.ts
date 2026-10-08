@@ -501,14 +501,29 @@ function identifierCandidates(agent: CompareAgent, columns: CompareColumn[]): st
   return order;
 }
 
-/** Fixed 12 question keys for v2 identifier answers. */
+/** Fixed 27 question keys for v2 identifier answers. */
 const IDENTIFIER_QUESTION_KEYS = [
   "has_assets",
+  "asset_bonds",
+  "asset_cash",
+  "asset_commodity",
+  "asset_etfs",
+  "asset_mutual_funds",
+  "asset_crypto",
+  "asset_fd",
+  "asset_pension",
+  "asset_stocks",
+  "asset_personal_loans",
+  "asset_real_estate",
+  "asset_reits",
+  "asset_other",
   "has_accounts",
   "credit_cards",
   "employment_changed",
   "employment_status_changed",
+  "current_employer_mentioned",
   "alumni",
+  "education_institution",
   "expenses",
   "goals",
   "income",
