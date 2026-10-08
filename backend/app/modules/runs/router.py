@@ -241,14 +241,47 @@ def normalize_identifier_output(parsed, _candidates=None) -> object:
 IDENTIFIER_EVIDENCE_SUFFIX = "__evidence"
 
 
-def build_identifier_decisions_questions(chunks=None) -> dict:
+def _decisions_chunk_numbers(chunks) -> list[int] | None:
+    """Global chunk numbers for evidence criteria (None when no chunks)."""
+    try:
+        items = list(chunks or [])
+    except Exception:
+        return None
+    if not items:
+        return None
+    nums: list[int] = []
+    for idx, c in enumerate(items, start=1):
+        try:
+            v = c.get("n") if isinstance(c, dict) else None
+            if isinstance(v, bool):
+                raise ValueError
+            v = int(v)  # type: ignore[arg-type]
+            nums.append(v if v >= 1 else idx)
+        except Exception:
+            nums.append(idx)
+    return nums
+
+
+def _evidence_question_entry(key: str, nums: list[int]) -> dict:
+    criteria = {str(v): f"chunk {v}" for v in nums}
+    lo, hi = min(nums), max(nums)
+    return {
+        "type": "choice",
+        "instructions": f"Which transcript chunk ({lo}..{hi}) best supports a true answer to {key}? Reply with the chunk number.",
+        "criteria": criteria,
+    }
+
+
+def build_identifier_decisions_questions(chunks=None, include_evidence: bool = True) -> dict:
     """One noul question per IDENTIFIER_QUESTIONS entry (decisions API).
 
     Keyed by question key: ``{"type": "noul", "instructions": "Q{i} (key):
     question", "criteria": {"true": ..., "false": ...}}``. When ``chunks``
-    (``[{"n": 1-based, "text": ...}]``) is given and non-empty, each base
-    key also gets a ``{key}__evidence`` choice question whose criteria map
-    chunk numbers (``{"1": "chunk 1", ...}``). Pure function.
+    (``[{"n": 1-based, "text": ...}]``) is given and non-empty AND
+    ``include_evidence`` is True (default), each base key also gets a
+    ``{key}__evidence`` choice question whose criteria map chunk numbers
+    (``{"1": "chunk 1", ...}``). Pass ``include_evidence=False`` for the
+    pass-1 (noul-only) bodies of the two-stage decisions flow. Pure function.
     """
     questions: dict = {}
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
@@ -261,36 +294,79 @@ def build_identifier_decisions_questions(chunks=None) -> dict:
                 "false": "Not mentioned for the client, or only someone else's situation.",
             },
         }
-    try:
-        n = len(list(chunks or []))
-    except Exception:
-        n = 0
-    if n > 0:
-        # Criteria use each chunk's GLOBAL number (chunk["n"]), not its
-        # position in this list, so per-window questions (split fan-out
-        # below) cite chunk numbers that stay valid in the review UI. For
-        # the full chunk list the numbers are 1..n contiguous, identical
-        # to the old positional criteria.
-        nums: list[int] = []
-        for idx, c in enumerate(list(chunks or []), start=1):
-            try:
-                v = c.get("n") if isinstance(c, dict) else None
-                if isinstance(v, bool):
-                    raise ValueError
-                v = int(v)  # type: ignore[arg-type]
-                nums.append(v if v >= 1 else idx)
-            except Exception:
-                nums.append(idx)
-        criteria = {str(v): f"chunk {v}" for v in nums}
-        lo, hi = min(nums), max(nums)
-        for q in IDENTIFIER_QUESTIONS:
-            key = q["key"]
-            questions[f"{key}{IDENTIFIER_EVIDENCE_SUFFIX}"] = {
-                "type": "choice",
-                "instructions": f"Which transcript chunk ({lo}..{hi}) best supports a true answer to {key}? Reply with the chunk number.",
-                "criteria": dict(criteria),
-            }
+    if not include_evidence:
+        return questions
+    nums = _decisions_chunk_numbers(chunks)
+    if not nums:
+        return questions
+    # Criteria use each chunk's GLOBAL number (chunk["n"]), not its
+    # position in this list, so per-window questions (split fan-out
+    # below) cite chunk numbers that stay valid in the review UI. For
+    # the full chunk list the numbers are 1..n contiguous, identical
+    # to the old positional criteria.
+    for q in IDENTIFIER_QUESTIONS:
+        key = q["key"]
+        questions[f"{key}{IDENTIFIER_EVIDENCE_SUFFIX}"] = _evidence_question_entry(
+            key, nums)
     return questions
+
+
+def build_identifier_evidence_questions(chunks, keys) -> dict:
+    """Evidence-only choice questions for pass 2 (subset of true keys).
+
+    Returns ``{f"{key}__evidence": choice...}`` only for ``keys`` that are
+    known identifier keys, with window-limited criteria from ``chunks``
+    (GLOBAL numbers, same shape as the full builder). Empty dict when
+    ``chunks`` is empty or no valid keys are given. Pure; never raises.
+    """
+    try:
+        valid = {q["key"] for q in IDENTIFIER_QUESTIONS}
+    except Exception:
+        return {}
+    try:
+        wanted: list[str] = []
+        for k in keys or []:
+            try:
+                if isinstance(k, str) and k in valid and k not in wanted:
+                    wanted.append(k)
+            except Exception:
+                continue
+    except Exception:
+        return {}
+    if not wanted:
+        return {}
+    nums = _decisions_chunk_numbers(chunks)
+    if not nums:
+        return {}
+    out: dict = {}
+    for k in wanted:
+        try:
+            out[f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}"] = _evidence_question_entry(
+                k, nums)
+        except Exception:
+            continue
+    return out
+
+
+def _pass1_true_keys(answers) -> list[str]:
+    """Keys whose pass-1 noul bool is True (window-local). Never raises."""
+    try:
+        bools = decisions_answers_to_bools(answers)
+    except Exception:
+        return []
+    if not isinstance(bools, dict) or "_error" in bools:
+        return []
+    out: list[str] = []
+    try:
+        for q in IDENTIFIER_QUESTIONS:
+            try:
+                if bools.get(q["key"]) is True:
+                    out.append(q["key"])
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
 
 
 # --- Decisions 3-window fan-out (oversized identifier states) -----------------
@@ -1575,12 +1651,16 @@ def _build_agent_requests(
         split_markers: dict = {}
         if is_identifier(agent):
             if is_decision_model(model):
-                # Decisions-model path: noul questions over the SAME numbered
-                # chunks the chat path sees, plus one __evidence choice
-                # question per identifier question. Reasoning effort is never
-                # sent here (it stays in the log column only). The stored
-                # body carries a "transport" marker that is stripped before
-                # POSTing.
+                # Decisions-model path, two stages (uniform shape, all sizes):
+                # pass 1 POSTs the N noul questions ONLY over the SAME
+                # numbered chunks the chat path sees; pass 2 POSTs ONE
+                # evidence-only call per window for that window's pass-1-true
+                # keys (skipped when none). Reasoning effort is never sent
+                # here (it stays in the log column only). The stored body is
+                # the pass-1 first-window body plus a "transport" marker and
+                # an "evidence_request" slot (first attempted pass-2 body,
+                # filled after the calls run, None when no pass 2 ran) —
+                # all storage-only, stripped before POSTing.
                 state_chunks = [dict(c) for c in shared_chunks if isinstance(c, dict)]
                 bounds = None
                 try:
@@ -1589,8 +1669,8 @@ def _build_agent_requests(
                 except Exception:
                     bounds = None
                 if bounds is not None:
-                    # Oversized state: store the FIRST window's body plus
-                    # split markers (same marker pattern as "transport").
+                    # Oversized state: store the FIRST window's pass-1 body
+                    # plus split markers (same marker pattern as "transport").
                     # The per-window bodies cannot all fit requests[agent_id]
                     # (single dict); the call layer rebuilds P2/P3 from the
                     # full chunks + split_formula. Same meeting + same
@@ -1601,14 +1681,16 @@ def _build_agent_requests(
                     first = state_chunks[0:k1]
                     payload_body = build_decisions_payload(
                         model=model, state={"chunks": first},
-                        questions=build_identifier_decisions_questions(first),
+                        questions=build_identifier_decisions_questions(
+                            first, include_evidence=False),
                         provider=(prov if prov else None))
                     split_markers = {"split_windows": 3,
                                      "split_formula": f"{k1},{k2},{k3},{k4}"}
                 else:
                     payload_body = build_decisions_payload(
                         model=model, state={"chunks": state_chunks},
-                        questions=build_identifier_decisions_questions(shared_chunks),
+                        questions=build_identifier_decisions_questions(
+                            shared_chunks, include_evidence=False),
                         provider=(prov if prov else None))
                 transport = "decisions"
             else:
@@ -1631,6 +1713,13 @@ def _build_agent_requests(
         stored_body = copy.deepcopy(payload_body)
         if transport:
             stored_body["transport"] = transport
+            # Pass-2 slot: None until the calls run and fill the first
+            # attempted pass-2 body (stays None when no pass 2 runs).
+            # Storage-only like "transport" (never POSTed, never matched).
+            try:
+                stored_body["evidence_request"] = None
+            except Exception:
+                pass
         if split_markers:
             stored_body.update(split_markers)
         requests[agent.id] = stored_body
@@ -1666,21 +1755,193 @@ def _plan_run(
             snapshots, requests, chunks, fireflies_url)
 
 
-async def _call_decisions_split(stored_body: dict, chunks):
-    """Run the 3 sequential decisions calls for an oversized identifier state.
+_DECISIONS_STORAGE_KEYS = ("transport", "split_windows", "split_formula",
+                            "evidence_request")
 
-    ``stored_body`` is the FIRST window's stored body (with ``transport``,
-    ``split_windows`` and ``split_formula`` markers); ``chunks`` is the FULL
-    global chunk list. P1 is POSTed byte-identical to the stored body minus
-    markers; P2/P3 reuse its model/provider keys with windowed state +
-    window-limited questions. Returns the same 10-tuple as
+
+def _strip_decisions_storage(body: dict) -> dict:
+    """POSTable copy of a stored decisions body (markers stripped)."""
+    try:
+        return {k: v for k, v in (body or {}).items()
+                if k not in _DECISIONS_STORAGE_KEYS}
+    except Exception:
+        return {}
+
+
+def _sum_decisions_usages(ok_usages: list) -> tuple:
+    """Sum successful decisions usages -> (pt, ct, tt, cost, provider, served).
+
+    Tokens sum; cost sums known non-negative finite costs (None when none
+    known); provider/served_model come from the FIRST successful usage.
+    Never raises.
+    """
+    pt = ct = tt = 0
+    for u in ok_usages or []:
+        try:
+            if not isinstance(u, dict):
+                continue
+            v = int(u.get("prompt_tokens", 0) or 0)
+            pt += v if v >= 0 else 0
+        except Exception:
+            pass
+        try:
+            v = int(u.get("completion_tokens", 0) or 0)
+            ct += v if v >= 0 else 0
+        except Exception:
+            pass
+        try:
+            v = int(u.get("total_tokens", 0) or 0)
+            tt += v if v >= 0 else 0
+        except Exception:
+            pass
+    cost = None
+    try:
+        known: list[float] = []
+        for u in ok_usages or []:
+            try:
+                if not isinstance(u, dict):
+                    continue
+                c = u.get("cost")
+                if isinstance(c, bool):
+                    continue
+                if isinstance(c, (int, float)):
+                    import math as _math
+                    f = float(c)
+                    if _math.isfinite(f) and f >= 0:
+                        known.append(f)
+            except Exception:
+                continue
+        cost = float(sum(known)) if known else None
+    except Exception:
+        cost = None
+    provider = ""
+    served_model = ""
+    try:
+        u0 = next((u for u in (ok_usages or []) if isinstance(u, dict)), None)
+        if isinstance(u0, dict):
+            p0 = u0.get("provider", "")
+            provider = p0 if isinstance(p0, str) else ""
+            s0 = u0.get("served_model", "")
+            served_model = s0 if isinstance(s0, str) else ""
+    except Exception:
+        pass
+    return (pt, ct, tt, cost, provider, served_model)
+
+
+async def _complete_decisions_body(body: dict):
+    """POST one decisions body -> (answers|None, usage, dur_ms, err|None).
+
+    Success (dict answers without ``_error``) gives ``(ans, usage, dur,
+    None)``; anything else gives ``(None, {}, dur, message)``. Never raises.
+    """
+    t0 = perf_counter()
+    try:
+        ans, use = await complete_decisions_payload(body)
+        dur = (perf_counter() - t0) * 1000.0
+        if isinstance(ans, dict) and "_error" not in ans:
+            return (ans, use if isinstance(use, dict) else {}, dur, None)
+        try:
+            msg = str(ans.get("_error", "")) if isinstance(ans, dict) else ""
+        except Exception:
+            msg = ""
+        return (None, {}, dur, msg or "invalid decisions answers")
+    except Exception as exc:
+        dur = (perf_counter() - t0) * 1000.0
+        try:
+            msg = str(exc) or "decisions call failed"
+        except Exception:
+            msg = "decisions call failed"
+        return (None, {}, dur, msg)
+
+
+def _decisions_pass2_body(template_clean: dict, win_chunks: list,
+                          true_keys: list) -> dict | None:
+    """Pass-2 POST body for one window (evidence-only) or None to skip.
+
+    Reuses the pass-1 template's model/provider keys with the window's
+    state and evidence-only questions for ``true_keys``. Returns None when
+    there is nothing to ask (no true keys or no questions built). Never
+    raises.
+    """
+    try:
+        if not true_keys:
+            return None
+        questions = build_identifier_evidence_questions(win_chunks, true_keys)
+        if not questions:
+            return None
+        if not isinstance(template_clean, dict):
+            return None
+        body: dict = {}
+        try:
+            body["model"] = template_clean.get("model")
+        except Exception:
+            return None
+        try:
+            body["state"] = {"chunks": win_chunks}
+        except Exception:
+            return None
+        body["questions"] = questions
+        try:
+            prov = template_clean.get("provider")
+            if isinstance(prov, dict) and prov:
+                body["provider"] = copy.deepcopy(prov)
+        except Exception:
+            pass
+        return body
+    except Exception:
+        return None
+
+
+def _combine_window_answers(ans1, ans2, true_keys) -> dict:
+    """Combine one window's pass-1 + pass-2 answers into a single raw dict.
+
+    Pass-1 noul answers plus pass-2 ``__evidence`` entries filtered to
+    ``true_keys`` (pass-1-true in THIS window), so false keys never carry
+    evidence even if pass 2 answered extra. Never raises.
+    """
+    try:
+        combined = dict(ans1) if isinstance(ans1, dict) else {}
+    except Exception:
+        combined = {}
+    try:
+        if not isinstance(ans2, dict) or "_error" in ans2:
+            return combined
+        wanted = set(true_keys or [])
+        for k in list(wanted):
+            try:
+                ek = f"{k}{IDENTIFIER_EVIDENCE_SUFFIX}"
+                if ek in ans2:
+                    combined[ek] = ans2[ek]
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return combined
+
+
+async def _call_decisions_split(stored_body: dict, chunks):
+    """Run two-stage decisions calls for an oversized identifier state.
+
+    ``stored_body`` is the FIRST window's pass-1 stored body (with
+    ``transport``, ``split_windows`` and ``split_formula`` markers plus
+    ``evidence_request``); ``chunks`` is the FULL global chunk list. Per
+    window, in P1/P2/P3 order: pass 1 POSTs the N noul questions only
+    (P1 byte-identical to the stored body minus storage markers; P2/P3
+    reuse its model/provider keys with windowed state + noul-only
+    questions), then pass 2 POSTs ONE evidence-only call for that window's
+    pass-1-true keys (skipped when none). Returns the same 10-tuple as
     ``_call_single_payload``'s decisions branch, or None when the split
     cannot run (bad markers/chunks) so the caller falls back to a single
-    call of the stored body. Merging: per-key OR-bool / first-true evidence
-    / max-prob via ``_merge_decisions_window_answers``; usage sums tokens
-    and cost, duration sums, provider/served_model come from the first
-    successful window; some-ok adds ``"partial": True`` to the merged raw
-    answers; all-failed returns ``{"_error": <last error>}``. Never raises.
+    two-stage call of the stored body. Merging: per-key OR-bool /
+    first-true evidence / max-prob via ``_merge_decisions_window_answers``
+    over the per-window combined answers; usage sums tokens and cost
+    across ALL successful calls (windows x passes), duration sums ALL
+    attempted calls, provider/served_model come from the first successful
+    call; some pass-1-ok windows failed -> ``"partial": True``; all pass-1
+    failed returns ``{"_error": <last pass-1 error>}`` (pass-2 failures
+    never fail a window — that window's evidence is just None). As a side
+    effect the passed-in ``stored_body`` gains ``evidence_request``: the
+    first attempted pass-2 body (or None when no pass 2 ran). Never raises.
     """
     try:
         if not isinstance(stored_body, dict):
@@ -1697,12 +1958,14 @@ async def _call_decisions_split(stored_body: dict, chunks):
             return None
         k1, k2, k3, k4 = bounds
         try:
-            clean = {k: v for k, v in stored_body.items()
-                     if k not in ("transport", "split_windows", "split_formula")}
+            clean = _strip_decisions_storage(stored_body)
         except Exception:
             return None
+        if not isinstance(clean, dict) or not clean:
+            return None
         ranges = [(1, k1), (k2, k3), (k4, n)]
-        bodies: list[dict] = []
+        wins: list[list] = []
+        pass1_bodies: list[dict] = []
         for idx, (s, e) in enumerate(ranges):
             try:
                 win = [dict(c) for c in items[s - 1:e] if isinstance(c, dict)]
@@ -1710,105 +1973,126 @@ async def _call_decisions_split(stored_body: dict, chunks):
                 return None
             if not win:
                 return None
-            if idx == 0:
-                bodies.append(clean)
-            else:
+            wins.append(win)
+            try:
+                # Pass-1 is always noul-only. For new runs P1 stays
+                # byte-identical to the stored pass-1 body minus storage
+                # markers (same deterministic builder); old pre-two-pass
+                # stored bodies (fat questions) are slimmed here on retry.
+                use_clean = False
+                if idx == 0:
+                    try:
+                        q = clean.get("questions", {}) or {}
+                        same_state = (clean.get("state", {}) or {}).get(
+                            "chunks", None) == win
+                        no_ev = not any(str(k).endswith("__evidence") for k in q)
+                        use_clean = bool(same_state and no_ev)
+                    except Exception:
+                        use_clean = False
+                if use_clean:
+                    pass1_bodies.append(clean)
+                else:
+                    pass1_bodies.append(dict(
+                        clean, state={"chunks": win},
+                        questions=build_identifier_decisions_questions(
+                            win, include_evidence=False)))
+            except Exception:
                 try:
-                    bodies.append(dict(clean, state={"chunks": win},
-                                       questions=build_identifier_decisions_questions(win)))
+                    pass1_bodies.append(dict(
+                        clean, state={"chunks": win},
+                        questions=build_identifier_decisions_questions(
+                            win, include_evidence=False)))
                 except Exception:
                     return None
-        results: list = []
-        for body in bodies:
-            t0 = perf_counter()
+        ok_combined: list = []
+        ok_usages: list = []
+        all_durs: list[float] = []
+        pass1_results: list = []  # per-window err (None = ok) for partial
+        last_pass1_err = "decisions call failed"
+        first_evidence_body = None
+        for body1, win in zip(pass1_bodies, wins):
+            ans1, use1, dur1, err1 = await _complete_decisions_body(body1)
             try:
-                ans, use = await complete_decisions_payload(body)
-                dur = (perf_counter() - t0) * 1000.0
-                if isinstance(ans, dict) and "_error" not in ans:
-                    results.append((ans, use if isinstance(use, dict) else {}, dur, None))
-                else:
-                    try:
-                        msg = str(ans.get("_error", "")) if isinstance(ans, dict) else ""
-                    except Exception:
-                        msg = ""
-                    results.append((None, {}, dur, msg or "invalid decisions answers"))
-            except Exception as exc:
-                dur = (perf_counter() - t0) * 1000.0
+                all_durs.append(float(dur1))
+            except Exception:
+                pass
+            if err1 is not None:
+                pass1_results.append(err1)
                 try:
-                    msg = str(exc) or "decisions call failed"
+                    last_pass1_err = str(err1) or last_pass1_err
                 except Exception:
-                    msg = "decisions call failed"
-                results.append((None, {}, dur, msg))
+                    pass
+                continue
+            pass1_results.append(None)
+            try:
+                ok_usages.append(use1 if isinstance(use1, dict) else {})
+            except Exception:
+                pass
+            try:
+                true_keys = _pass1_true_keys(ans1)
+            except Exception:
+                true_keys = []
+            body2 = _decisions_pass2_body(clean, win, true_keys)
+            if body2 is None:
+                try:
+                    ok_combined.append(dict(ans1) if isinstance(ans1, dict) else {})
+                except Exception:
+                    pass
+                continue
+            if first_evidence_body is None:
+                try:
+                    first_evidence_body = copy.deepcopy(body2)
+                except Exception:
+                    first_evidence_body = body2
+            ans2, use2, dur2, err2 = await _complete_decisions_body(body2)
+            try:
+                all_durs.append(float(dur2))
+            except Exception:
+                pass
+            if err2 is None:
+                try:
+                    ok_usages.append(use2 if isinstance(use2, dict) else {})
+                except Exception:
+                    pass
+                try:
+                    ok_combined.append(_combine_window_answers(ans1, ans2, true_keys))
+                except Exception:
+                    try:
+                        ok_combined.append(dict(ans1))
+                    except Exception:
+                        pass
+            else:
+                # Pass-2 failure never fails the window: bools/probs stand,
+                # this window's evidence is just None.
+                try:
+                    ok_combined.append(dict(ans1) if isinstance(ans1, dict) else {})
+                except Exception:
+                    pass
         try:
-            dur_sum = float(sum(float(r[2]) for r in results))
+            dur_sum = float(sum(all_durs)) if all_durs else 0.0
         except Exception:
             dur_sum = 0.0
-        ok = [(a, u) for (a, u, _d, e) in results if e is None]
-        if not ok:
+        try:
+            stored_body["evidence_request"] = first_evidence_body
+        except Exception:
+            pass
+        if not ok_combined:
             try:
-                last_err = str(results[-1][3]) if results else "decisions call failed"
+                last_err = str(last_pass1_err) or "decisions call failed"
             except Exception:
                 last_err = "decisions call failed"
             return ({"_error": last_err or "decisions call failed"},
                     0, 0, 0, 0, dur_sum, "", None, None, "")
-        merged = _merge_decisions_window_answers([a for (a, _u) in ok], n)
-        if len(ok) < len(results):
-            # Some (not all) windows failed: merge from the ok windows and
-            # mark it. No log-column change: like "_error", "partial" rides
-            # as a top-level output key (consumers copy it onto the
-            # normalised answers; there is no chat-partial output
-            # convention to mirror — none exists in this codebase).
+        merged = _merge_decisions_window_answers(ok_combined, n)
+        if len(pass1_results) > len(ok_combined):
+            # Some (not all) pass-1 windows failed: merge from the ok
+            # windows and mark it (same convention as before; pass-2
+            # failures never set partial).
             try:
                 merged["partial"] = True
             except Exception:
                 pass
-        pt = ct = tt = 0
-        for (_a, u) in ok:
-            try:
-                v = int(u.get("prompt_tokens", 0) or 0)
-                pt += v if v >= 0 else 0
-            except Exception:
-                pass
-            try:
-                v = int(u.get("completion_tokens", 0) or 0)
-                ct += v if v >= 0 else 0
-            except Exception:
-                pass
-            try:
-                v = int(u.get("total_tokens", 0) or 0)
-                tt += v if v >= 0 else 0
-            except Exception:
-                pass
-        cost = None
-        try:
-            known: list[float] = []
-            for (_a, u) in ok:
-                try:
-                    c = u.get("cost")
-                    if isinstance(c, bool):
-                        continue
-                    if isinstance(c, (int, float)):
-                        import math as _math
-                        f = float(c)
-                        if _math.isfinite(f) and f >= 0:
-                            known.append(f)
-                except Exception:
-                    continue
-            cost = float(sum(known)) if known else None
-        except Exception:
-            cost = None
-        provider = ""
-        served_model = ""
-        try:
-            u0 = ok[0][1]
-            p0 = u0.get("provider", "")
-            if isinstance(p0, str):
-                provider = p0
-            s0 = u0.get("served_model", "")
-            if isinstance(s0, str):
-                served_model = s0
-        except Exception:
-            pass
+        pt, ct, tt, cost, provider, served_model = _sum_decisions_usages(ok_usages)
         return (merged, pt, ct, tt, 0, dur_sum, provider, cost, None, served_model)
     except Exception:
         return None
@@ -1823,15 +2107,22 @@ async def _call_single_payload(payload_body: dict, chunks=None):
     None, None, ""). ``actual_cost`` is usage.cost (None when unknown);
     preferred over tokens x catalog price for dynamic routers.
     ``served_model`` is the top-level response model ("" when absent).
-    Decisions bodies (``transport == "decisions"``) go to
-    ``complete_decisions_payload`` (markers stripped before POST) and return
-    the same 10-tuple shape with ``reasoning_tokens = 0`` and
-    ``cost_details = None``. Split bodies (``split_windows == 3`` plus a
-    valid ``split_formula``) fan out to 3 sequential decisions calls over
-    the FULL ``chunks`` list via ``_call_decisions_split`` (usage summed,
-    some-ok marked ``"partial"``); without usable chunks they fall back to
-    a single call of the stored (first-window) body. ``chunks`` is ignored
-    for chat bodies.
+    Decisions bodies (``transport == "decisions"``) always run TWO stages:
+    pass 1 POSTs the N noul questions only, pass 2 POSTs ONE
+    evidence-only call for the pass-1-true keys (skipped when none);
+    storage markers (``transport``/``split_windows``/``split_formula``/
+    ``evidence_request``) are stripped before POST. The same 10-tuple
+    shape returns with ``reasoning_tokens = 0`` and ``cost_details =
+    None``; usage sums tokens + cost across both passes, duration sums
+    both calls, provider/served_model come from the first success. Split
+    bodies (``split_windows == 3`` plus a valid ``split_formula``) fan out
+    to the per-window two-stage flow over the FULL ``chunks`` list via
+    ``_call_decisions_split`` (usage summed, some pass-1-ok marked
+    ``"partial"``); without usable chunks they fall back to a single
+    two-stage call of the stored (first-window) body. As a side effect a
+    decisions ``payload_body`` gains ``evidence_request`` (the POSTed
+    pass-2 body, or None when no pass 2 ran) so callers can persist it.
+    ``chunks`` is ignored for chat bodies.
     """
     if isinstance(payload_body, dict) and payload_body.get("transport") == "decisions":
         if payload_body.get("split_windows") == 3:
@@ -1841,63 +2132,80 @@ async def _call_single_payload(payload_body: dict, chunks=None):
                 split_res = None
             if split_res is not None:
                 return split_res
-        decide_start = perf_counter()
+        # Single-window two-stage flow (uniform shape with the split path).
         try:
-            clean_body = {k: v for k, v in payload_body.items()
-                          if k not in ("transport", "split_windows", "split_formula")}
-            answers, usage = await complete_decisions_payload(clean_body)
-            # RAW answers dict: every identifier consumer
-            # (_stream_fresh_results._one, auto_run, retry_agent, create
-            # path) calls split_identifier_result then
-            # normalize_identifier_output(bools) itself.
-            parsed = answers if isinstance(answers, dict) else {}
+            clean_body = _strip_decisions_storage(payload_body)
+        except Exception:
+            clean_body = {}
+        try:
+            # Slim old pre-two-pass bodies (fat questions) on retry; new
+            # runs are already noul-only so the rebuild is identical.
+            q0 = clean_body.get("questions", {}) if isinstance(clean_body, dict) else {}
+            if isinstance(q0, dict) and any(
+                    str(k).endswith("__evidence") for k in q0):
+                st = (clean_body.get("state", {}) or {}).get("chunks", [])
+                if not isinstance(st, list):
+                    st = []
+                clean_body = dict(
+                    clean_body,
+                    questions=build_identifier_decisions_questions(
+                        st, include_evidence=False))
+        except Exception:
+            pass
+        ans1, use1, dur1, err1 = await _complete_decisions_body(clean_body)
+        if err1 is not None:
             try:
-                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-                total_tokens = int(usage.get("total_tokens", 0) or 0)
+                payload_body["evidence_request"] = None
             except Exception:
-                prompt_tokens, completion_tokens, total_tokens = 0, 0, 0
-            if prompt_tokens < 0:
-                prompt_tokens = 0
-            if completion_tokens < 0:
-                completion_tokens = 0
-            if total_tokens < 0:
-                total_tokens = 0
-            reasoning_tokens = 0
+                pass
+            return ({"_error": err1 or "decisions call failed"},
+                    0, 0, 0, 0, dur1, "", None, None, "")
+        try:
+            true_keys = _pass1_true_keys(ans1)
+        except Exception:
+            true_keys = []
+        try:
+            win_chunks = (clean_body.get("state", {}) or {}).get("chunks", [])
+            if not isinstance(win_chunks, list):
+                win_chunks = []
+        except Exception:
+            win_chunks = []
+        body2 = _decisions_pass2_body(clean_body, win_chunks, true_keys)
+        if body2 is None:
             try:
-                served = usage.get("provider", "") if isinstance(usage, dict) else ""
+                payload_body["evidence_request"] = None
             except Exception:
-                served = ""
-            if not isinstance(served, str):
-                served = ""
+                pass
+            parsed = ans1 if isinstance(ans1, dict) else {}
+            pt, ct, tt, cost, served, served_model = _sum_decisions_usages(
+                [use1 if isinstance(use1, dict) else {}])
+            return (parsed, pt, ct, tt, 0, dur1, served, cost, None, served_model)
+        try:
+            payload_body["evidence_request"] = copy.deepcopy(body2)
+        except Exception:
             try:
-                actual = usage.get("cost") if isinstance(usage, dict) else None
+                payload_body["evidence_request"] = body2
             except Exception:
-                actual = None
-            if not isinstance(actual, (int, float)):
-                actual = None
-            else:
-                try:
-                    import math as _math
-                    if not (_math.isfinite(float(actual)) and float(actual) >= 0):
-                        actual = None
-                    else:
-                        actual = float(actual)
-                except Exception:
-                    actual = None
-            details = None
+                pass
+        ans2, use2, dur2, err2 = await _complete_decisions_body(body2)
+        try:
+            dur_sum = float(dur1) + float(dur2)
+        except Exception:
+            dur_sum = 0.0
+        if err2 is None:
             try:
-                served_model = usage.get("served_model", "") if isinstance(usage, dict) else ""
+                combined = _combine_window_answers(ans1, ans2, true_keys)
             except Exception:
-                served_model = ""
-            if not isinstance(served_model, str):
-                served_model = ""
-            duration_ms = (perf_counter() - decide_start) * 1000.0
-            return (parsed, prompt_tokens, completion_tokens, total_tokens,
-                    reasoning_tokens, duration_ms, served, actual, details, served_model)
-        except Exception as exc:
-            duration_ms = (perf_counter() - decide_start) * 1000.0
-            return {"_error": str(exc)}, 0, 0, 0, 0, duration_ms, "", None, None, ""
+                combined = ans1 if isinstance(ans1, dict) else {}
+            pt, ct, tt, cost, served, served_model = _sum_decisions_usages(
+                [use1 if isinstance(use1, dict) else {},
+                 use2 if isinstance(use2, dict) else {}])
+            return (combined, pt, ct, tt, 0, dur_sum, served, cost, None, served_model)
+        # Pass-2 failure never fails the run: bools/probs stand, evidence None.
+        parsed = ans1 if isinstance(ans1, dict) else {}
+        pt, ct, tt, cost, served, served_model = _sum_decisions_usages(
+            [use1 if isinstance(use1, dict) else {}])
+        return (parsed, pt, ct, tt, 0, dur_sum, served, cost, None, served_model)
     agent_start = perf_counter()
     try:
         parsed, usage = await complete_json_payload(payload_body)
@@ -2172,10 +2480,12 @@ def _request_match_key(body):
 
     Chat bodies compare by ``messages`` (exactly as before); decisions
     bodies (no ``messages`` key) compare by
-    ``(model, state, questions)``. The decisions ``transport`` marker,
-    ``split_windows``/``split_formula`` markers and ``provider`` never
-    affect matching (provider/effort are already SQL-filtered per row).
-    Non-dict inputs compare as-is.
+    ``(model, state, questions)`` — the pass-1 MAIN body only. The
+    decisions ``transport`` marker, ``split_windows``/``split_formula``
+    markers, ``evidence_request`` slot and ``provider`` never affect
+    matching (provider/effort are already SQL-filtered per row; the extra
+    keys are simply not part of the returned tuple, so no logic change
+    was needed for the two-stage flow). Non-dict inputs compare as-is.
     """
     try:
         if isinstance(body, dict) and "messages" in body:
@@ -2348,6 +2658,13 @@ async def _stream_fresh_results(fresh_agents: list[Agent], requests: dict,
         body = copy.deepcopy(requests.get(agent.id, {}))
         (parsed, pt, ct, tt, rt, dur, served,
          actual, details, served_model) = await _call_single_payload(body, chunks)
+        try:
+            if isinstance(body, dict) and body.get("transport") == "decisions":
+                orig = requests.get(agent.id)
+                if isinstance(orig, dict):
+                    orig["evidence_request"] = copy.deepcopy(body.get("evidence_request"))
+        except Exception:
+            pass
         ev_side = None
         pr_side = None
         try:
@@ -3891,6 +4208,14 @@ async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
     ident_body = copy.deepcopy(requests_ident.get(ident_id, {}))
     (parsed_ident, ipt, ict, itt, irt, idur, iserved,
      iactual, idetails, iserved_model) = await _call_single_payload(ident_body, chunks)
+    try:
+        if isinstance(ident_body, dict) and ident_body.get("transport") == "decisions":
+            orig_ident = requests_ident.get(ident_id)
+            if isinstance(orig_ident, dict):
+                orig_ident["evidence_request"] = copy.deepcopy(
+                    ident_body.get("evidence_request"))
+    except Exception:
+        pass
     evidence_all: dict = {}
     probs_all: dict = {}
     if isinstance(parsed_ident, dict) and "_error" not in parsed_ident:
@@ -4135,6 +4460,15 @@ async def retry_agent(log_id: str, payload: RetryAgentIn, db: Session = Depends(
             retry_chunks = None
         (parsed, pt, ct, tt, rt, dur, served,
          actual_cost, cost_details, served_model) = await _call_single_payload(stored_body, retry_chunks)
+        try:
+            if isinstance(stored_body, dict) and stored_body.get("transport") == "decisions":
+                reqs = log.requests if isinstance(getattr(log, "requests", None), dict) else None
+                if isinstance(reqs, dict) and isinstance(reqs.get(agent_id), dict):
+                    reqs[agent_id]["evidence_request"] = copy.deepcopy(
+                        stored_body.get("evidence_request"))
+                    flag_modified(log, "requests")
+        except Exception:
+            pass
     # Identifier split + normalisation when the retried agent is the
     # identifier (same as every other identifier consumer). Sidecars merge
     # into the log columns without touching other agents' keys; the
