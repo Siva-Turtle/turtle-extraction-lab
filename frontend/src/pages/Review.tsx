@@ -188,10 +188,16 @@ function ModelCell({
           <BoolMark value={side.value} />
         )}
         {showProb && (
+          // Stored noul prob is P(answer is TRUE); the cell shows confidence in
+          // the DISPLAYED answer (p when TRUE, 1 - p when FALSE). Raw P(true)
+          // stays inspectable via the title tooltip.
           <span
             className={cn(
               "font-mono text-[11px]",
-              !failed && typeof side.prob === "number" && Number.isFinite(side.prob)
+              !failed &&
+                typeof side.prob === "number" &&
+                Number.isFinite(side.prob) &&
+                typeof side.value === "boolean"
                 ? "text-[#4a5058] dark:text-[#C3C2B7]"
                 : "text-[#8a8f98]",
             )}
@@ -199,12 +205,15 @@ function ModelCell({
               failed && side.error
                 ? side.error
                 : typeof side.prob === "number"
-                  ? `noul probability ${side.prob}`
+                  ? `P(true) = ${side.prob.toFixed(2)}`
                   : "no probability recorded"
             }
           >
-            {!failed && typeof side.prob === "number" && Number.isFinite(side.prob)
-              ? `p ${side.prob.toFixed(2)}`
+            {!failed &&
+            typeof side.prob === "number" &&
+            Number.isFinite(side.prob) &&
+            typeof side.value === "boolean"
+              ? `p ${(side.value ? side.prob : 1 - side.prob).toFixed(2)}`
               : "p —"}
           </span>
         )}
