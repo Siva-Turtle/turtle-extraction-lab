@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Pencil, Scale, Star } from "lucide-react";
+import { ExternalLink, EyeOff, Pencil, Scale, Star } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { serverDetail } from "../lib/format";
@@ -16,11 +16,13 @@ import {
   isStarred,
   loadBatchNames,
   loadBatchSel,
+  loadHiddenBatches,
   pairGroups,
   persistStars,
   remapStars,
   saveBatchNames,
   saveBatchSel,
+  saveHiddenBatches,
   toggleStar,
 } from "../lib/review";
 import type { ReviewBatch, ReviewRow, ReviewSide } from "../lib/review";
@@ -365,6 +367,7 @@ export default function Review(): React.JSX.Element {
   const [batchNames, setBatchNames] = React.useState<Record<string, string>>(
     () => loadBatchNames(),
   );
+  const [hiddenBatches, setHiddenBatches] = React.useState<string[]>(() => loadHiddenBatches());
   const [stars, setStars] = React.useState<string[]>([]);
   const [starsLoading, setStarsLoading] = React.useState(true);
   const [remarksFor, setRemarksFor] = React.useState<string | null>(null);
@@ -403,6 +406,27 @@ export default function Review(): React.JSX.Element {
   const groups = React.useMemo(() => pairGroups(logs), [logs]);
   const batches = React.useMemo(() => clusterBatches(groups), [groups]);
 
+  // Hidden batches (browser-local, reversible): excluded from chips, rows,
+  // and counts, but the underlying groups/logs are untouched.
+  const hiddenSet = React.useMemo(() => new Set(hiddenBatches), [hiddenBatches]);
+  const visibleBatches = React.useMemo(
+    () => batches.filter((b) => !hiddenSet.has(b.id)),
+    [batches, hiddenSet],
+  );
+  const hiddenGroupIds = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const b of batches) {
+      if (hiddenSet.has(b.id)) {
+        for (const gid of b.groupIds) out.add(gid);
+      }
+    }
+    return out;
+  }, [batches, hiddenSet]);
+  const visibleGroups = React.useMemo(
+    () => groups.filter((g) => !hiddenGroupIds.has(g.id)),
+    [groups, hiddenGroupIds],
+  );
+
   // One-time star-key migration once both fetches have succeeded. Idempotent
   // (already-`meeting:` keys pass through) and self-healing on reload when
   // the PUT fails, since the server still holds the old keys.
@@ -426,11 +450,12 @@ export default function Review(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stars, starsLoading, logsQuery.isSuccess, logs]);
 
-  // Drop a persisted batch once the fetched groups no longer contain it.
+  // Drop a persisted batch once the fetched groups no longer contain it,
+  // or once it gets hidden (fall back to All).
   React.useEffect(() => {
     if (groups.length === 0 || batchId === null) return;
-    if (!batches.some((b) => b.id === batchId)) setBatchId(null);
-  }, [groups.length, batches, batchId]);
+    if (!visibleBatches.some((b) => b.id === batchId)) setBatchId(null);
+  }, [groups.length, visibleBatches, batchId]);
 
   // Persist where Siva left off (selected batch id; All = null).
   React.useEffect(() => {
@@ -441,19 +466,23 @@ export default function Review(): React.JSX.Element {
     saveBatchNames(batchNames);
   }, [batchNames]);
 
+  React.useEffect(() => {
+    saveHiddenBatches(hiddenBatches);
+  }, [hiddenBatches]);
+
   const batchGroupIds = React.useMemo(() => {
     if (batchId === null) return null;
-    const found = batches.find((b) => b.id === batchId);
+    const found = visibleBatches.find((b) => b.id === batchId);
     return found ? new Set(found.groupIds) : new Set<string>();
-  }, [batches, batchId]);
+  }, [visibleBatches, batchId]);
 
-  // Batch chip selects ALL of that batch's groups; All = every group.
+  // Batch chip selects ALL of that batch's groups; All = every visible group.
   const selectedGroups = React.useMemo(
     () =>
       batchGroupIds === null
-        ? groups
-        : groups.filter((g) => batchGroupIds.has(g.id)),
-    [groups, batchGroupIds],
+        ? visibleGroups
+        : visibleGroups.filter((g) => batchGroupIds.has(g.id)),
+    [visibleGroups, batchGroupIds],
   );
 
   const starredSet = React.useMemo(() => new Set(stars), [stars]);
@@ -524,6 +553,11 @@ export default function Review(): React.JSX.Element {
     }
   }
 
+  function hideBatch(batch: ReviewBatch): void {
+    setHiddenBatches((prev) => (prev.includes(batch.id) ? prev : [...prev, batch.id]));
+    if (batchId === batch.id) setBatchId(null);
+  }
+
   function saveRemarksForCell(runId: string, agent: string, attr: string, text: string): void {
     if (runId === "") return;
     // Current rating from the optimistic overlay (button is disabled until
@@ -592,11 +626,11 @@ export default function Review(): React.JSX.Element {
                 : "bg-[#f1f2f3] text-[#4a5058] hover:text-[#1d1d1d] dark:bg-white/5 dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
             )}
           >
-            All · {groups.length}
+            All · {visibleGroups.length}
           </button>
-          {batches.map((b, i) => {
+          {visibleBatches.map((b, i) => {
             const active = batchId === b.id;
-            const latest = i === batches.length - 1;
+            const latest = i === visibleBatches.length - 1;
             const label = batchDisplayName(b, batchNames);
             return (
               <span key={b.id} className="inline-flex items-center gap-1">
@@ -624,9 +658,28 @@ export default function Review(): React.JSX.Element {
                 >
                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
+                <button
+                  type="button"
+                  onClick={() => hideBatch(b)}
+                  title={`Hide ${label}`}
+                  aria-label={`Hide ${label}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a8f98] transition-colors hover:border-[#1d1d1d] hover:text-[#1d1d1d] dark:hover:border-[#F0EFEC] dark:hover:text-[#F0EFEC]"
+                >
+                  <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
               </span>
             );
           })}
+          {hiddenBatches.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setHiddenBatches([])}
+              title="Restore all hidden batches"
+              className="px-2 py-2 font-heading text-xs font-bold text-[#8a8f98] hover:text-[#1d1d1d] dark:hover:text-[#F0EFEC]"
+            >
+              Hidden ({hiddenBatches.length}) — show
+            </button>
+          )}
         </div>
       </Card>
 

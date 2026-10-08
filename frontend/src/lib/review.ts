@@ -670,6 +670,7 @@ export type ReviewBatch = {
 
 export const BATCH_NAMES_KEY = "review:batchNames";
 export const BATCH_SEL_KEY = "review:batchSel";
+export const HIDDEN_BATCHES_KEY = "review:hiddenBatches";
 
 export type BatchSelection = {
   /** Selected batch id; null = All batches. */
@@ -810,6 +811,28 @@ export function loadBatchSel(): BatchSelection | null {
 export function saveBatchSel(sel: BatchSelection): void {
   try {
     storageSet(BATCH_SEL_KEY, JSON.stringify({ batchId: sel.batchId ?? null }));
+  } catch {
+    // ignore
+  }
+}
+
+/** Batch ids the user hid from the chips (reversible, data untouched). Never throws. */
+export function loadHiddenBatches(): string[] {
+  try {
+    const raw = storageGet(HIDDEN_BATCHES_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === "string" && v !== "");
+  } catch {
+    return [];
+  }
+}
+
+export function saveHiddenBatches(ids: string[]): void {
+  try {
+    const clean = (ids ?? []).filter((v) => typeof v === "string" && v !== "");
+    storageSet(HIDDEN_BATCHES_KEY, JSON.stringify(clean));
   } catch {
     // ignore
   }
