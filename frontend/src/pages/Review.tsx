@@ -12,11 +12,13 @@ import {
   chunkText,
   clusterBatches,
   fetchStars,
+  isErrorRow,
   isStarred,
   loadBatchNames,
   loadBatchSel,
   pairGroups,
   persistStars,
+  remapStars,
   saveBatchNames,
   saveBatchSel,
   toggleStar,
@@ -31,12 +33,14 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { ThumbButtons } from "../components/ui/ThumbButtons";
 import { RemarksPopover } from "../components/ui/RemarksPopover";
-import { SingleSelectFilter } from "../components/ui/Combobox";
+import { MultiSelectFilter } from "../components/ui/Combobox";
 
-type Mode = "discrepancies" | "all" | "starred";
+type Mode = "discrepancies" | "fn" | "fp" | "all" | "starred";
 
 const MODE_LABELS: Record<Mode, string> = {
   discrepancies: "Discrepancies",
+  fn: "FN",
+  fp: "FP",
   all: "All",
   starred: "Starred",
 };
@@ -354,7 +358,7 @@ export default function Review(): React.JSX.Element {
   const narrow = useIsNarrow();
   const feedback = useFeedback();
   const [mode, setMode] = React.useState<Mode>("discrepancies");
-  const [question, setQuestion] = React.useState("all");
+  const [attrs, setAttrs] = React.useState<string[]>(() => [...IDENTIFIER_QUESTION_KEYS]);
   const [batchId, setBatchId] = React.useState<string | null>(
     () => loadBatchSel()?.batchId ?? null,
   );
@@ -364,6 +368,11 @@ export default function Review(): React.JSX.Element {
   const [stars, setStars] = React.useState<string[]>([]);
   const [starsLoading, setStarsLoading] = React.useState(true);
   const [remarksFor, setRemarksFor] = React.useState<string | null>(null);
+  // One-time star-key migration (`run_group_id|qkey` -> `meeting:<id>|qkey`):
+  // runs once, only after a successful stars fetch AND a successful logs
+  // fetch, and PUTs back only when a key actually changed.
+  const starsOkRef = React.useRef(false);
+  const remapDoneRef = React.useRef(false);
 
   // Server-persisted stars: load once on mount. The rest of the UI stays
   // usable while loading; failure toasts with a retry click.
@@ -371,6 +380,7 @@ export default function Review(): React.JSX.Element {
     setStarsLoading(true);
     try {
       setStars(await fetchStars());
+      starsOkRef.current = true;
     } catch {
       toast.error("stars unavailable, retry", {
         action: { label: "Retry", onClick: () => void loadStarsFromServer() },
@@ -392,6 +402,29 @@ export default function Review(): React.JSX.Element {
   const logs = logsQuery.data ?? [];
   const groups = React.useMemo(() => pairGroups(logs), [logs]);
   const batches = React.useMemo(() => clusterBatches(groups), [groups]);
+
+  // One-time star-key migration once both fetches have succeeded. Idempotent
+  // (already-`meeting:` keys pass through) and self-healing on reload when
+  // the PUT fails, since the server still holds the old keys.
+  React.useEffect(() => {
+    if (remapDoneRef.current || starsLoading || !starsOkRef.current || !logsQuery.isSuccess) {
+      return;
+    }
+    remapDoneRef.current = true;
+    try {
+      const remapped = remapStars(stars, logs);
+      const changed =
+        remapped.length !== stars.length || remapped.some((s, i) => s !== stars[i]);
+      if (!changed) return;
+      setStars(remapped);
+      void persistStars(remapped).catch(() => {
+        toast.error("Could not migrate stars to meeting keys");
+      });
+    } catch {
+      // ignore (stars stay usable under the old keys until reload)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stars, starsLoading, logsQuery.isSuccess, logs]);
 
   // Drop a persisted batch once the fetched groups no longer contain it.
   React.useEffect(() => {
@@ -425,13 +458,30 @@ export default function Review(): React.JSX.Element {
 
   const starredSet = React.useMemo(() => new Set(stars), [stars]);
   const allRows = React.useMemo(() => buildRows(selectedGroups), [selectedGroups]);
+  const attrSet = React.useMemo(() => new Set(attrs), [attrs]);
   const rows = React.useMemo(() => {
     let out = allRows;
-    if (mode === "discrepancies") out = out.filter((r) => !r.agree);
+    // Opus-as-truth (matches the eval convention): FN = Opus true / Jev
+    // false (missed), FP = Jev true / Opus false (extra). Only comparable
+    // rows qualify — missing-side and error rows are excluded from FN/FP.
+    // Discrepancies shows comparable disagreements + error rows;
+    // missing-side rows appear only under All.
+    if (mode === "discrepancies") out = out.filter((r) => !r.agree && (r.comparable || isErrorRow(r)));
+    else if (mode === "fn")
+      out = out.filter(
+        (r) =>
+          r.comparable && !isErrorRow(r) && r.opus.value === true && r.jev.value === false,
+      );
+    else if (mode === "fp")
+      out = out.filter(
+        (r) =>
+          r.comparable && !isErrorRow(r) && r.jev.value === true && r.opus.value === false,
+      );
     else if (mode === "starred") out = out.filter((r) => starredSet.has(r.key));
-    if (question !== "all") out = out.filter((r) => r.questionKey === question);
+    if (attrSet.size !== IDENTIFIER_QUESTION_KEYS.length)
+      out = out.filter((r) => attrSet.has(r.questionKey));
     return out;
-  }, [allRows, mode, question, starredSet]);
+  }, [allRows, mode, attrSet, starredSet]);
 
   // Rated-progress tally over the filtered rows (2 rateable cells per row).
   const rated = React.useMemo(() => {
@@ -485,12 +535,23 @@ export default function Review(): React.JSX.Element {
       .catch(() => undefined);
   }
 
-  const questionOptions = React.useMemo(
-    () => [
-      { value: "all", label: "All questions" },
-      ...IDENTIFIER_QUESTION_KEYS.map((k) => ({ value: k, label: k })),
-    ],
-    [],
+  // First sent-question text seen per attribute (what the model actually
+  // saw) for the Attributes multi-select sublabels.
+  const attrQuestionText = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of allRows) {
+      if (!m.has(r.questionKey) && r.question !== "") m.set(r.questionKey, r.question);
+    }
+    return m;
+  }, [allRows]);
+
+  const attrOptions = React.useMemo(
+    () =>
+      IDENTIFIER_QUESTION_KEYS.map((k) => {
+        const sub = attrQuestionText.get(k);
+        return sub ? { value: k, label: k, sub } : { value: k, label: k };
+      }),
+    [attrQuestionText],
   );
 
   return (
@@ -576,7 +637,7 @@ export default function Review(): React.JSX.Element {
             aria-label="Row filter"
             className="flex items-center gap-1 rounded-full border border-[#e5e7eb] bg-[#f1f2f3] p-1 dark:border-white/10 dark:bg-white/5"
           >
-            {(["discrepancies", "all", "starred"] as Mode[]).map((m) => {
+            {(["discrepancies", "fn", "fp", "all", "starred"] as Mode[]).map((m) => {
               const active = mode === m;
               return (
                 <button
@@ -585,7 +646,7 @@ export default function Review(): React.JSX.Element {
                   aria-pressed={active}
                   onClick={() => setMode(m)}
                   className={cn(
-                    "rounded-full px-4 py-2 font-heading text-xs font-bold capitalize transition-colors",
+                    "rounded-full px-4 py-2 font-heading text-xs font-bold transition-colors",
                     active
                       ? "bg-white text-[#1d1d1d] shadow-[0_1px_4px_rgba(29,29,29,0.12)] dark:bg-[#2fdebf] dark:text-[#1d1d1d]"
                       : "text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]",
@@ -597,15 +658,33 @@ export default function Review(): React.JSX.Element {
             })}
           </div>
           <div className="min-w-48 flex-1">
-            <SingleSelectFilter
-              options={questionOptions}
-              value={question}
-              onChange={setQuestion}
-              placeholder="All questions"
-              ariaLabel="Filter by question"
-              filterPlaceholder="Search questions…"
+            <MultiSelectFilter
+              options={attrOptions}
+              selected={attrs}
+              onChange={setAttrs}
+              placeholder="All attributes"
+              ariaLabel="Filter by attribute"
+              filterPlaceholder="Search attributes…"
               emptyText="No matches."
             />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setAttrs([...IDENTIFIER_QUESTION_KEYS])}
+              title="Select all attributes"
+              className="rounded-full px-3 py-2 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setAttrs([])}
+              title="Clear attribute selection"
+              className="rounded-full px-3 py-2 font-heading text-xs font-bold text-[#4a5058] hover:text-[#1d1d1d] dark:text-[#C3C2B7] dark:hover:text-[#F0EFEC]"
+            >
+              None
+            </button>
           </div>
           <span className="font-heading text-xs font-bold text-[#4a5058] dark:text-[#C3C2B7]">
             {rows.length} rows · rated {rated}/{totalCells} cells ·{" "}
@@ -645,9 +724,13 @@ export default function Review(): React.JSX.Element {
           <p className="font-heading text-sm text-[#4a5058] dark:text-[#C3C2B7]">
             {mode === "discrepancies"
               ? "No disagreements — Jev and Opus agree on every question here."
-              : mode === "starred"
-                ? "No starred rows match these filters — tap ★ on a row to bookmark it."
-                : "No rows match these filters."}
+              : mode === "fn"
+                ? "No missed answers — Jev caught everything Opus flagged here."
+                : mode === "fp"
+                  ? "No extra answers — Jev flagged nothing Opus didn't here."
+                  : mode === "starred"
+                    ? "No starred rows match these filters — tap ★ on a row to bookmark it."
+                    : "No rows match these filters."}
           </p>
         </Card>
       ) : narrow ? (

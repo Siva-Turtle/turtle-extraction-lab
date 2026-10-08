@@ -1,7 +1,8 @@
 // Review page helpers (pure functions, no React): Jev-vs-Opus identifier
-// eval pairs. One ReviewGroup per run_group_id that has both a
-// `typesafe/jev-*` log and an `anthropic/*` log; one ReviewRow per group x
-// per identifier question key.
+// eval pairs. One ReviewGroup per meeting_id that has a `typesafe/jev-*`
+// log and/or an `anthropic/*` log (either side may be absent); logs with no
+// meeting fall back to one group per run_group_id-or-id. One ReviewRow per
+// group x per identifier question key.
 
 import { IDENTIFIER_QUESTION_KEYS, identifierAnswersOf } from "./format";
 import { api } from "./api";
@@ -37,6 +38,9 @@ export type ReviewRow = {
   jev: ReviewSide;
   opus: ReviewSide;
   agree: boolean;
+  /** False when either side's answers are missing (single-sided pair or a
+   * side with no v2 identifier output). NOT the same as errored. */
+  comparable: boolean;
   firefliesUrl: string;
   chunks: ReviewChunk[];
   /** Failed-run message for the Jev side (`outputs[agentId]._error`, null when ok). */
@@ -50,8 +54,10 @@ export type ReviewGroup = {
   title: string;
   sample: string;
   createdAt: string;
-  jev: LogRow;
-  opus: LogRow;
+  /** Newest `typesafe/jev-*` log for the meeting (null on Opus-only pairs). */
+  jev: LogRow | null;
+  /** Newest `anthropic/*` log for the meeting (null on Jev-only pairs). */
+  opus: LogRow | null;
   jevModel: string;
   opusModel: string;
   /** Summed cost_usd over both logs, or null when neither reports one. */
@@ -98,10 +104,43 @@ function latestOf(logs: LogRow[]): LogRow {
   return best;
 }
 
-/** Identifier agent {id, name} for one log (snapshot kind match, then the
- * consistency snapshot's identifier_agent_id). Null when unresolvable. */
-function identifierAgentOf(log: LogRow): { id: string; name: string } | null {
+/** Non-blank `filters.meeting_id` snapshot ("" when absent, e.g. old rows). */
+export function meetingIdOf(log: LogRow | null): string {
   try {
+    if (!log || typeof log !== "object") return "";
+    const f = (log as LogRow).filters;
+    if (!f || typeof f !== "object") return "";
+    const m = (f as { meeting_id?: unknown }).meeting_id;
+    return typeof m === "string" ? m.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Pair key for one log: `meeting:<meeting_id>` when the log carries one,
+ * else the legacy run_group_id-or-id key (groupKeyOf). Never throws.
+ */
+export function pairKeyOf(log: LogRow): string {
+  try {
+    const m = meetingIdOf(log);
+    if (m !== "") return `meeting:${m}`;
+    return groupKeyOf(log);
+  } catch {
+    try {
+      return groupKeyOf(log);
+    } catch {
+      return "";
+    }
+  }
+}
+
+/** Identifier agent {id, name} for one log (snapshot kind match, then the
+ * consistency snapshot's identifier_agent_id). Null when unresolvable or
+ * the log is null (single-sided pair). */
+function identifierAgentOf(log: LogRow | null): { id: string; name: string } | null {
+  try {
+    if (!log || typeof log !== "object") return null;
     const snap = (log.agent_snapshot ?? {}) as Record<string, { name?: unknown; kind?: unknown }>;
     for (const [id, raw] of Object.entries(snap)) {
       const kind = typeof raw?.kind === "string" ? raw.kind.trim().toLowerCase() : "";
@@ -297,9 +336,11 @@ export function parseNumberedChunks(content: string): ReviewChunk[] {
 }
 
 /** Chunk list from one log's stored requests (identifier agent's body;
- * scans every request body as a last resort). Never throws. */
-function chunksFromLog(log: LogRow, agentId: string, agentName: string): ReviewChunk[] {
+ * scans every request body as a last resort). [] for a null log
+ * (single-sided pair). Never throws. */
+function chunksFromLog(log: LogRow | null, agentId: string, agentName: string): ReviewChunk[] {
   try {
+    if (!log || typeof log !== "object") return [];
     const reqs = (log.requests ?? {}) as Record<string, unknown>;
     const keys = [agentId, agentName].filter((k, i, a) => k !== "" && a.indexOf(k) === i);
     for (const k of keys) {
@@ -329,8 +370,9 @@ export function chunkText(chunks: ReviewChunk[], n: number | null): string {
 }
 
 /** Sample label for a log row: meeting title, then client, then "Untitled run". */
-function sampleOf(log: LogRow): string {
+function sampleOf(log: LogRow | null): string {
   try {
+    if (!log || typeof log !== "object") return "Untitled run";
     const t = typeof log.meeting_title === "string" ? log.meeting_title.trim() : "";
     if (t !== "") return t;
     const c = typeof log.client === "string" ? log.client.trim() : "";
@@ -345,8 +387,9 @@ function finiteCost(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function firefliesOf(log: LogRow): string {
+function firefliesOf(log: LogRow | null): string {
   try {
+    if (!log || typeof log !== "object") return "";
     const u = typeof log.fireflies_url === "string" ? log.fireflies_url.trim() : "";
     return u;
   } catch {
@@ -354,7 +397,18 @@ function firefliesOf(log: LogRow): string {
   }
 }
 
-function sideOf(log: LogRow, key: string): ReviewSide {
+function sideOf(log: LogRow | null, key: string): ReviewSide {
+  if (!log || typeof log !== "object") {
+    return {
+      value: null,
+      prob: null,
+      evidence: null,
+      runId: "",
+      agentName: "agent_identifier",
+      feedback: null,
+      error: null,
+    };
+  }
   const agent = identifierAgentOf(log);
   const agentId = agent ? agent.id : "agent_identifier";
   const agentName = agent ? agent.name : "agent_identifier";
@@ -435,9 +489,11 @@ export function questionText(log: LogRow | null, agentId: string, qkey: string):
 }
 
 /**
- * Group logs by run_group_id (or id) and keep the groups that pair one
- * `typesafe/jev-*` log with one `anthropic/*` log (latest of each by
- * created_at). Chunks come from the Jev (decisions) log's `state.chunks`,
+ * Group logs by meeting (`meeting:<meeting_id>`, else the legacy
+ * run_group_id-or-id key) and keep the newest `typesafe/jev-*` log and
+ * the newest `anthropic/*` log per meeting by created_at. Either side may
+ * be absent (single-sided pair); only groups with neither side are
+ * skipped. Chunks come from the Jev (decisions) log's `state.chunks`,
  * falling back to parsing the chat user message (either log). Groups sort
  * newest-first. Never throws.
  */
@@ -446,7 +502,7 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
   try {
     for (const log of logs ?? []) {
       if (!log || typeof log !== "object") continue;
-      const k = groupKeyOf(log);
+      const k = pairKeyOf(log);
       const list = byKey.get(k);
       if (list) list.push(log);
       else byKey.set(k, [log]);
@@ -459,30 +515,44 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
     try {
       const jevs = members.filter((l) => isJevModel(l.model));
       const opuses = members.filter((l) => isOpusModel(l.model));
-      if (jevs.length === 0 || opuses.length === 0) continue;
-      const jev = latestOf(jevs);
-      const opus = latestOf(opuses);
+      if (jevs.length === 0 && opuses.length === 0) continue;
+      const jev = jevs.length > 0 ? latestOf(jevs) : null;
+      const opus = opuses.length > 0 ? latestOf(opuses) : null;
       const jevAgent = identifierAgentOf(jev);
       const opusAgent = identifierAgentOf(opus);
-      let chunks = chunksFromLog(
-        jev,
-        jevAgent ? jevAgent.id : "agent_identifier",
-        jevAgent ? jevAgent.name : "agent_identifier",
-      );
-      if (chunks.length === 0) {
+      let chunks: ReviewChunk[] = [];
+      if (jev) {
+        chunks = chunksFromLog(
+          jev,
+          jevAgent ? jevAgent.id : "agent_identifier",
+          jevAgent ? jevAgent.name : "agent_identifier",
+        );
+      }
+      if (chunks.length === 0 && opus) {
         chunks = chunksFromLog(
           opus,
           opusAgent ? opusAgent.id : "agent_identifier",
           opusAgent ? opusAgent.name : "agent_identifier",
         );
       }
-      const costs = [finiteCost(jev.usage?.cost_usd), finiteCost(opus.usage?.cost_usd)];
+      const costs = [
+        jev ? finiteCost(jev.usage?.cost_usd) : null,
+        opus ? finiteCost(opus.usage?.cost_usd) : null,
+      ];
       const hasCost = costs.some((c) => c !== null);
-      const title = sampleOf(jev) !== "Untitled run" ? sampleOf(jev) : sampleOf(opus);
-      const createdAt =
-        timeOf(jev.created_at) >= timeOf(opus.created_at) ? jev.created_at : opus.created_at;
-      const jevError = errorOf(jev);
-      const opusError = errorOf(opus);
+      const jevTitle = sampleOf(jev);
+      const title = jevTitle !== "Untitled run" ? jevTitle : sampleOf(opus);
+      let createdAt = "";
+      if (jev && opus) {
+        createdAt =
+          timeOf(jev.created_at) >= timeOf(opus.created_at) ? jev.created_at : opus.created_at;
+      } else if (jev) {
+        createdAt = jev.created_at;
+      } else if (opus) {
+        createdAt = opus.created_at;
+      }
+      const jevError = jev ? errorOf(jev) : null;
+      const opusError = opus ? errorOf(opus) : null;
       groups.push({
         id: key,
         title,
@@ -490,8 +560,8 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
         createdAt,
         jev,
         opus,
-        jevModel: typeof jev.model === "string" ? jev.model : "",
-        opusModel: typeof opus.model === "string" ? opus.model : "",
+        jevModel: jev && typeof jev.model === "string" ? jev.model : "",
+        opusModel: opus && typeof opus.model === "string" ? opus.model : "",
         cost: hasCost ? (costs[0] ?? 0) + (costs[1] ?? 0) : null,
         chunks,
         jevError,
@@ -510,7 +580,10 @@ export function pairGroups(logs: LogRow[]): ReviewGroup[] {
  * both sides hold the same value (including both missing — that is not a
  * discrepancy), except rows where either side's run failed (`jevError` /
  * `opusError` from `outputs[agentId]._error`) always keep `agree: false`
- * so they stay visible under Discrepancies. Never throws.
+ * so they stay visible under Discrepancies. `comparable` is false when
+ * either side's answers are missing (single-sided pair or a side with no
+ * v2 identifier output) — missing-side rows appear only under All, while
+ * error rows stay in Discrepancies. Never throws.
  */
 export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
   const rows: ReviewRow[] = [];
@@ -519,8 +592,8 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
       if (!g) continue;
       const firefliesUrl = firefliesOf(g.jev) !== "" ? firefliesOf(g.jev) : firefliesOf(g.opus);
       const sample = g.sample || g.title || "Untitled run";
-      const jevError: string | null = g.jevError ?? errorOf(g.jev);
-      const opusError: string | null = g.opusError ?? errorOf(g.opus);
+      const jevError: string | null = g.jevError ?? (g.jev ? errorOf(g.jev) : null);
+      const opusError: string | null = g.opusError ?? (g.opus ? errorOf(g.opus) : null);
       const errored = jevError !== null || opusError !== null;
       for (const key of IDENTIFIER_QUESTION_KEYS) {
         try {
@@ -547,6 +620,7 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
           } catch {
             question = "";
           }
+          const comparable = jev.value !== null && opus.value !== null;
           rows.push({
             key: `${g.id}|${key}`,
             groupId: g.id,
@@ -556,6 +630,7 @@ export function buildRows(groups: ReviewGroup[]): ReviewRow[] {
             jev,
             opus,
             agree: errored ? false : jev.value === opus.value,
+            comparable,
             firefliesUrl,
             chunks: g.chunks ?? [],
             jevError,
@@ -753,6 +828,69 @@ export function toggleStar(stars: string[], key: string): string[] {
     const cur = (stars ?? []).filter((s) => typeof s === "string");
     if (cur.includes(key)) return cur.filter((s) => s !== key);
     return [...cur, key];
+  } catch {
+    return stars ?? [];
+  }
+}
+
+/** True when either side's run failed (error rows stay in Discrepancies). */
+export function isErrorRow(row: Pick<ReviewRow, "jevError" | "opusError">): boolean {
+  try {
+    return row.jevError !== null || row.opusError !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One-time star-key remap after the pair-id change: old stars are keyed
+ * `run_group_id|qkey`, new pair ids are `meeting:<meeting_id>|qkey`. For
+ * each stored key whose group part equals a `run_group_id` present in the
+ * current logs, rewrite it to the corresponding `meeting:<meeting_id>` key
+ * (skip when that log has no meeting_id). Keys already on `meeting:` ids,
+ * keys without a `|` separator, and anything unmapped (e.g. batch-name
+ * keys) pass through untouched. De-duplicates preserving order. Never
+ * throws.
+ */
+export function remapStars(stars: string[], logs: LogRow[]): string[] {
+  try {
+    const map = new Map<string, string>();
+    for (const log of logs ?? []) {
+      try {
+        if (!log || typeof log !== "object") continue;
+        const rg = typeof log.run_group_id === "string" ? log.run_group_id.trim() : "";
+        if (rg === "" || map.has(rg)) continue;
+        const m = meetingIdOf(log);
+        if (m === "") continue;
+        map.set(rg, `meeting:${m}`);
+      } catch {
+        // ignore malformed logs, keep the rest
+      }
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const s of stars ?? []) {
+      try {
+        let next = s;
+        if (typeof s === "string") {
+          const i = s.lastIndexOf("|");
+          if (i > 0) {
+            const g = s.slice(0, i);
+            if (!g.startsWith("meeting:")) {
+              const m = map.get(g);
+              if (m !== undefined) next = `${m}${s.slice(i)}`;
+            }
+          }
+        }
+        if (typeof next === "string" && !seen.has(next)) {
+          seen.add(next);
+          out.push(next);
+        }
+      } catch {
+        // ignore malformed keys, keep the rest
+      }
+    }
+    return out;
   } catch {
     return stars ?? [];
   }
