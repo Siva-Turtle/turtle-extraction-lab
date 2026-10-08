@@ -68,7 +68,7 @@ def _attrs_for_agent(db: Session, agent_id: str) -> list[Attribute]:
 
 
 # --- Agent Identifier meta-agent (kind == "identifier") -------------------
-# The identifier answers 27 fixed yes/no questions about the CLIENT's own
+# The identifier answers 29 fixed yes/no questions about the CLIENT's own
 # situation, then deterministic routing rules (plan_auto_agents) select
 # extraction agents. The prompt is code-owned: the identifier agent's stored
 # system_instruction in the DB is IGNORED. Prompt is built at
@@ -118,6 +118,10 @@ IDENTIFIER_QUESTIONS: list[dict] = [
      "question": "Did the Client mention that their employment status has changed?"},
     {"key": "current_employer_mentioned",
      "question": "Did the Client mention which company they work at?"},
+    {"key": "job_transfer",
+     "question": "Did the client mention anything about their Job/work transfers?"},
+    {"key": "job_severance",
+     "question": "Did the client mention anything related to severance or getting fired from job/company?"},
     {"key": "alumni",
      "question": "Did the client mention any of the companies that they have worked with in the past (even if it was just a day ago)?"},
     {"key": "education_institution",
@@ -188,7 +192,7 @@ IDENTIFIER_EVIDENCE_INSTRUCTION = (
 
 
 def _identifier_system_content(agent: Agent, _ignored=None) -> str:
-    """System prompt for the identifier: code-owned instruction + 27 questions.
+    """System prompt for the identifier: code-owned instruction + 29 questions.
 
     The identifier agent's stored system_instruction is IGNORED. The
     optional second arg exists only for backward compatibility with old
@@ -878,9 +882,12 @@ def plan_auto_agents(
                 need_emp_changed = _answer_true(answers, "employment_changed")
                 need_emp_status = _answer_true(answers, "employment_status_changed")
                 need_current_employer = _answer_true(answers, "current_employer_mentioned")
+                need_job_transfer = _answer_true(answers, "job_transfer")
+                need_job_severance = _answer_true(answers, "job_severance")
                 need_alumni_employment = _answer_true(answers, "alumni")
                 need_emp = (need_emp_changed or need_emp_status
-                            or need_current_employer or need_alumni_employment)
+                            or need_current_employer or need_job_transfer
+                            or need_job_severance or need_alumni_employment)
                 need_edu = _answer_true(answers, "education_institution")
                 if need_cc or need_emp or need_edu:
                     allowed: set[str] = set()
@@ -901,6 +908,10 @@ def plan_auto_agents(
                             rs.append("employment_status_changed")
                         if need_current_employer:
                             rs.append("current_employer_mentioned")
+                        if need_job_transfer:
+                            rs.append("job_transfer")
+                        if need_job_severance:
+                            rs.append("job_severance")
                         if need_alumni_employment:
                             rs.append("alumni")
                         if need_edu:
@@ -1043,7 +1054,7 @@ def _is_filled_entry(entry) -> bool:
 def compute_consistency(answers, outputs, identifier_agent_id="", plan=None) -> dict:
     """Pure consistency v2 snapshot for an auto-select run.
 
-    - answers: normalized {key: bool} (27 questions).
+    - answers: normalized {key: bool} (29 questions).
     - outputs: {agent_id: output dict}.
     - identifier_agent_id: str.
     - plan: [{agent_id, agent_name, reasons, scored, attributes: [names]}].
@@ -2441,7 +2452,7 @@ async def _execute_agents(db: Session, agents: list[Agent], requests: dict, mode
     """Run per-agent payloads concurrently (shared machinery).
 
     Returns (outputs, per_agent, evidence, probs) with costs None; caller
-    prices + totals. Identifier outputs are normalised to 27 yes/no answers
+    prices + totals. Identifier outputs are normalised to 29 yes/no answers
     via split_identifier_result + normalize_identifier_output; the
     per-agent chunk-evidence / noul-probability sidecars land in
     ``evidence``/``probs`` ({agent_id: {question_key: ...}}, identifier
@@ -4169,7 +4180,7 @@ def batch_feedback(payload: BatchFeedbackIn, db: Session = Depends(get_db)):
 
 @router.post("/auto")
 async def auto_run(payload: RunCreate, db: Session = Depends(get_db)):
-    """Auto Select Agents: 27 yes/no questions, then deterministic routing.
+    """Auto Select Agents: 29 yes/no questions, then deterministic routing.
 
     One log per call (one model). Body is RunCreate minus agent_ids
     (those are ignored); ``reuse`` ({agent_id: source_log_id}) is honoured

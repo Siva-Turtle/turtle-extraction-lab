@@ -84,7 +84,7 @@ def test_build_decisions_payload_without_provider():
 def test_build_identifier_decisions_questions_shape():
     questions = build_identifier_decisions_questions()
     assert set(questions) == {q["key"] for q in IDENTIFIER_QUESTIONS}
-    assert len(questions) == len(IDENTIFIER_QUESTIONS) == 27
+    assert len(questions) == len(IDENTIFIER_QUESTIONS) == 29
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         entry = questions[q["key"]]
         assert entry["type"] == "noul"
@@ -304,7 +304,7 @@ def test_identifier_run_with_decision_model_end_to_end(client, monkeypatch):
     assert len(seen["calls"]) == 2
     p1, p2 = seen["calls"]
     assert all(not str(k).endswith("__evidence") for k in p1["questions"])
-    assert len(p1["questions"]) == len(IDENTIFIER_QUESTIONS) == 27
+    assert len(p1["questions"]) == len(IDENTIFIER_QUESTIONS) == 29
     assert p2["questions"] and all(
         str(k).endswith("__evidence") for k in p2["questions"])
     assert "tax__evidence" not in p2["questions"]  # pass-1-false never asked
@@ -313,7 +313,7 @@ def test_identifier_run_with_decision_model_end_to_end(client, monkeypatch):
     assert req["model"] == "typesafe/jev-1.13"
     assert "messages" not in req
     assert req["questions"]["has_assets"]["type"] == "noul"
-    assert len(req["questions"]) == 27  # stored MAIN body is pass-1 noul-only
+    assert len(req["questions"]) == 29  # stored MAIN body is pass-1 noul-only
     # Stored pass-2 slot holds the first-window evidence body.
     ev_req = req["evidence_request"]
     assert ev_req["model"] == "typesafe/jev-1.13"
@@ -417,7 +417,7 @@ def _chunks(n):
 def test_decisions_questions_with_chunks_add_evidence_scores():
     questions = build_identifier_decisions_questions(_chunks(3))
     keys = [q["key"] for q in IDENTIFIER_QUESTIONS]
-    assert len(questions) == 2 * len(keys) == 54
+    assert len(questions) == 2 * len(keys) == 58
     for k in keys:
         assert questions[k]["type"] == "noul"
         ev = questions[f"{k}__evidence"]
@@ -431,7 +431,7 @@ def test_decisions_questions_with_chunks_add_evidence_scores():
 def test_decisions_questions_without_chunks_stays_base_count():
     # Backward compat: no chunks -> only the base noul questions.
     n = len(IDENTIFIER_QUESTIONS)
-    assert n == 27
+    assert n == 29
     assert len(build_identifier_decisions_questions()) == n
     assert len(build_identifier_decisions_questions([])) == n
 
@@ -772,7 +772,7 @@ def test_split_threshold_boundary_single_vs_three(client, monkeypatch):
     assert "split_windows" not in req
     assert "split_formula" not in req
     assert req["evidence_request"] is None
-    assert len(req["questions"]) == 27
+    assert len(req["questions"]) == 29
     assert all(not str(k).endswith("__evidence") for k in req["questions"])
 
     # Exactly at threshold (60 chars): not exceeded -> single call.
@@ -883,7 +883,7 @@ def test_split_merge_or_first_true_max_prob_and_usage(client, monkeypatch):
     # Pass-1 carries noul only; pass-2 carries evidence only.
     for p in pass1:
         assert all(not str(k).endswith("__evidence") for k in p["questions"])
-        assert len(p["questions"]) == 27
+        assert len(p["questions"]) == 29
     for p in pass2:
         assert p["questions"] and all(
             str(k).endswith("__evidence") for k in p["questions"])
@@ -907,7 +907,7 @@ def test_split_merge_or_first_true_max_prob_and_usage(client, monkeypatch):
     assert [c["n"] for c in req["state"]["chunks"]] == [1, 2, 3, 4, 5, 6]
     # Stored MAIN body is pass-1 noul-only; evidence slot holds P1's pass-2.
     assert all(not str(k).endswith("__evidence") for k in req["questions"])
-    assert len(req["questions"]) == 27
+    assert len(req["questions"]) == 29
     ev_req = req["evidence_request"]
     assert set(ev_req["questions"]) == {"income__evidence"}
     assert set(ev_req["questions"]["income__evidence"]["criteria"]) == {
@@ -1087,7 +1087,7 @@ def test_questions_window_global_numbering_shape():
     win = [{"n": 4, "text": "d"}, {"n": 5, "text": "e"},
            {"n": 6, "text": "f"}, {"n": 7, "text": "g"}]
     questions = rr.build_identifier_decisions_questions(win)
-    assert len(questions) == 2 * len(IDENTIFIER_QUESTIONS) == 54
+    assert len(questions) == 2 * len(IDENTIFIER_QUESTIONS) == 58
     ev = questions["income__evidence"]
     assert ev["criteria"] == {"4": "chunk 4", "5": "chunk 5",
                               "6": "chunk 6", "7": "chunk 7"}
@@ -1107,16 +1107,16 @@ def test_questions_include_evidence_flag():
 
     chunks = _chunks(3)
     full = rr.build_identifier_decisions_questions(chunks)
-    assert len(full) == 54
+    assert len(full) == 58
     noul_only = rr.build_identifier_decisions_questions(
         chunks, include_evidence=False)
-    assert len(noul_only) == 27
+    assert len(noul_only) == 29
     assert all(not str(k).endswith("__evidence") for k in noul_only)
     # No chunks -> flag is a no-op (base count either way).
     assert len(rr.build_identifier_decisions_questions(
-        None, include_evidence=False)) == 27
+        None, include_evidence=False)) == 29
     assert len(rr.build_identifier_decisions_questions(
-        [], include_evidence=False)) == 27
+        [], include_evidence=False)) == 29
 
 
 def test_evidence_questions_subset_global_numbering():
@@ -1325,7 +1325,7 @@ def test_stored_evidence_request_shape(client, monkeypatch):
     req = body["requests"][ident]
     # MAIN body: pass-1 noul-only (+ transport marker).
     assert req["transport"] == "decisions"
-    assert len(req["questions"]) == 27
+    assert len(req["questions"]) == 29
     assert all(v["type"] == "noul" for v in req["questions"].values())
     # Evidence slot: POSTable pass-2 body, evidence-only, same state/model.
     ev_req = req["evidence_request"]

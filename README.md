@@ -90,14 +90,15 @@ npm run dev
 
 ## Auto Select Agents
 
-`POST /runs/auto` runs the Agent Identifier (27 fixed yes/no questions about
+`POST /runs/auto` runs the Agent Identifier (29 fixed yes/no questions about
 the CLIENT's own situation) then deterministic routing (`plan_auto_agents`):
 
 - ANY of `has_assets` + 13 `asset_*` → `asset`, `has_accounts` → `account`,
   `expenses` → `expense`,
   `goals` → `goal`, `income` → `income`, `liabilities` → `liability` (all attrs).
 - `credit_cards` → `basic_info` Banking, `employment_changed` /
-  `employment_status_changed` / `current_employer_mentioned` / `alumni` → Employment,
+  `employment_status_changed` / `current_employer_mentioned` / `job_transfer` /
+  `job_severance` / `alumni` → Employment,
   `education_institution` → Education / Alumni (subset, DB order).
   NOTE: `asset_pension` overlaps `has_accounts` (NPS/EPF/PPF appear in both
   wordings) — both agents will run when both fire. Intended per spec.

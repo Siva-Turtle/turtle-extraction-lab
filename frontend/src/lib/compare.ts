@@ -501,7 +501,7 @@ function identifierCandidates(agent: CompareAgent, columns: CompareColumn[]): st
   return order;
 }
 
-/** Fixed 27 question keys for v2 identifier answers. */
+/** Fixed 29 question keys for v2 identifier answers. */
 const IDENTIFIER_QUESTION_KEYS = [
   "has_assets",
   "asset_bonds",
@@ -522,6 +522,8 @@ const IDENTIFIER_QUESTION_KEYS = [
   "employment_changed",
   "employment_status_changed",
   "current_employer_mentioned",
+  "job_transfer",
+  "job_severance",
   "alumni",
   "education_institution",
   "expenses",

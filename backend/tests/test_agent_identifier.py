@@ -1,4 +1,4 @@
-"""Coverage: Agent Identifier 27 yes/no questions + deterministic routing."""
+"""Coverage: Agent Identifier 29 yes/no questions + deterministic routing."""
 
 import app.modules.runs.router as runs_router
 from app.core.openrouter import build_chat_payload
@@ -35,11 +35,12 @@ def test_identifier_questions_order_and_text():
         "asset_real_estate", "asset_reits", "asset_other",
         "has_accounts", "credit_cards", "employment_changed",
         "employment_status_changed", "current_employer_mentioned",
+        "job_transfer", "job_severance",
         "alumni", "education_institution",
         "expenses", "goals", "income", "insurance",
         "liabilities", "tax",
     ]
-    assert len(keys) == 27
+    assert len(keys) == 29
     by_key = {q["key"]: q["question"] for q in IDENTIFIER_QUESTIONS}
     assert by_key["has_assets"] == (
         "Did the Client mention about any of their assets?")
@@ -77,6 +78,10 @@ def test_identifier_questions_order_and_text():
         "Did the Client mention that their employment status has changed?")
     assert by_key["current_employer_mentioned"] == (
         "Did the Client mention which company they work at?")
+    assert by_key["job_transfer"] == (
+        "Did the client mention anything about their Job/work transfers?")
+    assert by_key["job_severance"] == (
+        "Did the client mention anything related to severance or getting fired from job/company?")
     assert by_key["alumni"] == (
         "Did the client mention any of the companies that they have worked with in the past (even if it was just a day ago)?")
     assert by_key["education_institution"] == (
@@ -131,7 +136,7 @@ def test_identifier_system_content_code_owned():
     assert "true or false" in system.lower()
     assert "CLIENT" in system
     assert "strictly" in system.lower()
-    # Numbered list Q1..Q27.
+    # Numbered list Q1..Q29.
     for i, q in enumerate(IDENTIFIER_QUESTIONS, start=1):
         assert f"Q{i} ({q['key']}): {q['question']}" in system
     # No candidate roster.
@@ -155,9 +160,9 @@ def test_identifier_preview_branch(client):
     }
     assert "Turtle Finance" in body["system"]
     assert "Q1 (has_assets)" in body["system"]
-    assert "Q27 (tax)" in body["system"]
+    assert "Q29 (tax)" in body["system"]
     assert body["candidates"] == []
-    assert len(body["questions"]) == 27
+    assert len(body["questions"]) == 29
 
     plain = client.get(f"/api/v1/agents/{kc['id']}/prompt-preview").json()
     assert plain["response_format"]["json_schema"]["name"] == "meeting_extraction"
@@ -211,7 +216,7 @@ def test_normalize_boolean_answers():
     # Missing keys become False.
     assert out["liabilities"] is False
     assert set(out.keys()) == {q["key"] for q in IDENTIFIER_QUESTIONS}
-    assert len(out) == 27
+    assert len(out) == 29
 
 
 def test_normalize_old_log_compat_missing_new_keys_false():
@@ -223,7 +228,7 @@ def test_normalize_old_log_compat_missing_new_keys_false():
         "insurance": False, "liabilities": False, "tax": False,
     }
     out = normalize_identifier_output(old)
-    assert len(out) == 27
+    assert len(out) == 29
     assert out["has_assets"] is True
     assert out["alumni"] is True
     for k in ("asset_bonds", "asset_cash", "asset_commodity", "asset_etfs",
@@ -232,6 +237,37 @@ def test_normalize_old_log_compat_missing_new_keys_false():
               "asset_real_estate", "asset_reits", "asset_other",
               "current_employer_mentioned", "education_institution"):
         assert out[k] is False
+    # New keys default False on old logs.
+    assert out["job_transfer"] is False
+    assert out["job_severance"] is False
+
+
+def test_normalize_old_27_key_log_compat_new_keys_false():
+    # Pre-change 27-key outputs (no job_transfer/job_severance) normalize
+    # via the generic loop: all 27 answers kept, new keys False.
+    old27 = {
+        "has_assets": False, "asset_bonds": False, "asset_cash": False,
+        "asset_commodity": False, "asset_etfs": False,
+        "asset_mutual_funds": False, "asset_crypto": False,
+        "asset_fd": False, "asset_pension": False, "asset_stocks": False,
+        "asset_personal_loans": False, "asset_real_estate": False,
+        "asset_reits": False, "asset_other": False,
+        "has_accounts": True, "credit_cards": False,
+        "employment_changed": True, "employment_status_changed": False,
+        "current_employer_mentioned": True,
+        "alumni": False, "education_institution": False,
+        "expenses": False, "goals": False, "income": False,
+        "insurance": True, "liabilities": False, "tax": False,
+    }
+    assert len(old27) == 27
+    out = normalize_identifier_output(old27)
+    assert len(out) == 29
+    assert out["has_accounts"] is True
+    assert out["employment_changed"] is True
+    assert out["current_employer_mentioned"] is True
+    assert out["insurance"] is True
+    assert out["job_transfer"] is False
+    assert out["job_severance"] is False
 
 
 def test_normalize_non_dict_untouched():
@@ -466,6 +502,28 @@ def test_plan_employment_via_current_employer_only():
     bi = next(e for e in plan if e["agent"].name == "basic_info")
     assert bi["attribute_ids"] == ["bi-emp"]
     assert bi["reasons"] == ["current_employer_mentioned"]
+    assert bi["scored"] is True
+
+
+def test_plan_employment_via_job_transfer_only():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["job_transfer"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-emp"]
+    assert bi["reasons"] == ["job_transfer"]
+    assert bi["scored"] is True
+
+
+def test_plan_employment_via_job_severance_only():
+    by_name, attrs_by = _plan_setup()
+    ans = _false_answers()
+    ans["job_severance"] = True
+    plan = plan_auto_agents(ans, "Quarterly Review", by_name, attrs_by)
+    bi = next(e for e in plan if e["agent"].name == "basic_info")
+    assert bi["attribute_ids"] == ["bi-emp"]
+    assert bi["reasons"] == ["job_severance"]
     assert bi["scored"] is True
 
 
