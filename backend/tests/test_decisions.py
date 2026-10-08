@@ -689,7 +689,7 @@ def test_identifier_chat_request_carries_max_tokens(client, monkeypatch):
     body = client.post("/api/v1/runs", json={
         "input_type": "mail", "input_data": "hello",
         "agent_ids": [ident, ext], "model": "m"}).json()
-    assert body["requests"][ident]["max_tokens"] == 2048
+    assert body["requests"][ident]["max_tokens"] == 8192
     assert "max_tokens" not in body["requests"][ext]
 
 
