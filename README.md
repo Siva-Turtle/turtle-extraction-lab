@@ -162,3 +162,13 @@ Mirrors the CRM prototype's v2 Turtle theme exactly (`frontend/src/index.css`,
 - Real Turtle wordmark (`public/turtle-logo-black.svg` / `turtle-logo-white.svg`,
   swapped by theme) + `turtle-favicon.svg`; light/dark toggle in the top bar
   (persisted, pre-paint script prevents flashing).
+
+## Secrets (MeM server)
+
+`backend/.env` (and the `backend/.env.bak` backup copy) live outside the repo
+at `~/.config/mem/secrets/turtle-extraction-lab/backend/` (same relative paths).
+`backend/app/core/config.py` reads `.env` from `MEM_SECRETS_DIR` (default
+`~/.config/mem/secrets/turtle-extraction-lab` on Linux) and falls back to the
+local `backend/.env` when the server file is absent (laptop flow). `scripts/`
+setup helpers still write the local `backend/.env` on the laptop. On the laptop,
+set `MEM_SECRETS_DIR` or keep a gitignored local `backend/.env`.
