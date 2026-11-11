@@ -10,8 +10,8 @@ and logged. Once finalised, agent configs move to the **Extraction Service**
 | Repo | GitHub | Local path |
 |---|---|---|
 | PRD vault (spec, wins on behaviour) | `Siva-Turtle/turtle-memory-prd` | `C:\SivaAdithya\Turtle Memory` |
-| CRM prototype (wins on engineering) | `Siva-Turtle/turtle-crm` | `C:\Users\sivaa\OneDrive\SivaAdithya\Coding\VSCode\turtle\turtle-crm` |
-| This lab | `Siva-Turtle/turtle-extraction-lab` | `C:\Users\sivaa\OneDrive\SivaAdithya\Coding\VSCode\turtle\turtle-extraction-lab` |
+| CRM prototype (wins on engineering) | `Siva-Turtle/turtle-crm` | `C:\SivaAdithya\Coding\VSCode\turtle\turtle-crm` |
+| This lab | `Siva-Turtle/turtle-extraction-lab` | `C:\SivaAdithya\Coding\VSCode\turtle\turtle-extraction-lab` |
 
 ## Layout
 

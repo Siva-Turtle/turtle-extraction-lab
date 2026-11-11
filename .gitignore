@@ -9,3 +9,9 @@ dist/
 .env.bak
 # server-persisted review stars (user data) — never commit
 backend/data/
+.env*
+!.env.example
+venv/
+*venv/
+.next/
+build/
